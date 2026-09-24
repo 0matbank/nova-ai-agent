@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib
 import math
 import os
 import sys
@@ -55,7 +56,9 @@ def _add_cuda_dll_dirs() -> None:
         return
     _dll_dirs_added = True
     try:
-        import nvidia  # type: ignore[import-not-found,import-untyped,unused-ignore]
+        # Optional (voice extra, Windows only): imported dynamically so type checking
+        # does not depend on which extras are installed.
+        nvidia = importlib.import_module("nvidia")
     except ImportError:
         return
     for base in list(nvidia.__path__):
@@ -69,10 +72,8 @@ def _add_cuda_dll_dirs() -> None:
 def _default_factory(path: str, device: str, compute_type: str) -> Any:
     if device == "cuda":
         _add_cuda_dll_dirs()
-    from faster_whisper import (
-        WhisperModel,  # type: ignore[import-not-found,import-untyped,unused-ignore]
-    )
-    return WhisperModel(path, device=device, compute_type=compute_type)
+    whisper_model = importlib.import_module("faster_whisper").WhisperModel  # voice extra
+    return whisper_model(path, device=device, compute_type=compute_type)
 
 
 class Transcriber:
