@@ -1,0 +1,3 @@
+{
+  "run": ["terminal.read", "terminal.run"]
+}

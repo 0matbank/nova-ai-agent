@@ -1,0 +1,5 @@
+{
+  "open": ["app.open"],
+  "close": ["app.close"],
+  "kill": ["process.kill"]
+}

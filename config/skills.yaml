@@ -4,15 +4,15 @@
 #         disabled = implemented but switched off
 
 skills:
-  windows:        { status: planned }
+  windows: { status: enabled }
   desktop-ui:     { status: planned }
-  app-control:    { status: planned }
+  app-control: { status: enabled }
   browser:        { status: planned }
   browser-vision: { status: planned }
-  terminal:       { status: planned }
-  powershell:     { status: planned }
-  files:          { status: planned }
-  search:         { status: planned }
+  terminal: { status: enabled }
+  powershell: { status: enabled }
+  files: { status: enabled }
+  search: { status: enabled }
   git:            { status: planned }
   github:         { status: planned }
   coding:         { status: planned }

@@ -1,0 +1,8 @@
+{
+  "name": "search",
+  "version": "1.0.0",
+  "description": "Find files by name/pattern, recently changed files, and duplicate files (plan §34).",
+  "worker": "core",
+  "platforms": ["win32", "linux", "darwin"],
+  "tools": ["find", "recent", "duplicates"]
+}

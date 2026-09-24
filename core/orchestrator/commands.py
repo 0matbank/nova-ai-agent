@@ -12,6 +12,7 @@ from pathlib import Path
 from channels.base import IncomingMessage, OutgoingMessage
 from core.health import format_duration, format_pc_status, pc_status
 from core.orchestrator.security_commands import SecurityCommands
+from core.orchestrator.skill_commands import SkillCommands
 from core.orchestrator.task_commands import TaskCommands
 
 # Every command from plan §27. Ones without a handler yet reply "not yet".
@@ -28,6 +29,7 @@ COMMAND_DESCRIPTIONS = {
     "/pause": "Queue pause",
     "/resume": "Queue আবার চালু",
     "/pc": "CPU / GPU / RAM / Disk",
+    "/skills": "Skill ও tool-এর তালিকা (permission level সহ)",
     "/lockdown": "Emergency: সব dangerous কাজ বন্ধ (off দিলে খোলে)",
     "/help": "সব command-এর তালিকা",
 }
@@ -53,7 +55,8 @@ class CommandRouter:
     def __init__(self, disk_path: Path, health: HealthSources, agent_name: str,
                  tasks: TaskCommands | None = None,
                  safe_mode_reason: str | None = None,
-                 security: SecurityCommands | None = None) -> None:
+                 security: SecurityCommands | None = None,
+                 skills: SkillCommands | None = None) -> None:
         self.started_at = time.time()
         self.disk_path = disk_path
         self.health = health
@@ -72,6 +75,8 @@ class CommandRouter:
             })
         if security is not None:
             self._handlers["/lockdown"] = security.lockdown
+        if skills is not None:
+            self._handlers["/skills"] = skills.skills
 
     def _safe_mode(self) -> OutgoingMessage:
         return OutgoingMessage(SAFE_MODE_REPLY.format(reason=self.safe_mode_reason or "-"))

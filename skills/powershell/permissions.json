@@ -1,0 +1,3 @@
+{
+  "run": ["powershell.read", "powershell.run"]
+}

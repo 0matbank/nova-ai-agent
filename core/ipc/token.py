@@ -13,6 +13,8 @@ import os
 import secrets
 from pathlib import Path
 
+from core.log import add_known_secrets
+
 TOKEN_FILE = "internal_rpc.token"  # noqa: S105 - a file name, not a secret
 TOKEN_BYTES = 32
 
@@ -38,6 +40,7 @@ class TokenStore:
             if len(value) < 32:
                 raise ValueError(f"{self.path.name} is too short to be a valid token")
             self._cached, self._mtime = value, mtime
+            add_known_secrets([value])     # never printable, even via tool output
         return self._cached
 
     def rotate(self) -> str:

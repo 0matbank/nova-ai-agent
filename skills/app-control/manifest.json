@@ -1,0 +1,8 @@
+{
+  "name": "app-control",
+  "version": "1.0.0",
+  "description": "Open, gracefully close, or force-kill known desktop apps through the Desktop Worker.",
+  "worker": "desktop",
+  "platforms": ["win32"],
+  "tools": ["open", "close", "kill"]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "windows",
+  "version": "1.0.0",
+  "description": "PC status (CPU/GPU/RAM/disk), processes and system information.",
+  "worker": "core",
+  "platforms": ["win32", "linux", "darwin"],
+  "tools": ["status", "processes", "system_info"]
+}

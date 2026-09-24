@@ -1,0 +1,5 @@
+{
+  "status": ["pc.status"],
+  "processes": ["process.list"],
+  "system_info": ["pc.status"]
+}

@@ -37,12 +37,14 @@ from core.log.setup import ROOT_LOGGER
 from core.notify.notifier import MessageType, Notifier
 from core.orchestrator.commands import CommandRouter, HealthSources
 from core.orchestrator.security_commands import SecurityCommands
+from core.orchestrator.skill_commands import SkillCommands
 from core.orchestrator.task_commands import TaskCommands
 from core.permissions.approvals import ApprovalManager
 from core.permissions.audit import AuditTrail
 from core.permissions.engine import PermissionEngine
 from core.queue.engine import TaskEngine
 from core.queue.store import TaskStore, TaskView
+from core.skills.registry import SkillError, SkillRegistry
 
 EXIT_TELEGRAM_AUTH = 3
 APPROVAL_SWEEP_SECONDS = 15
@@ -163,11 +165,27 @@ async def run_core_service(
                       extra={"action": "db.migrate", "status": "safe_mode",
                              "error_code": "DB_MIGRATION_FAILED"})
 
+    # Skills load at startup; a broken enabled skill fails closed (not loaded)
+    # but Telegram stays alive and the owner is alerted.
+    registry: SkillRegistry | None = None
+    skills_error = ""
+    try:
+        registry = SkillRegistry.load(cfg.skills)
+    except SkillError as e:
+        skills_error = str(e)
+        _log.critical(f"SKILLS UNAVAILABLE: {e}", extra={"action": "skills.load",
+                                                         "status": "error"})
+    skill_cmds = (SkillCommands(registry, security.permissions if security else None)
+                  if registry is not None else None)
+
     health = HealthSources()
     router = CommandRouter(cfg.root, health, cfg.default.agent.name, tasks, safe_reason,
-                           security)
+                           security, skill_cmds)
     health.probes.update(build_probes(ctx, channel))
     health.probes["Database"] = database_probe(store, revision, safe_reason)
+    health.probes["Skills"] = lambda: (
+        (True, f"{len(registry.skills)} loaded") if registry is not None
+        else (False, f"not loaded — {skills_error}"))
     try:
         await api.set_my_commands(router.menu())
     except TelegramError as e:   # menu is a convenience; never block startup on it

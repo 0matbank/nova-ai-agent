@@ -17,16 +17,28 @@ actions:
   screenshot: GREEN
   pc.status: GREEN
   research: GREEN
+  process.list: GREEN
+  powershell.read: GREEN      # only parser-verified read-only commands (skills/powershell)
+  terminal.read: GREEN        # only allowlisted read-only programs (skills/terminal)
 
   file.create: BLUE
+  file.move: BLUE             # destination must not exist; otherwise file.overwrite
+  file.delete_workspace: BLUE # inside the agent's own workspace only
+  app.open: BLUE
+  app.close: BLUE             # graceful close; the app may still ask to save
   browser.navigate: BLUE
   test.run: BLUE
   download: BLUE
 
-  file.overwrite: YELLOW
+  file.overwrite: YELLOW      # safety check = backup made first
+  file.organize: YELLOW       # safety check = no collisions, nothing protected
   package.install: YELLOW
   git.commit: YELLOW
   config.change: YELLOW
+
+  powershell.run: RED         # any command not proven read-only
+  terminal.run: RED
+  process.kill: RED
 
   file.delete_important: RED
   file.delete_pathwide: RED

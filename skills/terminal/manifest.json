@@ -1,0 +1,8 @@
+{
+  "name": "terminal",
+  "version": "1.0.0",
+  "description": "Run a program with arguments (no shell) as the current non-elevated user.",
+  "worker": "core",
+  "platforms": ["win32", "linux", "darwin"],
+  "tools": ["run"]
+}

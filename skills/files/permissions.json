@@ -1,0 +1,11 @@
+{
+  "list_dir": ["file.read"],
+  "metadata": ["file.read"],
+  "read_text": ["file.read"],
+  "write": ["file.create", "file.overwrite"],
+  "mkdir": ["file.create"],
+  "copy": ["file.create", "file.overwrite"],
+  "move": ["file.move", "file.overwrite"],
+  "delete": ["file.delete_workspace", "file.delete_important", "file.delete_pathwide"],
+  "organize": ["search", "file.organize"]
+}

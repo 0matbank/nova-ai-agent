@@ -1,0 +1,16 @@
+{
+  "apps": {
+    "notepad":    {"exe": ["notepad.exe"], "process": ["notepad.exe"]},
+    "calculator": {"exe": ["calc.exe"], "process": ["CalculatorApp.exe", "calc.exe"]},
+    "paint":      {"exe": ["mspaint.exe"], "process": ["mspaint.exe"]},
+    "explorer":   {"exe": ["explorer.exe"], "process": ["explorer.exe"], "no_close": true},
+    "chrome":     {"exe": ["chrome.exe", "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe"], "process": ["chrome.exe"]},
+    "edge":       {"exe": ["msedge.exe", "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe"], "process": ["msedge.exe"]},
+    "vscode":     {"exe": ["%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe", "Code.exe"], "process": ["Code.exe"]}
+  },
+  "aliases": {
+    "calc": "calculator", "code": "vscode", "vs code": "vscode", "visual studio code": "vscode",
+    "file explorer": "explorer", "google chrome": "chrome", "microsoft edge": "edge",
+    "mspaint": "paint"
+  }
+}

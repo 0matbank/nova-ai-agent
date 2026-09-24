@@ -1,0 +1,8 @@
+{
+  "name": "powershell",
+  "version": "1.0.0",
+  "description": "Run PowerShell as the current non-elevated user; read-only commands are verified by PowerShell's own parser (plan §17: native/PowerShell first).",
+  "worker": "core",
+  "platforms": ["win32"],
+  "tools": ["run"]
+}

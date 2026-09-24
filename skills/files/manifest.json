@@ -1,0 +1,8 @@
+{
+  "name": "files",
+  "version": "1.0.0",
+  "description": "List, inspect, read, create, edit, copy, move/rename, delete and organize files (plan §34).",
+  "worker": "core",
+  "platforms": ["win32", "linux", "darwin"],
+  "tools": ["list_dir", "metadata", "read_text", "write", "mkdir", "copy", "move", "delete", "organize"]
+}

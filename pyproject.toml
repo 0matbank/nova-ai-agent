@@ -19,6 +19,7 @@ dependencies = [
     "fastapi>=0.115,<1",
     "uvicorn>=0.30,<1",
     "pywin32>=306 ; sys_platform == 'win32'",
+    "send2trash>=1.8,<2",
 ]
 
 [project.optional-dependencies]
@@ -45,7 +46,7 @@ default-groups = ["dev", "test"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-testpaths = ["tests"]
+testpaths = ["tests", "skills"]
 addopts = "-ra --strict-markers"
 markers = [
     "windows: requires a real Windows desktop session",
