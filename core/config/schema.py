@@ -180,6 +180,7 @@ class OllamaPolicy(Strict):
     on_demand_aliases: list[str]
     max_heavy_models_loaded: Annotated[int, Field(ge=1, le=2)]
     idle_unload_seconds: PositiveInt
+    think_task_types: list[str] = []
 
 
 class ModelsConfig(Strict):

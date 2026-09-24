@@ -290,7 +290,8 @@ def test_service_end_to_end(config_dir: Path, runtime_root: Path) -> None:
     async def go() -> None:
         stop = asyncio.Event()
         task = asyncio.create_task(
-            run_core_service(ctx, stop, fake.api(), ChatWhitelist([str(OWNER)])))
+            run_core_service(ctx, stop, fake.api(), ChatWhitelist([str(OWNER)]),
+                             fake_providers(ctx)))
         for _ in range(500):
             if fake.sent:
                 break
@@ -316,7 +317,8 @@ def _run_service(ctx, fake: FakeTelegram, until) -> None:  # type: ignore[no-unt
     async def go() -> None:
         stop = asyncio.Event()
         task = asyncio.create_task(
-            run_core_service(ctx, stop, fake.api(), ChatWhitelist([str(OWNER)])))
+            run_core_service(ctx, stop, fake.api(), ChatWhitelist([str(OWNER)]),
+                             fake_providers(ctx)))
         for _ in range(500):
             if until():
                 break
@@ -411,3 +413,10 @@ def test_approval_button_security_over_telegram(logs: Path, tmp_path: Path) -> N
     assert fake.answered[0]["text"] == "✅ Approved"
     [edit] = fake.edited
     assert "APPROVED" in edit["text"] and edit["reply_markup"] == {"inline_keyboard": []}
+
+
+def fake_providers(ctx):  # type: ignore[no-untyped-def]
+    """Hermetic tests: never call the real local Ollama from the service tests."""
+    from providers.registry import ProviderRegistry
+    from tests.mocks.providers import FakeAdapter
+    return ProviderRegistry({n: FakeAdapter(n) for n in ctx.config.providers.providers})

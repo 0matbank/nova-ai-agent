@@ -13,6 +13,10 @@ ollama_policy:
   on_demand_aliases: [local_code_review]   # loaded only when coding/review needs it
   max_heavy_models_loaded: 1
   idle_unload_seconds: 600
+  # Benchmark 2026-09-24 (scripts/benchmark_local_models.py): qwen3:8b scored
+  # 7/10 on Bangla facts without thinking vs 10/10 with it (~3.8 s avg).
+  # Fast paths (intent, simple) stay without thinking.
+  think_task_types: [reasoning, bangla, coding, review, summarization]
 
 openai_codex:
   default: null

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import socket
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -13,11 +14,23 @@ from tests.mocks.tasks import TaskEnv, make_task_env
 APP_DIR = Path(__file__).resolve().parents[1]
 
 
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
 @pytest.fixture
 def config_dir(tmp_path: Path) -> Path:
-    """A writable copy of the real config/ directory."""
+    """A writable copy of the real config/ directory. Worker ports are moved to
+    free ports so tests never talk to real workers running on this PC."""
     dst = tmp_path / "config"
     shutil.copytree(APP_DIR / "config", dst)
+    workers = dst / "workers.yaml"
+    data = yaml.safe_load(workers.read_text(encoding="utf-8"))
+    for key in ("desktop_worker", "browser_worker"):
+        data["workers"][key]["port"] = _free_port()
+    workers.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
     return dst
 
 

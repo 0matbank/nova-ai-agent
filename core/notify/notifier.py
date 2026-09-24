@@ -61,13 +61,14 @@ class Notifier:
     async def notify(self, chat_id: str, kind: MessageType, text: str, *,
                      task_id: int | None = None, error_key: str | None = None,
                      severity: int = 0,
-                     buttons: list[list[tuple[str, str]]] | None = None) -> bool:
+                     buttons: list[list[tuple[str, str]]] | None = None,
+                     photo: bytes | None = None) -> bool:
         """Returns True if the message was sent now."""
         if kind in self._exempt or kind is MessageType.INFO:
             if task_id is not None and kind in (MessageType.TASK_COMPLETED,
                                                 MessageType.TASK_FAILED_PERMANENTLY):
                 self._progress.pop(task_id, None)
-            return await self._deliver(chat_id, text, buttons)
+            return await self._deliver(chat_id, text, buttons, photo)
         if kind is MessageType.PROGRESS:
             return await self._progress_update(chat_id, text, task_id)
         return await self._error(chat_id, text, error_key or text, severity)
@@ -108,9 +109,10 @@ class Notifier:
         return await self._deliver(chat_id, text, None)
 
     async def _deliver(self, chat_id: str, text: str,
-                       buttons: list[list[tuple[str, str]]] | None) -> bool:
+                       buttons: list[list[tuple[str, str]]] | None,
+                       photo: bytes | None = None) -> bool:
         try:
-            await self._send(chat_id, OutgoingMessage(text, buttons or []))
+            await self._send(chat_id, OutgoingMessage(text, buttons or [], photo))
         except Exception:
             _log.exception("notification delivery failed", extra={"action": "notify"})
             return False

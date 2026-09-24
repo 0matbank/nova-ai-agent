@@ -36,6 +36,7 @@ from core.log import get_logger, redact, shutdown_logging
 from core.log.setup import ROOT_LOGGER
 from core.notify.notifier import MessageType, Notifier
 from core.orchestrator.commands import CommandRouter, HealthSources
+from core.orchestrator.executor import UserRequestExecutor
 from core.orchestrator.screen_commands import ScreenCommands
 from core.orchestrator.security_commands import SecurityCommands
 from core.orchestrator.skill_commands import SkillCommands
@@ -46,7 +47,14 @@ from core.permissions.engine import PermissionEngine
 from core.queue.desktop_watch import DesktopWatcher
 from core.queue.engine import TaskEngine
 from core.queue.store import TaskStore, TaskView
+from core.router.intent import IntentRouter
+from core.skills.api import ToolEnv
+from core.skills.paths import PathPolicy
 from core.skills.registry import SkillError, SkillRegistry
+from core.skills.runner import SkillRunner
+from models.router import ProviderRouter
+from providers.provider_base import USABLE
+from providers.registry import ProviderRegistry
 
 EXIT_TELEGRAM_AUTH = 3
 APPROVAL_SWEEP_SECONDS = 15
@@ -120,7 +128,8 @@ async def _announce_recovery(notifier: Notifier, recovered: list[TaskView]) -> N
 
 
 async def run_core_service(
-    ctx: AppContext, stop: asyncio.Event, api: TelegramAPI, whitelist: ChatWhitelist
+    ctx: AppContext, stop: asyncio.Event, api: TelegramAPI, whitelist: ChatWhitelist,
+    provider_registry: ProviderRegistry | None = None,
 ) -> None:
     me = await api.get_me()   # fails fast on a bad token
     _log.info(f"telegram bot @{me.get('username')} authenticated",
@@ -183,6 +192,16 @@ async def run_core_service(
     monitor = build_worker_monitor(ctx)
     desktop = next((c for c in monitor.clients if c.name == "desktop"), None)
 
+    # Provider layer (plan §8): no single "main AI" — the router picks per task type.
+    providers = provider_registry or ProviderRegistry.from_config(cfg)
+    provider_router = ProviderRouter(cfg.providers, providers.adapters)
+    if engine is not None and security is not None and approvals is not None:
+        skill_runner = (SkillRunner(registry, ToolEnv(cfg, PathPolicy(cfg),
+                                                      {"desktop": desktop} if desktop else {}),
+                                    approvals.audit) if registry is not None else None)
+        engine.register("user_request", UserRequestExecutor(
+            IntentRouter(provider_router), provider_router, skill_runner))
+
     health = HealthSources()
     router = CommandRouter(cfg.root, health, cfg.default.agent.name, tasks, safe_reason,
                            security, skill_cmds, ScreenCommands(desktop))
@@ -204,9 +223,11 @@ async def run_core_service(
     for c in monitor.clients:
         health.probes[f"{c.name.capitalize()} worker"] = monitor.probe(c.name)
     health.probes["Privileged broker"] = lambda: (True, "not built yet (Phase 22) — disabled")
+    health.probes["AI providers"] = lambda: provider_summary(provider_router)
 
     _log.info("core service started", extra={"action": "service.start", "status": "ok"})
-    background = [asyncio.create_task(monitor.run(stop))]
+    background = [asyncio.create_task(monitor.run(stop)),
+                  asyncio.create_task(_provider_health_loop(providers, stop))]
     if engine is not None and store is not None:
         background.append(asyncio.create_task(engine.run(stop)))
         watcher = DesktopWatcher(store, engine, desktop, notifier)
@@ -217,13 +238,42 @@ async def run_core_service(
         await channel.run(stop)
     finally:
         stop.set()
+        # Bounded wait (plan §32A forced-shutdown timeout); full procedure in Phase 23.
+        _, pending = await asyncio.wait(background,
+                                        timeout=cfg.default.shutdown.graceful_timeout_seconds)
+        for t in pending:
+            t.cancel()
         await asyncio.gather(*background, return_exceptions=True)
         logging.getLogger(ROOT_LOGGER).removeHandler(alert)
         await monitor.aclose()
+        await providers.aclose()
         await api.aclose()
         if db_engine is not None:
             db_engine.dispose()
         _log.info("core service stopped", extra={"action": "service.stop", "status": "ok"})
+
+
+def provider_summary(router: ProviderRouter) -> tuple[bool, str]:
+    """At least one routable provider must be usable (plan §9: one provider
+    failing must never stop the whole agent)."""
+    usable = [n for n, a in router.adapters.items()
+              if a.health.state in USABLE and router.capabilities.routable(n)]
+    parts = []
+    for name, a in router.adapters.items():
+        short = name.split("_")[0] if name != "ollama_local" else "ollama"
+        parts.append(f"{short}={a.health.state.value.lower()}")
+    return bool(usable), " · ".join(parts)
+
+
+async def _provider_health_loop(providers: ProviderRegistry, stop: asyncio.Event,
+                                every: float = 60.0) -> None:
+    while not stop.is_set():
+        try:
+            await providers.check_all()
+        except Exception:
+            _log.exception("provider health check failed", extra={"action": "provider.health"})
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=every)
 
 
 def build_worker_monitor(ctx: AppContext) -> WorkerMonitor:
