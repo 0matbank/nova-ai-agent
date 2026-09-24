@@ -88,6 +88,10 @@ async def run_core_service(
     router = CommandRouter(ctx.config.root, health, ctx.config.default.agent.name)
     channel = TelegramChannel(api, whitelist, router.handle)
     health.probes.update(build_probes(ctx, channel))
+    try:
+        await api.set_my_commands(router.menu())
+    except TelegramError as e:   # menu is a convenience; never block startup on it
+        _log.warning(f"setMyCommands failed: {e}", extra={"action": "telegram.menu"})
 
     alert = TelegramAlertHandler(channel, asyncio.get_running_loop())
     logging.getLogger(ROOT_LOGGER).addHandler(alert)

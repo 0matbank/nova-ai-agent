@@ -1,7 +1,7 @@
 [project]
-name = "personal-agent"
+name = "nova-ai-agent"
 version = "0.1.0"
-description = "Personal AI Agent OS — remotely controllable, permission-controlled Windows agent"
+description = "Nova AI — Personal AI Agent OS: remotely controllable, permission-controlled Windows agent"
 readme = "README.md"
 requires-python = "==3.12.*"
 # Base dependencies = the "core" group (Core Service). Worker-specific

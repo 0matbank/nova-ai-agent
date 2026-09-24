@@ -2,7 +2,7 @@
 # Secrets never go here: they live in <secrets_dir>/.env (see .env.example).
 
 agent:
-  name: "Personal Agent"
+  name: "Nova AI"
   timezone: "Asia/Dhaka"
   languages: [bn, en, banglish]
 

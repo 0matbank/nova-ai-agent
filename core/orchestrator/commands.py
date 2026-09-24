@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import difflib
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -16,6 +17,12 @@ ALL_COMMANDS = (
     "/status", "/tasks", "/task", "/cancel", "/pause", "/resume", "/screenshot",
     "/pc", "/skills", "/agents", "/logs", "/restart-agent", "/update", "/lockdown", "/help",
 )
+
+COMMAND_DESCRIPTIONS = {
+    "/status": "Agent health + PC status",
+    "/pc": "CPU / GPU / RAM / Disk",
+    "/help": "সব command-এর তালিকা",
+}
 
 TEXT_ACK = (
     "✅ বার্তা পেয়েছি।\n"
@@ -56,7 +63,13 @@ class CommandRouter:
             return OutgoingMessage(await handler(msg, parts[1:]))
         if command in ALL_COMMANDS:
             return OutgoingMessage(f"⏳ {command} এখনো চালু হয়নি — পরের phase-এ আসবে।")
-        return OutgoingMessage(f"❓ অজানা command: {command}\n/help দেখুন।")
+        guess = difflib.get_close_matches(command, ALL_COMMANDS, n=1, cutoff=0.7)
+        hint = f"আপনি কি {guess[0]} বোঝাতে চেয়েছেন?\n" if guess else ""
+        return OutgoingMessage(f"❓ অজানা command: {command}\n{hint}/help দেখুন।")
+
+    def menu(self) -> list[tuple[str, str]]:
+        """(command, description) for Telegram's "/" menu — only working commands."""
+        return [(c, COMMAND_DESCRIPTIONS[c]) for c in ALL_COMMANDS if c in self._handlers]
 
     async def _status(self, msg: IncomingMessage, args: list[str]) -> str:
         lines = [f"🤖 {self.agent_name} — online",

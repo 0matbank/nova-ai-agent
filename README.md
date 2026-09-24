@@ -1,4 +1,4 @@
-# Personal AI Agent OS
+# Nova AI — Personal AI Agent OS
 
 Remotely controllable (Telegram primary, WhatsApp secondary), multi-agent,
 multi-skill, permission-controlled personal agent for a Windows PC.

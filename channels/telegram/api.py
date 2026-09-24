@@ -99,6 +99,11 @@ class TelegramAPI:
         )
         return result
 
+    async def set_my_commands(self, commands: list[tuple[str, str]]) -> None:
+        await self.call("setMyCommands", commands=[
+            {"command": c.lstrip("/"), "description": d} for c, d in commands
+        ])
+
     async def send_message(
         self, chat_id: str, text: str, reply_markup: dict[str, Any] | None = None
     ) -> dict[str, Any]:

@@ -103,6 +103,8 @@ def test_whitelist_rejects_garbage() -> None:
     ("/help", "চালু: /status /pc /help"),
     ("/tasks", "এখনো চালু হয়নি"),
     ("/foo", "অজানা command"),
+    ("/staus", "আপনি কি /status বোঝাতে চেয়েছেন?"),
+    ("/Status", "online"),
     ("/pc", "PC status"),
     ("/status@test_agent_bot", "online"),
 ])
@@ -295,6 +297,7 @@ def test_service_end_to_end(config_dir: Path, runtime_root: Path) -> None:
     asyncio.run(go())
     shutdown_logging()
     assert fake.calls[0][0] == "getMe"
+    assert [c["command"] for c in fake.commands] == ["status", "pc", "help"]
     [reply] = fake.texts_to(OWNER)
     assert "✅ Telegram: connected" in reply and "✅ Config: valid" in reply
     assert fake.texts_to(STRANGER) == []

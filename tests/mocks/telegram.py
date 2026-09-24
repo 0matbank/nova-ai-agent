@@ -22,6 +22,7 @@ class FakeTelegram:
         self.updates: list[dict[str, Any]] = []
         self.sent: list[dict[str, Any]] = []
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.commands: list[dict[str, str]] = []
         # method -> list of scripted responses (dict payload | "hang" | Exception)
         self.script: dict[str, list[Any]] = defaultdict(list)
         self._next_update = 1
@@ -86,6 +87,9 @@ class FakeTelegram:
             if offset is not None:
                 self.updates = [u for u in self.updates if u["update_id"] >= offset]
             return self._ok(list(self.updates))
+        if method == "setMyCommands":
+            self.commands = params["commands"]
+            return self._ok(True)
         if method == "sendMessage":
             self.sent.append(params)
             return self._ok({"message_id": 1000 + len(self.sent)})
