@@ -29,4 +29,23 @@ class OutgoingMessage:
     buttons: list[list[tuple[str, str]]] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class IncomingCallback:
+    """A button tap (Telegram callback_query)."""
+    channel: str
+    chat_id: str
+    user_id: str
+    callback_id: str
+    data: str
+    message_id: str
+    message_text: str
+
+
+@dataclass(frozen=True)
+class CallbackReply:
+    toast: str                       # short popup shown to the user
+    new_text: str | None = None      # replaces the message text and removes its buttons
+
+
 MessageHandler = Callable[[IncomingMessage], Awaitable[OutgoingMessage | None]]
+CallbackHandler = Callable[[IncomingCallback], Awaitable[CallbackReply | None]]

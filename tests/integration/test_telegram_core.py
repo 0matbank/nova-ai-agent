@@ -301,7 +301,7 @@ def test_service_end_to_end(config_dir: Path, runtime_root: Path) -> None:
     shutdown_logging()
     assert fake.calls[0][0] == "getMe"
     assert [c["command"] for c in fake.commands] == [
-        "status", "tasks", "task", "cancel", "pause", "resume", "pc", "help"]
+        "status", "tasks", "task", "cancel", "pause", "resume", "pc", "lockdown", "help"]
     [reply] = fake.texts_to(OWNER)
     assert "✅ Database: ok (schema 001)" in reply
     assert "✅ Telegram: connected" in reply and "✅ Config: valid" in reply
@@ -373,3 +373,39 @@ def test_outgoing_buttons_rendered(logs: Path, tmp_path: Path) -> None:
     asyncio.run(ch.send(str(OWNER), OutgoingMessage("x", [[("Approve", "a:1")]])))
     assert fake.sent[0]["reply_markup"] == {
         "inline_keyboard": [[{"text": "Approve", "callback_data": "a:1"}]]}
+
+
+def test_approval_button_security_over_telegram(logs: Path, tmp_path: Path) -> None:
+    from core.permissions.approvals import ApprovalStatus
+    from core.queue.states import TaskState
+    from tests.security.test_permissions import FileActionExecutor
+
+    env = make_task_env(tmp_path / "ap.db", tmp_path / "bk")
+    victim = tmp_path / "v.txt"
+    victim.write_text("x")
+    env.engine.register("demo", FileActionExecutor(victim))
+    tid = env.store.create(title="d", request_text="d", task_type="demo",
+                           channel="telegram", chat_id=str(OWNER)).id
+    asyncio.run(env.engine.run_once())
+    data = env.last_callback(approve=True)
+
+    fake = FakeTelegram()
+    router = CommandRouter(tmp_path, HealthSources(), "x", env.commands, None, env.security)
+    ch = TelegramChannel(fake.api(), ChatWhitelist([str(OWNER)]), router.handle,
+                         poll_timeout=1, callback_handler=env.security.on_button)
+
+    fake.push_callback(data, chat_id=STRANGER)                     # attacker's own chat
+    fake.push_callback(data, chat_id=OWNER, user_id=STRANGER)      # spoofed sender
+    fake.push_callback(data, chat_id=OWNER, chat_type="group")     # group chat
+    _poll(ch)
+    assert [a.status for a in env.approvals.pending()] == [ApprovalStatus.PENDING]
+    assert fake.answered == [] and fake.edited == []
+    assert len([e for e in _read(logs, "audit") if e["action"] == "auth.reject"]) == 3
+
+    fake.push_callback(data, chat_id=OWNER, message_text="🔐 APPROVAL REQUIRED — Task #1")
+    _poll(ch)
+    assert env.approvals.pending() == []
+    assert env.store.get(tid).state is TaskState.RETRYING
+    assert fake.answered[0]["text"] == "✅ Approved"
+    [edit] = fake.edited
+    assert "APPROVED" in edit["text"] and edit["reply_markup"] == {"inline_keyboard": []}

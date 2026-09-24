@@ -267,6 +267,14 @@ class ApprovalSection(Strict):
     single_use: Literal[True]
     require_totp_for: list[str]
 
+    @field_validator("require_totp_for")
+    @classmethod
+    def _totp_not_implemented(cls, v: list[str]) -> list[str]:
+        # Optional §17D feature, not built yet. Refuse rather than silently skip it.
+        if v:
+            raise ValueError("TOTP confirmation is not implemented yet; keep this list empty")
+        return v
+
 
 class PermissionsConfig(Strict):
     default_level: Literal[Level.RED]

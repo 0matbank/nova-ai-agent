@@ -99,6 +99,13 @@ class TelegramAPI:
         )
         return result
 
+    async def answer_callback_query(self, callback_id: str, text: str) -> None:
+        await self.call("answerCallbackQuery", callback_query_id=callback_id, text=text[:200])
+
+    async def edit_message_text(self, chat_id: str, message_id: str, text: str) -> None:
+        await self.call("editMessageText", chat_id=chat_id, message_id=int(message_id),
+                        text=text[:MAX_MESSAGE_LEN], reply_markup={"inline_keyboard": []})
+
     async def set_my_commands(self, commands: list[tuple[str, str]]) -> None:
         await self.call("setMyCommands", commands=[
             {"command": c.lstrip("/"), "description": d} for c, d in commands

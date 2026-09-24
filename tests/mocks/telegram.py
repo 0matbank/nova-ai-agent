@@ -23,6 +23,8 @@ class FakeTelegram:
         self.sent: list[dict[str, Any]] = []
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.commands: list[dict[str, str]] = []
+        self.answered: list[dict[str, Any]] = []
+        self.edited: list[dict[str, Any]] = []
         # method -> list of scripted responses (dict payload | "hang" | Exception)
         self.script: dict[str, list[Any]] = defaultdict(list)
         self._next_update = 1
@@ -50,6 +52,22 @@ class FakeTelegram:
         self.updates.append({"update_id": uid, "message": msg})
         self._next_update += 1
         return uid
+
+    def push_callback(self, data: str, chat_id: int = OWNER, user_id: int | None = None,
+                      chat_type: str = "private", message_id: int = 1001,
+                      message_text: str = "🔐 APPROVAL REQUIRED") -> None:
+        cq = {
+            "id": f"cb{self._next_update}", "data": data,
+            "from": {"id": user_id if user_id is not None else chat_id, "is_bot": False},
+            "message": {"message_id": message_id, "text": message_text,
+                        "chat": {"id": chat_id, "type": chat_type}},
+        }
+        self.updates.append({"update_id": self._next_update, "callback_query": cq})
+        self._next_update += 1
+
+    def buttons_sent(self) -> list[list[dict[str, str]]]:
+        return [m["reply_markup"]["inline_keyboard"] for m in self.sent
+                if m.get("reply_markup", {}).get("inline_keyboard")]
 
     def texts_to(self, chat_id: int = OWNER) -> list[str]:
         return [m["text"] for m in self.sent if str(m["chat_id"]) == str(chat_id)]
@@ -87,6 +105,12 @@ class FakeTelegram:
             if offset is not None:
                 self.updates = [u for u in self.updates if u["update_id"] >= offset]
             return self._ok(list(self.updates))
+        if method == "answerCallbackQuery":
+            self.answered.append(params)
+            return self._ok(True)
+        if method == "editMessageText":
+            self.edited.append(params)
+            return self._ok(True)
         if method == "setMyCommands":
             self.commands = params["commands"]
             return self._ok(True)

@@ -19,6 +19,8 @@ from typing import Any, Protocol
 from core.config.schema import TaskEngineSection
 from core.log import get_logger, log_context
 from core.notify.notifier import MessageType, Notifier
+from core.permissions.approvals import ApprovalManager, ApprovalStatus, fingerprint
+from core.permissions.engine import Decision, PermissionDenied, PermissionEngine
 from core.queue.states import TaskState
 from core.queue.store import StepStatus, StepView, TaskStore, TaskView
 
@@ -31,6 +33,18 @@ class TaskCancelled(Exception):
 
 class TaskPaused(Exception):
     pass
+
+
+class ApprovalPending(Exception):
+    """Raised by `require` — the task parks in WAITING_APPROVAL; the step
+    re-runs from its start once the owner approves."""
+
+    def __init__(self, approval_id: int) -> None:
+        super().__init__(f"waiting for approval #{approval_id}")
+        self.approval_id = approval_id
+
+
+SafetyCheck = Callable[[], Awaitable[tuple[bool, str]]]
 
 
 @dataclass(frozen=True)
@@ -49,11 +63,60 @@ StepFn = Callable[[dict[str, Any] | None], Awaitable[dict[str, Any] | None]]
 
 
 class TaskContext:
-    def __init__(self, task: TaskView, store: TaskStore, notifier: Notifier | None) -> None:
+    def __init__(self, task: TaskView, store: TaskStore, notifier: Notifier | None,
+                 permissions: PermissionEngine | None = None,
+                 approvals: ApprovalManager | None = None) -> None:
         self.task = task
         self.store = store
         self.notifier = notifier
+        self.permissions = permissions
+        self.approvals = approvals
         self.steps: tuple[StepView, ...] = task.steps
+
+    async def require(self, action: str, target: str = "", summary: str = "",
+                      details: dict[str, Any] | None = None,
+                      safety_check: SafetyCheck | None = None) -> None:
+        """Permission gate (plan §18). Call immediately BEFORE a side effect.
+        Returns only if the action may proceed right now."""
+        if self.permissions is None or self.approvals is None:
+            raise PermissionDenied(action, "permission engine unavailable")
+        ev = self.permissions.evaluate(action)
+        audit = self.approvals.audit
+        tid = self.task.id
+        if ev.decision is Decision.DENY:
+            audit.record(actor="task", action="permission.denied", status="denied",
+                         target=f"{action} {target}", task_id=tid, details={"reason": ev.reason})
+            raise PermissionDenied(action, ev.reason)
+        if ev.decision is Decision.ALLOW:
+            return
+        if ev.decision is Decision.ALLOW_LOGGED:
+            _log.info(f"BLUE action allowed: {action} {target}",
+                      extra={"task_id": tid, "action": action, "status": "allowed"})
+            return
+        if ev.decision is Decision.NEEDS_CHECK:
+            if safety_check is not None:
+                ok, why = await safety_check()
+                audit.record(actor="task", action="permission.safety_check",
+                             status="passed" if ok else "failed", target=f"{action} {target}",
+                             task_id=tid, details={"detail": why})
+                if ok:
+                    return
+                summary = f"{summary}\n⚠️ Safety check failed: {why}".strip()
+            else:
+                summary = f"{summary}\n⚠️ No safety check available for this action.".strip()
+
+        # RED, or YELLOW that did not pass its check → explicit approval.
+        fp = fingerprint(action, target, details)
+        approved = self.approvals.find(tid, fp, ApprovalStatus.APPROVED)
+        if approved is not None and self.approvals.consume(approved.id):
+            audit.record(actor="task", action="approval.used", status="used",
+                         target=f"{action} {target}", task_id=tid,
+                         details={"approval_id": approved.id})
+            return
+        req = await self.approvals.request(task_id=tid, chat_id=self.task.chat_id,
+                                           action=action, level=ev.level, target=target,
+                                           summary=summary, details=details)
+        raise ApprovalPending(req.id)
 
     async def checkpoint(self) -> None:
         """Honour cancel/pause requests. Call between side effects only."""
@@ -78,6 +141,9 @@ class TaskContext:
         self.store.start_step(self.task.id, seq)
         try:
             data = await fn(prev.checkpoint if prev else None)
+        except (ApprovalPending, TaskCancelled, TaskPaused):
+            self.store.reset_step(self.task.id, seq)   # not a failure; step re-runs later
+            raise
         except Exception as e:
             self.store.fail_step(self.task.id, seq, f"{type(e).__name__}: {e}")
             raise
@@ -95,10 +161,15 @@ class TaskContext:
 
 class TaskEngine:
     def __init__(self, store: TaskStore, notifier: Notifier | None,
-                 settings: TaskEngineSection) -> None:
+                 settings: TaskEngineSection, permissions: PermissionEngine | None = None,
+                 approvals: ApprovalManager | None = None) -> None:
         self.store = store
         self.notifier = notifier
         self.settings = settings
+        self.permissions = permissions
+        self.approvals = approvals
+        if approvals is not None:
+            approvals.on_task_released.append(self.wake)
         self.executors: dict[str, Executor] = {}
         self._wake = asyncio.Event()
         self.current_task_id: int | None = None
@@ -148,7 +219,7 @@ class TaskEngine:
     async def _execute(self, task: TaskView) -> None:
         executor = self.executors[task.task_type]
         store = self.store
-        ctx = TaskContext(task, store, self.notifier)
+        ctx = TaskContext(task, store, self.notifier, self.permissions, self.approvals)
         try:
             if task.state is TaskState.RECEIVED:
                 ctx.task = store.transition(task.id, TaskState.PLANNING)
@@ -169,6 +240,16 @@ class TaskEngine:
             store.transition(task.id, TaskState.PAUSED)
             await self._tell(task, MessageType.INFO,
                              f"⏸️ Task #{task.id} pause হয়েছে (last checkpoint সংরক্ষিত)।")
+            return
+        except ApprovalPending as e:
+            store.transition(task.id, TaskState.WAITING_APPROVAL, error_code=None)
+            _log.info(str(e), extra={"action": "task.approval", "status": "waiting"})
+            return
+        except PermissionDenied as e:
+            store.transition(task.id, TaskState.FAILED, error_code="PERMISSION_DENIED",
+                             error_message=str(e))
+            await self._tell(task, MessageType.TASK_FAILED_PERMANENTLY,
+                             f"⛔ Task #{task.id} blocked: {e}")
             return
         except Exception as e:
             _log.exception("task step failed", extra={"action": "task.run", "status": "error"})

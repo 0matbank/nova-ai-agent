@@ -39,12 +39,18 @@ class TaskCommands:
         self.list_limit = list_limit
         self.tz = ZoneInfo(timezone)
 
+    def _lockdown(self) -> bool:
+        return self.engine.permissions is not None and self.engine.permissions.is_lockdown()
+
     def _time(self, dt: datetime | None) -> str:
         return dt.astimezone(self.tz).strftime("%d %b %H:%M") if dt else "-"
 
     # -------------------------------------------------------------- submit
 
     async def submit(self, msg: IncomingMessage) -> OutgoingMessage:
+        if self._lockdown():
+            return OutgoingMessage("🚨 LOCKDOWN চালু — নতুন task নেওয়া হচ্ছে না।\n"
+                                   "বন্ধ করতে: /lockdown off")
         title = " ".join(msg.text.split())[:60]
         task = self.store.create(title=title, request_text=msg.text, task_type=USER_REQUEST,
                                  channel=msg.channel, chat_id=msg.chat_id)
@@ -98,6 +104,8 @@ class TaskCommands:
         return "⏸️ Queue paused — নতুন task শুরু হবে না।" + extra + "\nআবার চালু: /resume"
 
     async def resume(self, msg: IncomingMessage, args: list[str]) -> str:
+        if self._lockdown():
+            return "🚨 LOCKDOWN চালু — আগে /lockdown off দিন।"
         resumed = self.store.resume_queue()
         self.engine.wake()
         extra = (f"\nLast checkpoint থেকে আবার চলবে: {', '.join(f'#{i}' for i in resumed)}"

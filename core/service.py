@@ -11,6 +11,7 @@ Exit codes: 0 = clean stop, 2 = invalid config / missing secrets,
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import signal
 import sys
@@ -32,11 +33,16 @@ from core.log import get_logger, redact, shutdown_logging
 from core.log.setup import ROOT_LOGGER
 from core.notify.notifier import MessageType, Notifier
 from core.orchestrator.commands import CommandRouter, HealthSources
+from core.orchestrator.security_commands import SecurityCommands
 from core.orchestrator.task_commands import TaskCommands
+from core.permissions.approvals import ApprovalManager
+from core.permissions.audit import AuditTrail
+from core.permissions.engine import PermissionEngine
 from core.queue.engine import TaskEngine
 from core.queue.store import TaskStore, TaskView
 
 EXIT_TELEGRAM_AUTH = 3
+APPROVAL_SWEEP_SECONDS = 15
 TOKEN_KEY = "TELEGRAM_BOT_TOKEN"  # noqa: S105 - env var name, not a secret
 WHITELIST_KEY = "TELEGRAM_ALLOWED_CHAT_IDS"
 
@@ -130,16 +136,24 @@ async def run_core_service(
     store: TaskStore | None = None
     engine: TaskEngine | None = None
     tasks: TaskCommands | None = None
+    security: SecurityCommands | None = None
+    approvals: ApprovalManager | None = None
     safe_reason: str | None = None
     revision: str | None = None
     db_engine = None
     try:
         mig = check_and_migrate(cfg.path("database"), cfg.path("backups_dir"))
         db_engine, revision = mig.engine, mig.after
-        store = TaskStore(make_sessionmaker(mig.engine))
-        engine = TaskEngine(store, notifier, cfg.default.task_engine)
+        sessions = make_sessionmaker(mig.engine)
+        store = TaskStore(sessions)
+        audit = AuditTrail(sessions)
+        permissions = PermissionEngine(cfg.permissions, sessions)
+        approvals = ApprovalManager(sessions, cfg.permissions.approval, store, audit, notifier)
+        engine = TaskEngine(store, notifier, cfg.default.task_engine, permissions, approvals)
         tasks = TaskCommands(store, engine, cfg.default.task_engine.list_limit,
                              cfg.default.agent.timezone)
+        security = SecurityCommands(permissions, approvals, store, audit)
+        channel.callback_handler = security.on_button
     except MigrationError as e:
         safe_reason = str(e) + (" (backup restored)" if e.rolled_back else "")
         _log.critical(f"DATABASE UNAVAILABLE — SAFE MODE: {safe_reason}",
@@ -147,7 +161,8 @@ async def run_core_service(
                              "error_code": "DB_MIGRATION_FAILED"})
 
     health = HealthSources()
-    router = CommandRouter(cfg.root, health, cfg.default.agent.name, tasks, safe_reason)
+    router = CommandRouter(cfg.root, health, cfg.default.agent.name, tasks, safe_reason,
+                           security)
     health.probes.update(build_probes(ctx, channel))
     health.probes["Database"] = database_probe(store, revision, safe_reason)
     try:
@@ -161,18 +176,32 @@ async def run_core_service(
             await _announce_recovery(notifier, recovered)
 
     _log.info("core service started", extra={"action": "service.start", "status": "ok"})
-    engine_task = asyncio.create_task(engine.run(stop)) if engine is not None else None
+    background = []
+    if engine is not None:
+        background.append(asyncio.create_task(engine.run(stop)))
+    if approvals is not None:
+        background.append(asyncio.create_task(_expiry_sweeper(approvals, stop)))
     try:
         await channel.run(stop)
     finally:
         stop.set()
-        if engine_task is not None:
-            await asyncio.gather(engine_task, return_exceptions=True)
+        await asyncio.gather(*background, return_exceptions=True)
         logging.getLogger(ROOT_LOGGER).removeHandler(alert)
         await api.aclose()
         if db_engine is not None:
             db_engine.dispose()
         _log.info("core service stopped", extra={"action": "service.stop", "status": "ok"})
+
+
+async def _expiry_sweeper(approvals: ApprovalManager, stop: asyncio.Event,
+                          every: float = APPROVAL_SWEEP_SECONDS) -> None:
+    while not stop.is_set():
+        try:
+            await approvals.expire_due()
+        except Exception:
+            _log.exception("approval expiry sweep failed", extra={"action": "approval.expire"})
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=every)
 
 
 def _record(store: TaskStore | None, channel: str, chat_id: str, direction: str,

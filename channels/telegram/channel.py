@@ -9,7 +9,14 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from channels.base import IncomingMessage, MessageHandler, OutgoingMessage
+from channels.base import (
+    CallbackHandler,
+    CallbackReply,
+    IncomingCallback,
+    IncomingMessage,
+    MessageHandler,
+    OutgoingMessage,
+)
 from channels.telegram.api import (
     TelegramAPI,
     TelegramAuthError,
@@ -37,10 +44,12 @@ class TelegramChannel:
         whitelist: ChatWhitelist,
         handler: MessageHandler,
         poll_timeout: int = 50,
+        callback_handler: CallbackHandler | None = None,
     ) -> None:
         self.api = api
         self.whitelist = whitelist
         self.handler = handler
+        self.callback_handler = callback_handler
         self.poll_timeout = poll_timeout
         self.offset: int | None = None
         self.last_poll_ok: float | None = None
@@ -117,10 +126,44 @@ class TelegramChannel:
 
     # ------------------------------------------------------------ handling
 
+    async def _handle_callback(self, cq: dict[str, Any]) -> None:
+        message = cq.get("message") or {}
+        # Authenticate the tap exactly like a message: private chat, whitelisted,
+        # and the tapping user must be the chat owner.
+        if not self.whitelist.is_allowed({"chat": message.get("chat") or {},
+                                          "from": cq.get("from") or {}}):
+            return
+        if self.callback_handler is None:
+            return
+        chat_id = str(message["chat"]["id"])
+        incoming = IncomingCallback(
+            channel=self.name, chat_id=chat_id, user_id=str(cq["from"]["id"]),
+            callback_id=str(cq["id"]), data=str(cq.get("data", "")),
+            message_id=str(message.get("message_id", "")),
+            message_text=str(message.get("text", "")),
+        )
+        _log.info("button tapped", extra={"action": "telegram.callback"})
+        try:
+            reply = await self.callback_handler(incoming)
+        except Exception:
+            _log.exception("callback handler failed", extra={"action": "telegram.callback",
+                                                             "status": "error"})
+            reply = CallbackReply("Internal error")
+        try:
+            await self.api.answer_callback_query(incoming.callback_id,
+                                                 reply.toast if reply else "")
+            if reply is not None and reply.new_text is not None and incoming.message_id:
+                await self.api.edit_message_text(chat_id, incoming.message_id, reply.new_text)
+        except TelegramError as e:
+            _log.warning(f"callback answer failed: {e}", extra={"action": "telegram.callback"})
+
     async def _handle_update(self, update: dict[str, Any]) -> None:
+        if "callback_query" in update:
+            await self._handle_callback(update["callback_query"])
+            return
         message = update.get("message")
         if not message:
-            return   # callback_query etc. handled from Phase 4
+            return
         if not self.whitelist.is_allowed(message):
             return
         chat_id = str(message["chat"]["id"])

@@ -239,6 +239,12 @@ class TaskStore:
         _log.info(f"step {seq} done", extra={"task_id": task_id, "action": "task.checkpoint",
                                              "status": "ok"})
 
+    def reset_step(self, task_id: int, seq: int) -> None:
+        with self._sessions.begin() as s:
+            step = self._step(s, task_id, seq)
+            step.status = StepStatus.PENDING
+            step.started_at = None
+
     def fail_step(self, task_id: int, seq: int, error: str) -> None:
         with self._sessions.begin() as s:
             step = self._step(s, task_id, seq)
