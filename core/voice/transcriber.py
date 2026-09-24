@@ -69,7 +69,9 @@ def _add_cuda_dll_dirs() -> None:
 def _default_factory(path: str, device: str, compute_type: str) -> Any:
     if device == "cuda":
         _add_cuda_dll_dirs()
-    from faster_whisper import WhisperModel  # type: ignore[import-untyped]
+    from faster_whisper import (
+        WhisperModel,  # type: ignore[import-not-found,import-untyped,unused-ignore]
+    )
     return WhisperModel(path, device=device, compute_type=compute_type)
 
 
