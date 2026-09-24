@@ -44,6 +44,12 @@ notification_throttle:
     - agent_going_offline
     - recovery_after_restart
 
+# §26/§29 — task engine
+task_engine:
+  max_retries: 2              # failed verification / step error → RETRYING, then FAILED
+  idle_poll_seconds: 5
+  list_limit: 10              # rows shown by /tasks
+
 # §32A — graceful shutdown
 shutdown:
   graceful_timeout_seconds: 30

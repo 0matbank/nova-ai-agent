@@ -21,8 +21,9 @@ from core.bootstrap import bootstrap
 from core.config import ConfigError, Secrets
 from core.log import get_logger, setup_logging, shutdown_logging
 from core.log.setup import ROOT_LOGGER
-from core.orchestrator.commands import TEXT_ACK, CommandRouter, HealthSources
+from core.orchestrator.commands import CommandRouter, HealthSources
 from core.service import run_core_service, telegram_settings
+from tests.mocks.tasks import make_task_env
 from tests.mocks.telegram import OWNER, TOKEN, FakeTelegram
 
 CATS = ["core", "desktop", "browser", "provider", "tasks", "audit"]
@@ -45,7 +46,8 @@ def _read(logs: Path, cat: str) -> list[dict]:
 
 
 def _channel(fake: FakeTelegram, tmp_path: Path, probes=None) -> TelegramChannel:
-    router = CommandRouter(tmp_path, HealthSources(probes or {}), "Test Agent")
+    env = make_task_env(tmp_path / "tg.db", tmp_path / "bk")
+    router = CommandRouter(tmp_path, HealthSources(probes or {}), "Test Agent", env.commands)
     return TelegramChannel(fake.api(), ChatWhitelist([str(OWNER)]), router.handle,
                            poll_timeout=1)
 
@@ -98,10 +100,11 @@ def test_whitelist_rejects_garbage() -> None:
 # ----------------------------------------------------------------- commands
 
 @pytest.mark.parametrize("text, expected", [
-    ("kemon acho?", TEXT_ACK),
-    ("PC te ki cholche bolo", TEXT_ACK),
-    ("/help", "চালু: /status /pc /help"),
-    ("/tasks", "এখনো চালু হয়নি"),
+    ("kemon acho?", "📥 Task #1 তৈরি হয়েছে"),
+    ("PC te ki cholche bolo", "📥 Task #1 তৈরি হয়েছে"),
+    ("/help", "চালু: /status /tasks /task /cancel /pause /resume /pc /help"),
+    ("/tasks", "এখনো কোনো task নেই"),
+    ("/screenshot", "এখনো চালু হয়নি"),
     ("/foo", "অজানা command"),
     ("/staus", "আপনি কি /status বোঝাতে চেয়েছেন?"),
     ("/Status", "online"),
@@ -297,12 +300,71 @@ def test_service_end_to_end(config_dir: Path, runtime_root: Path) -> None:
     asyncio.run(go())
     shutdown_logging()
     assert fake.calls[0][0] == "getMe"
-    assert [c["command"] for c in fake.commands] == ["status", "pc", "help"]
+    assert [c["command"] for c in fake.commands] == [
+        "status", "tasks", "task", "cancel", "pause", "resume", "pc", "help"]
     [reply] = fake.texts_to(OWNER)
+    assert "✅ Database: ok (schema 001)" in reply
     assert "✅ Telegram: connected" in reply and "✅ Config: valid" in reply
     assert fake.texts_to(STRANGER) == []
     core_log = (runtime_root / "logs/core/core.log").read_text("utf-8")
     assert "core service started" in core_log and "core service stopped" in core_log
+
+
+def _run_service(ctx, fake: FakeTelegram, until) -> None:  # type: ignore[no-untyped-def]
+    async def go() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(
+            run_core_service(ctx, stop, fake.api(), ChatWhitelist([str(OWNER)])))
+        for _ in range(500):
+            if until():
+                break
+            await asyncio.sleep(0.01)
+        stop.set()
+        await asyncio.wait_for(task, 5)
+    asyncio.run(go())
+    shutdown_logging()
+
+
+def test_service_safe_mode_on_bad_database(config_dir: Path, runtime_root: Path) -> None:
+    import sqlite3
+    ctx = bootstrap(config_dir=config_dir, root=runtime_root, console_logs=False)
+    db = ctx.config.path("database")
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE alembic_version (version_num VARCHAR(32) PRIMARY KEY)")
+    conn.execute("INSERT INTO alembic_version VALUES ('999_from_future')")
+    conn.commit()
+    conn.close()
+
+    fake = FakeTelegram()
+    fake.push_message("/status")
+    fake.push_message("Click TV test koro")
+    fake.push_message("/tasks")
+    _run_service(ctx, fake, lambda: len(fake.texts_to(OWNER)) >= 4)
+    texts = fake.texts_to(OWNER)
+    alert = next(t for t in texts if "CRITICAL ALERT" in t)
+    assert "SAFE MODE" in alert
+    status = next(t for t in texts if "online" in t)
+    assert "Health: SAFE MODE" in status and "❌ Database: SAFE MODE" in status
+    assert sum("⚠️ SAFE MODE" in t for t in texts) == 2   # text + /tasks refused
+
+
+def test_messages_recorded_and_redacted(config_dir: Path, runtime_root: Path) -> None:
+    from sqlalchemy import select
+
+    from core.db.engine import make_engine, make_sessionmaker
+    from core.db.models import Message
+
+    ctx = bootstrap(config_dir=config_dir, root=runtime_root, console_logs=False)
+    fake = FakeTelegram()
+    fake.push_message(f"amar token {TOKEN} save koro")
+    _run_service(ctx, fake, lambda: bool(fake.sent))
+    engine = make_engine(ctx.config.path("database"))
+    with make_sessionmaker(engine)() as s:
+        rows = list(s.scalars(select(Message).order_by(Message.id)))
+    engine.dispose()
+    assert [r.direction for r in rows] == ["in", "out"]
+    assert TOKEN not in rows[0].text and "REDACTED" in rows[0].text
+    assert "Task #1" in rows[1].text
 
 
 def test_outgoing_buttons_rendered(logs: Path, tmp_path: Path) -> None:

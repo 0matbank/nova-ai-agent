@@ -128,6 +128,11 @@ def add_known_secrets(values: list[str]) -> None:
     _redactor.add(values)
 
 
+def redact(text: str) -> str:
+    """Redact secrets from text before persisting it anywhere (e.g. messages table)."""
+    return _redactor(text)
+
+
 def shutdown_logging() -> None:
     """Flush + close every handler (used by graceful shutdown, plan §32A step 11)."""
     for name in list(logging.root.manager.loggerDict):

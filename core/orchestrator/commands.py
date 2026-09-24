@@ -11,6 +11,7 @@ from pathlib import Path
 
 from channels.base import IncomingMessage, OutgoingMessage
 from core.health import format_duration, format_pc_status, pc_status
+from core.orchestrator.task_commands import TaskCommands
 
 # Every command from plan §27. Ones without a handler yet reply "not yet".
 ALL_COMMANDS = (
@@ -20,14 +21,20 @@ ALL_COMMANDS = (
 
 COMMAND_DESCRIPTIONS = {
     "/status": "Agent health + PC status",
+    "/tasks": "সাম্প্রতিক task-এর তালিকা",
+    "/task": "একটি task-এর বিস্তারিত: /task <id>",
+    "/cancel": "Task বাতিল: /cancel <id>",
+    "/pause": "Queue pause",
+    "/resume": "Queue আবার চালু",
     "/pc": "CPU / GPU / RAM / Disk",
     "/help": "সব command-এর তালিকা",
 }
 
-TEXT_ACK = (
-    "✅ বার্তা পেয়েছি।\n"
-    "Task engine এখনো চালু হয়নি (Phase 3) — তখন এটা task হিসেবে চলবে।\n"
-    "এখন ব্যবহার করা যাবে: /status, /pc, /help"
+TASK_COMMANDS = ("/tasks", "/task", "/cancel", "/pause", "/resume")
+
+SAFE_MODE_REPLY = (
+    "⚠️ SAFE MODE — database চালু হয়নি, তাই task নেওয়া/চালানো বন্ধ।\n"
+    "কারণ: {reason}\n/status দেখুন।"
 )
 
 
@@ -41,23 +48,39 @@ Handler = Callable[[IncomingMessage, list[str]], Awaitable[str]]
 
 
 class CommandRouter:
-    def __init__(self, disk_path: Path, health: HealthSources, agent_name: str) -> None:
+    def __init__(self, disk_path: Path, health: HealthSources, agent_name: str,
+                 tasks: TaskCommands | None = None,
+                 safe_mode_reason: str | None = None) -> None:
         self.started_at = time.time()
         self.disk_path = disk_path
         self.health = health
         self.agent_name = agent_name
+        self.tasks = tasks
+        self.safe_mode_reason = safe_mode_reason
         self._handlers: dict[str, Handler] = {
             "/status": self._status,
             "/pc": self._pc,
             "/help": self._help,
         }
+        if tasks is not None:
+            self._handlers.update({
+                "/tasks": tasks.tasks, "/task": tasks.task, "/cancel": tasks.cancel,
+                "/pause": tasks.pause, "/resume": tasks.resume,
+            })
+
+    def _safe_mode(self) -> OutgoingMessage:
+        return OutgoingMessage(SAFE_MODE_REPLY.format(reason=self.safe_mode_reason or "-"))
 
     async def handle(self, msg: IncomingMessage) -> OutgoingMessage | None:
         if not msg.is_command:
-            return OutgoingMessage(TEXT_ACK)
+            if self.tasks is None:
+                return self._safe_mode()
+            return await self.tasks.submit(msg)
         parts = msg.text.split()
         # "/status@MyBot" → "/status"
         command = parts[0].split("@", 1)[0].lower()
+        if command in TASK_COMMANDS and self.tasks is None:
+            return self._safe_mode()
         handler = self._handlers.get(command)
         if handler:
             return OutgoingMessage(await handler(msg, parts[1:]))
@@ -82,7 +105,8 @@ class CommandRouter:
                 ok, detail = False, f"probe error: {type(e).__name__}"
             all_ok &= ok
             lines.append(f"{'✅' if ok else '❌'} {name}: {detail}")
-        lines.insert(1, f"Health: {'OK' if all_ok else 'DEGRADED'}")
+        mode = "SAFE MODE" if self.safe_mode_reason else ("OK" if all_ok else "DEGRADED")
+        lines.insert(1, f"Health: {mode}")
         lines.append("")
         lines.append(format_pc_status(await pc_status(self.disk_path)))
         return "\n".join(lines)

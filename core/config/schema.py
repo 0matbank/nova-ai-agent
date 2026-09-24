@@ -10,6 +10,7 @@ import ipaddress
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -28,6 +29,15 @@ class AgentSection(Strict):
     name: str
     timezone: str
     languages: list[str]
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_timezone(cls, v: str) -> str:
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError(f"unknown timezone {v!r}") from None
+        return v
 
 
 class PathsSection(Strict):
@@ -105,11 +115,18 @@ class ShutdownSection(Strict):
         return self
 
 
+class TaskEngineSection(Strict):
+    max_retries: Annotated[int, Field(ge=0, le=10)]
+    idle_poll_seconds: PositiveInt
+    list_limit: Annotated[int, Field(ge=1, le=50)]
+
+
 class DefaultConfig(Strict):
     agent: AgentSection
     paths: PathsSection
     logging: LoggingSection
     notification_throttle: NotificationThrottle
+    task_engine: TaskEngineSection
     shutdown: ShutdownSection
 
 

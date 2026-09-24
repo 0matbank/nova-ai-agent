@@ -8,6 +8,8 @@ from typing import Any
 import pytest
 import yaml
 
+from tests.mocks.tasks import TaskEnv, make_task_env
+
 APP_DIR = Path(__file__).resolve().parents[1]
 
 
@@ -24,6 +26,11 @@ def runtime_root(tmp_path: Path) -> Path:
     root = tmp_path / "runtime"
     root.mkdir()
     return root
+
+
+@pytest.fixture
+def task_env(tmp_path: Path) -> TaskEnv:
+    return make_task_env(tmp_path / "db" / "agent.db", tmp_path / "backups")
 
 
 @pytest.fixture

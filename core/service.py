@@ -1,4 +1,6 @@
-"""Core Service (plan §4): Telegram receive + command handling + basic health.
+"""Core Service (plan §4): Telegram receive, task queue + engine, command
+handling, basic health. A failed DB migration puts the service in SAFE MODE:
+Telegram + /status stay alive, task intake is refused, the owner is alerted.
 
     uv run python workers/core-service/run.py
 
@@ -17,15 +19,22 @@ from collections.abc import Callable
 
 import psutil
 
+from channels.base import IncomingMessage, OutgoingMessage
 from channels.telegram.alerts import TelegramAlertHandler
 from channels.telegram.api import TelegramAPI, TelegramAuthError, TelegramError
 from channels.telegram.auth import ChatWhitelist
 from channels.telegram.channel import TelegramChannel
 from core.bootstrap import EXIT_INVALID_CONFIG, EXIT_OK, AppContext, bootstrap
 from core.config import ConfigError
-from core.log import get_logger, shutdown_logging
+from core.db.engine import make_sessionmaker
+from core.db.migrate import MigrationError, check_and_migrate
+from core.log import get_logger, redact, shutdown_logging
 from core.log.setup import ROOT_LOGGER
+from core.notify.notifier import MessageType, Notifier
 from core.orchestrator.commands import CommandRouter, HealthSources
+from core.orchestrator.task_commands import TaskCommands
+from core.queue.engine import TaskEngine
+from core.queue.store import TaskStore, TaskView
 
 EXIT_TELEGRAM_AUTH = 3
 TOKEN_KEY = "TELEGRAM_BOT_TOKEN"  # noqa: S105 - env var name, not a secret
@@ -77,31 +86,104 @@ def build_probes(
     return {"Telegram": telegram, "Config": config, "Disk": disk}
 
 
+def database_probe(store: TaskStore | None, revision: str | None,
+                   safe_reason: str | None) -> Callable[[], tuple[bool, str]]:
+    def probe() -> tuple[bool, str]:
+        if store is None:
+            return False, f"SAFE MODE — {safe_reason}"
+        paused = " · queue PAUSED" if store.is_queue_paused() else ""
+        return True, f"ok (schema {revision}){paused}"
+    return probe
+
+
+async def _announce_recovery(notifier: Notifier, recovered: list[TaskView]) -> None:
+    by_chat: dict[str, list[TaskView]] = {}
+    for t in recovered:
+        by_chat.setdefault(t.chat_id, []).append(t)
+    for chat_id, items in by_chat.items():
+        lines = ["♻️ Restart-এর পরে recovery:"]
+        lines += [f"#{t.id} {t.state} — {t.title}" for t in items]
+        await notifier.notify(chat_id, MessageType.RECOVERY_AFTER_RESTART, "\n".join(lines))
+
+
 async def run_core_service(
     ctx: AppContext, stop: asyncio.Event, api: TelegramAPI, whitelist: ChatWhitelist
 ) -> None:
     me = await api.get_me()   # fails fast on a bad token
     _log.info(f"telegram bot @{me.get('username')} authenticated",
               extra={"action": "telegram.getMe", "status": "ok"})
+    cfg = ctx.config
+
+    async def handle(msg: IncomingMessage) -> OutgoingMessage | None:
+        _record(store, msg.channel, msg.chat_id, "in", msg.text, msg.message_id)
+        reply = await router.handle(msg)
+        if reply is not None:
+            _record(store, msg.channel, msg.chat_id, "out", reply.text, None)
+        return reply
+
+    channel = TelegramChannel(api, whitelist, handle)
+    # Attach the alert handler first so a failed migration is alerted too.
+    alert = TelegramAlertHandler(channel, asyncio.get_running_loop())
+    logging.getLogger(ROOT_LOGGER).addHandler(alert)
+    notifier = Notifier(cfg.default.notification_throttle, channel.send)
+
+    store: TaskStore | None = None
+    engine: TaskEngine | None = None
+    tasks: TaskCommands | None = None
+    safe_reason: str | None = None
+    revision: str | None = None
+    db_engine = None
+    try:
+        mig = check_and_migrate(cfg.path("database"), cfg.path("backups_dir"))
+        db_engine, revision = mig.engine, mig.after
+        store = TaskStore(make_sessionmaker(mig.engine))
+        engine = TaskEngine(store, notifier, cfg.default.task_engine)
+        tasks = TaskCommands(store, engine, cfg.default.task_engine.list_limit,
+                             cfg.default.agent.timezone)
+    except MigrationError as e:
+        safe_reason = str(e) + (" (backup restored)" if e.rolled_back else "")
+        _log.critical(f"DATABASE UNAVAILABLE — SAFE MODE: {safe_reason}",
+                      extra={"action": "db.migrate", "status": "safe_mode",
+                             "error_code": "DB_MIGRATION_FAILED"})
 
     health = HealthSources()
-    router = CommandRouter(ctx.config.root, health, ctx.config.default.agent.name)
-    channel = TelegramChannel(api, whitelist, router.handle)
+    router = CommandRouter(cfg.root, health, cfg.default.agent.name, tasks, safe_reason)
     health.probes.update(build_probes(ctx, channel))
+    health.probes["Database"] = database_probe(store, revision, safe_reason)
     try:
         await api.set_my_commands(router.menu())
     except TelegramError as e:   # menu is a convenience; never block startup on it
         _log.warning(f"setMyCommands failed: {e}", extra={"action": "telegram.menu"})
 
-    alert = TelegramAlertHandler(channel, asyncio.get_running_loop())
-    logging.getLogger(ROOT_LOGGER).addHandler(alert)
+    if store is not None:
+        recovered = store.recover_after_restart()
+        if recovered:
+            await _announce_recovery(notifier, recovered)
+
     _log.info("core service started", extra={"action": "service.start", "status": "ok"})
+    engine_task = asyncio.create_task(engine.run(stop)) if engine is not None else None
     try:
         await channel.run(stop)
     finally:
+        stop.set()
+        if engine_task is not None:
+            await asyncio.gather(engine_task, return_exceptions=True)
         logging.getLogger(ROOT_LOGGER).removeHandler(alert)
         await api.aclose()
+        if db_engine is not None:
+            db_engine.dispose()
         _log.info("core service stopped", extra={"action": "service.stop", "status": "ok"})
+
+
+def _record(store: TaskStore | None, channel: str, chat_id: str, direction: str,
+            text: str, external_id: str | None) -> None:
+    if store is None:
+        return
+    try:
+        store.record_message(channel=channel, chat_id=chat_id, direction=direction,
+                             text=redact(text), external_id=external_id)
+    except Exception:
+        _log.exception("could not record message", extra={"action": "db.message"})
 
 
 def main() -> int:
