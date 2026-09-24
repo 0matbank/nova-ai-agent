@@ -88,6 +88,9 @@ def setup_logging(
     """Configure `agent.<category>` loggers. Safe to call again (replaces handlers)."""
     _redactor.add(known_secrets or [])
     formatter = JsonFormatter(worker, _redactor)
+    # HTTP client libraries log request URLs at INFO; Telegram URLs contain the token.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     root = logging.getLogger(ROOT_LOGGER)
     root.setLevel(level)

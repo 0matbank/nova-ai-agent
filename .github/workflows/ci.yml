@@ -21,7 +21,7 @@ jobs:
       - name: Lint
         run: uv run ruff check .
       - name: Type check
-        run: uv run mypy core
+        run: uv run mypy core channels
       - name: Config validation
         run: uv run python -m core.bootstrap --check --root "$RUNNER_TEMP/agent-root"
       - name: Tests
