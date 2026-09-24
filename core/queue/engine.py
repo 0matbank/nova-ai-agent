@@ -23,6 +23,7 @@ from core.permissions.approvals import ApprovalManager, ApprovalStatus, fingerpr
 from core.permissions.engine import Decision, PermissionDenied, PermissionEngine
 from core.queue.states import TaskState
 from core.queue.store import StepStatus, StepView, TaskStore, TaskView
+from core.skills.desktop import NEEDS_DESKTOP, DesktopUnavailable
 
 _log = get_logger("tasks")
 
@@ -141,7 +142,7 @@ class TaskContext:
         self.store.start_step(self.task.id, seq)
         try:
             data = await fn(prev.checkpoint if prev else None)
-        except (ApprovalPending, TaskCancelled, TaskPaused):
+        except (ApprovalPending, TaskCancelled, TaskPaused, DesktopUnavailable):
             self.store.reset_step(self.task.id, seq)   # not a failure; step re-runs later
             raise
         except Exception as e:
@@ -244,6 +245,12 @@ class TaskEngine:
         except ApprovalPending as e:
             store.transition(task.id, TaskState.WAITING_APPROVAL, error_code=None)
             _log.info(str(e), extra={"action": "task.approval", "status": "waiting"})
+            return
+        except DesktopUnavailable as e:
+            store.transition(task.id, TaskState.WAITING_DESKTOP, error_code=None,
+                             error_message=e.reason)
+            await self._tell(task, MessageType.USER_INPUT_REQUIRED,
+                             f"🖥️ Task #{task.id}: {NEEDS_DESKTOP}")
             return
         except PermissionDenied as e:
             store.transition(task.id, TaskState.FAILED, error_code="PERMISSION_DENIED",

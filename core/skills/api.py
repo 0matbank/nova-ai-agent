@@ -7,6 +7,7 @@ A tool may only request actions declared in its skill's permissions.json.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -47,7 +48,8 @@ class ToolEnv:
     task_id: int | str = "system"
 
 
-ActionFn = Callable[[Any, ToolEnv], str]
+# May be async when the level depends on the live target (e.g. is the window a terminal?).
+ActionFn = Callable[[Any, ToolEnv], "str | Awaitable[str]"]
 RunFn = Callable[[Any, ToolEnv], Awaitable[ToolResult]]
 CheckFn = Callable[[Any, ToolEnv], Awaitable[tuple[bool, str]]]
 PrecheckFn = Callable[[Any, ToolEnv], None]
@@ -64,5 +66,10 @@ class Tool:
     safety_check: CheckFn | None = None      # used when the action is YELLOW
     precheck: PrecheckFn | None = None       # path policy etc.; raise PolicyDenied
 
-    def action_for(self, params: Any, env: ToolEnv) -> str:
-        return self.action if isinstance(self.action, str) else self.action(params, env)
+    async def action_for(self, params: Any, env: ToolEnv) -> str:
+        if isinstance(self.action, str):
+            return self.action
+        result = self.action(params, env)
+        if inspect.isawaitable(result):
+            result = await result
+        return str(result)

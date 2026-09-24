@@ -36,12 +36,14 @@ from core.log import get_logger, redact, shutdown_logging
 from core.log.setup import ROOT_LOGGER
 from core.notify.notifier import MessageType, Notifier
 from core.orchestrator.commands import CommandRouter, HealthSources
+from core.orchestrator.screen_commands import ScreenCommands
 from core.orchestrator.security_commands import SecurityCommands
 from core.orchestrator.skill_commands import SkillCommands
 from core.orchestrator.task_commands import TaskCommands
 from core.permissions.approvals import ApprovalManager
 from core.permissions.audit import AuditTrail
 from core.permissions.engine import PermissionEngine
+from core.queue.desktop_watch import DesktopWatcher
 from core.queue.engine import TaskEngine
 from core.queue.store import TaskStore, TaskView
 from core.skills.registry import SkillError, SkillRegistry
@@ -178,9 +180,12 @@ async def run_core_service(
     skill_cmds = (SkillCommands(registry, security.permissions if security else None)
                   if registry is not None else None)
 
+    monitor = build_worker_monitor(ctx)
+    desktop = next((c for c in monitor.clients if c.name == "desktop"), None)
+
     health = HealthSources()
     router = CommandRouter(cfg.root, health, cfg.default.agent.name, tasks, safe_reason,
-                           security, skill_cmds)
+                           security, skill_cmds, ScreenCommands(desktop))
     health.probes.update(build_probes(ctx, channel))
     health.probes["Database"] = database_probe(store, revision, safe_reason)
     health.probes["Skills"] = lambda: (
@@ -196,15 +201,16 @@ async def run_core_service(
         if recovered:
             await _announce_recovery(notifier, recovered)
 
-    monitor = build_worker_monitor(ctx)
     for c in monitor.clients:
         health.probes[f"{c.name.capitalize()} worker"] = monitor.probe(c.name)
     health.probes["Privileged broker"] = lambda: (True, "not built yet (Phase 22) — disabled")
 
     _log.info("core service started", extra={"action": "service.start", "status": "ok"})
     background = [asyncio.create_task(monitor.run(stop))]
-    if engine is not None:
+    if engine is not None and store is not None:
         background.append(asyncio.create_task(engine.run(stop)))
+        watcher = DesktopWatcher(store, engine, desktop, notifier)
+        background.append(asyncio.create_task(watcher.run(stop)))
     if approvals is not None:
         background.append(asyncio.create_task(_expiry_sweeper(approvals, stop)))
     try:

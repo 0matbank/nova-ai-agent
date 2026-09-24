@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException, Request
 from core.ipc.protocol import HEADER_TASK_ID
 
 
-def register(app: FastAPI) -> None:
+def register(app: FastAPI, ctx: object | None = None) -> None:
     sessions: dict[str, dict[str, Any]] = {}
 
     @app.post("/v1/sessions")

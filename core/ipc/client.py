@@ -27,6 +27,10 @@ class WorkerProtocolMismatch(WorkerError):
     """Worker and core versions differ — update mismatch."""
 
 
+class WorkerDesktopLocked(WorkerError):
+    """Desktop Worker is up but the PC is locked (HTTP 423)."""
+
+
 class WorkerClient:
     def __init__(self, name: str, host: str, port: int, tokens: TokenStore,
                  protocol_version: int, client: httpx.AsyncClient | None = None,
@@ -62,6 +66,8 @@ class WorkerClient:
                 raise WorkerAuthError(f"{self.name}: token rejected")
             if r.status_code == 409:
                 raise WorkerProtocolMismatch(f"{self.name}: {r.json().get('detail')}")
+            if r.status_code == 423:
+                raise WorkerDesktopLocked(f"{self.name}: desktop locked")
             if r.status_code >= 400:
                 raise WorkerError(f"{self.name}: HTTP {r.status_code} {r.text[:200]}")
             data: dict[str, Any] = r.json()

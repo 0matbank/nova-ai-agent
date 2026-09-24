@@ -24,6 +24,7 @@ class FakeTelegram:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.commands: list[dict[str, str]] = []
         self.answered: list[dict[str, Any]] = []
+        self.photos: list[dict[str, Any]] = []
         self.edited: list[dict[str, Any]] = []
         # method -> list of scripted responses (dict payload | "hang" | Exception)
         self.script: dict[str, list[Any]] = defaultdict(list)
@@ -87,8 +88,14 @@ class FakeTelegram:
             return httpx.Response(401, json={"ok": False, "error_code": 401,
                                              "description": "Unauthorized"})
         method = parts[1]
-        params = json.loads(request.content or b"{}")
+        if request.headers.get("content-type", "").startswith("multipart/form-data"):
+            params = self._multipart(request)
+        else:
+            params = json.loads(request.content or b"{}")
         self.calls.append((method, params))
+        if method == "sendPhoto":
+            self.photos.append(params)
+            return self._ok({"message_id": 2000 + len(self.photos)})
 
         if self.script[method]:
             action = self.script[method].pop(0)
@@ -119,6 +126,24 @@ class FakeTelegram:
             return self._ok({"message_id": 1000 + len(self.sent)})
         return httpx.Response(404, json={"ok": False, "error_code": 404,
                                          "description": "Not Found"})
+
+    @staticmethod
+    def _multipart(request: httpx.Request) -> dict[str, Any]:
+        from email.parser import BytesParser
+        from email.policy import default
+        raw = (f"Content-Type: {request.headers['content-type']}\r\n\r\n").encode() + \
+            request.read()
+        msg = BytesParser(policy=default).parsebytes(raw)
+        out: dict[str, Any] = {}
+        for part in msg.iter_parts():
+            name = part.get_param("name", header="content-disposition")
+            payload = part.get_payload(decode=True) or b""
+            if part.get_filename():
+                out["size"] = len(payload)
+                out["filename"] = part.get_filename()
+            else:
+                out[str(name)] = payload.decode("utf-8")
+        return out
 
     @staticmethod
     def _ok(result: Any) -> httpx.Response:

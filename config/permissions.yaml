@@ -20,18 +20,26 @@ actions:
   process.list: GREEN
   powershell.read: GREEN      # only parser-verified read-only commands (skills/powershell)
   terminal.read: GREEN        # only allowlisted read-only programs (skills/terminal)
+  ui.read: GREEN              # list windows, inspect controls, read a value
+  clipboard.read: GREEN       # content is untrusted + redacted
 
   file.create: BLUE
   file.move: BLUE             # destination must not exist; otherwise file.overwrite
   file.delete_workspace: BLUE # inside the agent's own workspace only
   app.open: BLUE
   app.close: BLUE             # graceful close; the app may still ask to save
+  ui.focus: BLUE
+  ui.type: BLUE               # appends; never replaces existing content
+  clipboard.write: BLUE
   browser.navigate: BLUE
   test.run: BLUE
   download: BLUE
 
   file.overwrite: YELLOW      # safety check = backup made first
   file.organize: YELLOW       # safety check = no collisions, nothing protected
+  ui.click: YELLOW            # safety check = control name has no danger word
+  ui.keys: YELLOW             # safety check = not a closing/deleting shortcut
+  ui.replace_text: YELLOW     # safety check = previous content backed up
   package.install: YELLOW
   git.commit: YELLOW
   config.change: YELLOW
@@ -39,6 +47,8 @@ actions:
   powershell.run: RED         # any command not proven read-only
   terminal.run: RED
   process.kill: RED
+  ui.shell_input: RED         # typing/clicking/keys into a terminal or Run dialog
+  ui.click_xy: RED            # raw coordinates: last resort (plan §15, §17)
 
   file.delete_important: RED
   file.delete_pathwide: RED

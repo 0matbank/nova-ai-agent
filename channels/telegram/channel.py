@@ -189,6 +189,20 @@ class TelegramChannel:
             await self.send(chat_id, reply)
 
     async def send(self, chat_id: str, message: OutgoingMessage) -> None:
+        if message.photo is not None:
+            caption, rest = message.text[:1024], message.text[1024:]
+            try:
+                await self.api.send_photo(chat_id, message.photo, caption)
+            except TelegramRetryAfter as e:
+                await asyncio.sleep(e.retry_after)
+                await self.api.send_photo(chat_id, message.photo, caption)
+            except TelegramError as e:
+                _log.error(f"photo send failed: {e}", extra={"action": "telegram.send_photo",
+                                                             "status": "error"})
+                rest = f"(ছবি পাঠানো যায়নি: {e})\n{message.text}"
+            if not rest and not message.buttons:
+                return
+            message = OutgoingMessage(rest or "⬆️", message.buttons)
         markup = None
         if message.buttons:
             markup = {"inline_keyboard": [

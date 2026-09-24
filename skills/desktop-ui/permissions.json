@@ -1,0 +1,10 @@
+{
+  "windows": ["ui.read"],
+  "inspect": ["ui.read"],
+  "read_value": ["ui.read"],
+  "focus": ["ui.focus"],
+  "click": ["ui.click", "ui.shell_input"],
+  "type": ["ui.type", "ui.replace_text", "ui.shell_input"],
+  "keys": ["ui.keys", "ui.shell_input"],
+  "click_xy": ["ui.click_xy"]
+}

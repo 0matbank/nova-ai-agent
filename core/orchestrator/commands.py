@@ -11,6 +11,7 @@ from pathlib import Path
 
 from channels.base import IncomingMessage, OutgoingMessage
 from core.health import format_duration, format_pc_status, pc_status
+from core.orchestrator.screen_commands import ScreenCommands
 from core.orchestrator.security_commands import SecurityCommands
 from core.orchestrator.skill_commands import SkillCommands
 from core.orchestrator.task_commands import TaskCommands
@@ -28,6 +29,7 @@ COMMAND_DESCRIPTIONS = {
     "/cancel": "Task বাতিল: /cancel <id>",
     "/pause": "Queue pause",
     "/resume": "Queue আবার চালু",
+    "/screenshot": "PC-র screen-এর ছবি",
     "/pc": "CPU / GPU / RAM / Disk",
     "/skills": "Skill ও tool-এর তালিকা (permission level সহ)",
     "/lockdown": "Emergency: সব dangerous কাজ বন্ধ (off দিলে খোলে)",
@@ -48,7 +50,7 @@ class HealthSources:
     probes: dict[str, Callable[[], tuple[bool, str]]] = field(default_factory=dict)
 
 
-Handler = Callable[[IncomingMessage, list[str]], Awaitable[str]]
+Handler = Callable[[IncomingMessage, list[str]], Awaitable[str | OutgoingMessage]]
 
 
 class CommandRouter:
@@ -56,7 +58,8 @@ class CommandRouter:
                  tasks: TaskCommands | None = None,
                  safe_mode_reason: str | None = None,
                  security: SecurityCommands | None = None,
-                 skills: SkillCommands | None = None) -> None:
+                 skills: SkillCommands | None = None,
+                 screen: ScreenCommands | None = None) -> None:
         self.started_at = time.time()
         self.disk_path = disk_path
         self.health = health
@@ -77,6 +80,8 @@ class CommandRouter:
             self._handlers["/lockdown"] = security.lockdown
         if skills is not None:
             self._handlers["/skills"] = skills.skills
+        if screen is not None:
+            self._handlers["/screenshot"] = screen.screenshot
 
     def _safe_mode(self) -> OutgoingMessage:
         return OutgoingMessage(SAFE_MODE_REPLY.format(reason=self.safe_mode_reason or "-"))
@@ -93,7 +98,8 @@ class CommandRouter:
             return self._safe_mode()
         handler = self._handlers.get(command)
         if handler:
-            return OutgoingMessage(await handler(msg, parts[1:]))
+            result = await handler(msg, parts[1:])
+            return result if isinstance(result, OutgoingMessage) else OutgoingMessage(result)
         if command in ALL_COMMANDS:
             return OutgoingMessage(f"⏳ {command} এখনো চালু হয়নি — পরের phase-এ আসবে।")
         guess = difflib.get_close_matches(command, ALL_COMMANDS, n=1, cutoff=0.7)

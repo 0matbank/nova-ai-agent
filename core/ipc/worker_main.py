@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from core.bootstrap import EXIT_INVALID_CONFIG, bootstrap
+from core.bootstrap import EXIT_INVALID_CONFIG, AppContext, bootstrap
 from core.config import ConfigError
 from core.ipc.server import make_worker_app, run_worker
 from core.ipc.token import TokenStore
@@ -17,7 +17,8 @@ from core.log import get_logger, shutdown_logging
 
 
 def serve(worker_key: str, worker: str, log_category: str,
-          register: Callable[[FastAPI], None], argv: list[str] | None = None) -> int:
+          register: Callable[[FastAPI, AppContext], None],
+          argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=f"Nova AI {worker} worker")
     parser.add_argument("--port", type=int, help="override workers.yaml port (tests)")
     parser.add_argument("--config-dir", type=Path)
@@ -33,7 +34,7 @@ def serve(worker_key: str, worker: str, log_category: str,
     tokens = TokenStore(ctx.config.path("secrets_dir"))
     tokens.ensure()
     app = make_worker_app(worker, cfg.protocol_version, tokens, log_category)
-    register(app)
+    register(app, ctx)
     port = args.port or wcfg.port
     get_logger(log_category).info(f"{worker} worker listening on {wcfg.host}:{port}",
                                   extra={"action": "worker.start", "status": "ok"})

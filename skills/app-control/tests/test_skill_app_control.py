@@ -13,7 +13,7 @@ from core.ipc.client import WorkerClient
 from core.ipc.server import make_worker_app
 from core.ipc.token import TokenStore
 from core.queue.engine import ApprovalPending
-from core.skills.desktop import NEEDS_DESKTOP
+from core.skills.desktop import NEEDS_DESKTOP, DesktopUnavailable
 from tests.mocks.skills import SkillEnv, make_skill_env
 
 APP_DIR = Path(__file__).resolve().parents[3]
@@ -35,10 +35,12 @@ def desktop_client(tmp_path: Path) -> WorkerClient:
         transport=httpx.ASGITransport(app=app, client=("127.0.0.1", 5555))))
 
 
-def test_no_desktop_worker_reports_unlock_needed(tmp_path: Path) -> None:
+def test_no_desktop_worker_parks_task(tmp_path: Path) -> None:
     s = make_skill_env(tmp_path)
-    r = s.call("app-control", "open", {"app": "notepad"})
-    assert not r.ok and r.summary == NEEDS_DESKTOP and r.data["needs_desktop"]
+    with pytest.raises(DesktopUnavailable) as ei:
+        s.call("app-control", "open", {"app": "notepad"})
+    assert ei.value.reason == "not_running"
+    assert "PC unlock দরকার" in NEEDS_DESKTOP
 
 
 @pytest.fixture
@@ -61,15 +63,22 @@ def test_kill_is_red(s: SkillEnv) -> None:
         s.call("app-control", "kill", {"app": "notepad"})
 
 
+def _running(name: str) -> bool:
+    return any((p.info["name"] or "").lower() == name for p in psutil.process_iter(["name"]))
+
+
 @pytest.mark.windows
 @pytest.mark.skipif(sys.platform != "win32", reason="real desktop app")
-def test_open_and_close_notepad_verified(s: SkillEnv) -> None:
-    opened = s.call("app-control", "open", {"app": "notepad"})
+def test_open_and_close_paint_verified(s: SkillEnv) -> None:
+    # Never act on the user's own windows: Paint (no session restore, unlike
+    # Notepad which reopens the user's unsaved tabs) and only if not already open.
+    if _running("mspaint.exe"):
+        pytest.skip("Paint is already open — refusing to touch the user's window")
+    opened = s.call("app-control", "open", {"app": "paint"})
     try:
         assert opened.ok and opened.evidence["running_pids"]
-        assert any(p.name().lower() == "notepad.exe" for p in psutil.process_iter())
     finally:
-        closed = s.call("app-control", "close", {"app": "notepad"})
+        closed = s.call("app-control", "close", {"app": "paint"})
     assert closed.ok and closed.evidence["still_running"] == []
     time.sleep(0.5)
-    assert not any(p.name().lower() == "notepad.exe" for p in psutil.process_iter())
+    assert not _running("mspaint.exe")

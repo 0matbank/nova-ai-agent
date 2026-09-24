@@ -1,0 +1,8 @@
+{
+  "name": "screenshot",
+  "version": "1.0.0",
+  "description": "Capture the user's desktop (all monitors or one) via the Desktop Worker.",
+  "worker": "desktop",
+  "platforms": ["win32"],
+  "tools": ["capture"]
+}

@@ -54,10 +54,13 @@ class TelegramAPI:
         await self._client.aclose()
 
     async def call(self, method: str, http_timeout: float = 30.0, **params: Any) -> Any:
-        url = f"{self._base}/bot{self._token.get_secret_value()}/{method}"
         payload = {k: v for k, v in params.items() if v is not None}
+        return await self._post(method, http_timeout, json=payload)
+
+    async def _post(self, method: str, http_timeout: float, **kwargs: Any) -> Any:
+        url = f"{self._base}/bot{self._token.get_secret_value()}/{method}"
         try:
-            r = await self._client.post(url, json=payload, timeout=http_timeout)
+            r = await self._client.post(url, timeout=http_timeout, **kwargs)
         except httpx.TimeoutException:
             raise TelegramTransientError(f"{method}: timeout") from None
         except httpx.TransportError as e:
@@ -97,6 +100,13 @@ class TelegramAPI:
             "getUpdates", http_timeout=timeout + 15, offset=offset, timeout=timeout,
             allowed_updates=["message", "callback_query"],
         )
+        return result
+
+    async def send_photo(self, chat_id: str, photo: bytes, caption: str = "",
+                         filename: str = "screenshot.jpg") -> dict[str, Any]:
+        result: dict[str, Any] = await self._post(
+            "sendPhoto", 60.0, data={"chat_id": chat_id, "caption": caption[:1024]},
+            files={"photo": (filename, photo, "image/jpeg")})
         return result
 
     async def answer_callback_query(self, callback_id: str, text: str) -> None:

@@ -1,0 +1,8 @@
+{
+  "name": "desktop-ui",
+  "version": "1.0.0",
+  "description": "See and operate desktop windows through Windows UI Automation (plan §17 priority order).",
+  "worker": "desktop",
+  "platforms": ["win32"],
+  "tools": ["windows", "inspect", "read_value", "focus", "click", "type", "keys", "click_xy"]
+}

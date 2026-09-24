@@ -1,0 +1,8 @@
+{
+  "name": "clipboard",
+  "version": "1.0.0",
+  "description": "Read or set the text clipboard of the user session.",
+  "worker": "desktop",
+  "platforms": ["win32"],
+  "tools": ["get", "set"]
+}

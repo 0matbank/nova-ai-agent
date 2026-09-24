@@ -301,7 +301,8 @@ def test_service_end_to_end(config_dir: Path, runtime_root: Path) -> None:
     shutdown_logging()
     assert fake.calls[0][0] == "getMe"
     assert [c["command"] for c in fake.commands] == [
-        "status", "tasks", "task", "cancel", "pause", "resume", "pc", "skills", "lockdown",
+        "status", "tasks", "task", "cancel", "pause", "resume", "screenshot", "pc", "skills",
+        "lockdown",
         "help"]
     [reply] = fake.texts_to(OWNER)
     assert "✅ Database: ok (schema 001)" in reply

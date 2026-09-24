@@ -1,0 +1,4 @@
+{
+  "get": ["clipboard.read"],
+  "set": ["clipboard.write"]
+}

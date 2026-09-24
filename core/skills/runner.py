@@ -48,7 +48,7 @@ class SkillRunner:
         env = ToolEnv(self.env.config, self.env.paths, self.env.workers, ctx.task.id)
         if t.precheck is not None:
             t.precheck(p, env)                     # PolicyDenied propagates
-        action = t.action_for(p, env)
+        action = await t.action_for(p, env)
         if action not in sk.declared.get(tool, []):
             raise SkillError(f"{skill}.{tool} requested undeclared action {action!r}")
         check = None

@@ -27,6 +27,8 @@ class OutgoingMessage:
     text: str
     # Inline buttons as rows of (label, callback_data); used from Phase 4.
     buttons: list[list[tuple[str, str]]] = field(default_factory=list)
+    # Optional JPEG image (e.g. /screenshot); `text` becomes its caption.
+    photo: bytes | None = None
 
 
 @dataclass(frozen=True)
