@@ -69,8 +69,12 @@ class UserRequestExecutor:
         intent = Intent(cp["category"], cp["confidence"], cp["source"], skill)
 
         async def act(prev: dict[str, Any] | None) -> dict[str, Any]:
-            if intent.skill is not None and self.skills is not None:
-                return await self._run_skill(ctx, intent)
+            if intent.skill is not None:
+                if self.skills is not None and intent.skill[0] in self.skills.registry.skills:
+                    return await self._run_skill(ctx, intent)
+                return {"kind": "not_yet", "answer": (
+                    f"'{intent.skill[0]}' skill এই মুহূর্তে চালু নেই (disabled বা এই "
+                    "platform-এ নেই), তাই কাজটা করা গেল না।")}
             if intent.category in NOT_YET:
                 return {"kind": "not_yet", "answer": (
                     f"বুঝেছি — এটা '{intent.category}' ধরনের কাজ। এটা এখনো শেখানো হয়নি; "

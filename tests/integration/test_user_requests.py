@@ -6,7 +6,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import sys
 from pathlib import Path
+
+import pytest
 
 from core.config import load_config
 from core.orchestrator.executor import UserRequestExecutor
@@ -77,6 +80,7 @@ def test_pc_status_goes_to_skill_without_ai(tmp_path: Path) -> None:
     assert local.requests == []                          # no LLM for a deterministic command
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="screenshot skill is Windows-only")
 def test_screenshot_request_sends_photo(tmp_path: Path) -> None:
     desk = FakeDesktop({"/v1/screenshot": {"width": 10, "height": 10, "monitors": 1,
                                            "blank": False, "path": "x.png",
@@ -102,6 +106,15 @@ def test_not_yet_capability_is_honest(tmp_path: Path) -> None:
     t = s.tasks.store.get(tid)
     assert t.state is TaskState.COMPLETED and "Phase 12" in t.result_summary
     assert local.requests == []
+
+
+def test_unavailable_skill_answers_instead_of_crashing(tmp_path: Path) -> None:
+    s, _ = setup(tmp_path)
+    s.runner.registry.skills.pop("screenshot", None)
+    tid = submit(s, "screenshot dao")
+    run_all(s)
+    t = s.tasks.store.get(tid)
+    assert t.state is TaskState.COMPLETED and "চালু নেই" in t.result_summary
 
 
 def test_ai_down_retries_then_fails(tmp_path: Path) -> None:
