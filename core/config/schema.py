@@ -121,12 +121,24 @@ class TaskEngineSection(Strict):
     list_limit: Annotated[int, Field(ge=1, le=50)]
 
 
+class VoiceSection(Strict):
+    max_duration_seconds: Annotated[int, Field(ge=5, le=1800)]
+    confirm_below_confidence: Annotated[float, Field(ge=0.0, le=1.0)]
+    confirm_below_confidence_safe: Annotated[float, Field(ge=0.0, le=1.0)] = 0.5
+    confirm_timeout_seconds: Annotated[int, Field(ge=30, le=3600)]
+    keep_audio: bool
+    beam_size: Annotated[int, Field(ge=1, le=10)]
+    vad_speech_pad_ms: Annotated[int, Field(ge=0, le=2000)] = 400
+    hint_words: list[str] = []
+
+
 class DefaultConfig(Strict):
     agent: AgentSection
     paths: PathsSection
     logging: LoggingSection
     notification_throttle: NotificationThrottle
     task_engine: TaskEngineSection
+    voice: VoiceSection
     shutdown: ShutdownSection
 
 
@@ -183,9 +195,17 @@ class OllamaPolicy(Strict):
     think_task_types: list[str] = []
 
 
+class WhisperConfig(Strict):
+    model: str
+    path: Path
+    device: Literal["cuda", "cpu"]
+    compute_type: Literal["float16", "int8_float16", "int8", "float32"]
+
+
 class ModelsConfig(Strict):
     alias_sets: dict[str, dict[str, str | None]]
     ollama_policy: OllamaPolicy
+    whisper: WhisperConfig
 
     @model_validator(mode="before")
     @classmethod
@@ -194,7 +214,8 @@ class ModelsConfig(Strict):
         if isinstance(data, dict) and "alias_sets" not in data:
             data = dict(data)
             policy = data.pop("ollama_policy", None)
-            return {"alias_sets": data, "ollama_policy": policy}
+            whisper = data.pop("whisper", None)
+            return {"alias_sets": data, "ollama_policy": policy, "whisper": whisper}
         return data
 
     @model_validator(mode="after")

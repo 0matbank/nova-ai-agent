@@ -18,6 +18,13 @@ ollama_policy:
   # Fast paths (intent, simple) stay without thinking.
   think_task_types: [reasoning, bangla, coding, review, summarization]
 
+# Speech-to-text (plan §7). Loaded on demand, unloaded when idle (resources.yaml).
+whisper:
+  model: large-v3
+  path: local-models/whisper/large-v3     # relative to the runtime root
+  device: cuda                            # falls back to cpu/int8 if CUDA fails
+  compute_type: float16
+
 openai_codex:
   default: null
 

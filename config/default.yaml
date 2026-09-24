@@ -50,6 +50,25 @@ task_engine:
   idle_poll_seconds: 5
   list_limit: 10              # rows shown by /tasks
 
+# §7 — voice commands
+voice:
+  max_duration_seconds: 300
+  # Below this transcription confidence the agent shows what it heard (plus a
+  # suggested correction) and waits for ✅ — it never guesses (plan §7; owner
+  # feedback 2026-09-24: first phone test ran a misheard Bangla command at 67%).
+  confirm_below_confidence: 0.85
+  # Read-only requests (PC status, screenshot, process list, plain questions)
+  # cannot do harm if misheard, so they need less certainty.
+  confirm_below_confidence_safe: 0.5
+  confirm_timeout_seconds: 300
+  keep_audio: false            # delete the audio file after transcription
+  beam_size: 5
+  vad_speech_pad_ms: 400       # keep short commands from being clipped
+  # Vocabulary hint for Whisper (initial prompt): words the owner often says.
+  hint_words: [Nova AI, পিসি, পিসির অবস্থা, স্ট্যাটাস, স্ক্রিনশট, screenshot, status,
+               বাংলাদেশ, রাজধানী, খোলো, বন্ধ করো, ফাইল, ফোল্ডার, Notepad, Chrome,
+               Click TV, টাস্ক, বলো, দেখাও]
+
 # §32A — graceful shutdown
 shutdown:
   graceful_timeout_seconds: 30

@@ -9,6 +9,15 @@ from datetime import datetime
 
 
 @dataclass(frozen=True)
+class VoiceRef:
+    """A voice/audio attachment; the channel knows how to download `file_id`."""
+    file_id: str
+    duration: int
+    mime_type: str
+    size: int
+
+
+@dataclass(frozen=True)
 class IncomingMessage:
     channel: str            # "telegram" | "whatsapp" | "local"
     chat_id: str
@@ -16,6 +25,7 @@ class IncomingMessage:
     message_id: str
     text: str
     received_at: datetime
+    voice: VoiceRef | None = None
 
     @property
     def is_command(self) -> bool:

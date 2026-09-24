@@ -16,6 +16,7 @@ from channels.base import (
     IncomingMessage,
     MessageHandler,
     OutgoingMessage,
+    VoiceRef,
 )
 from channels.telegram.api import (
     TelegramAPI,
@@ -31,7 +32,7 @@ from core.log import get_logger
 _log = get_logger("core")
 
 MAX_BACKOFF_SECONDS = 60
-UNSUPPORTED_REPLY = "এখন শুধু text message সমর্থিত। Voice/file পরের phase-এ চালু হবে।"
+UNSUPPORTED_REPLY = "এখন text আর voice message সমর্থিত। ছবি/file পরের phase-এ চালু হবে।"
 ERROR_REPLY = "দুঃখিত, এই message প্রসেস করতে গিয়ে internal error হয়েছে। Log-এ বিস্তারিত আছে।"
 
 
@@ -168,6 +169,13 @@ class TelegramChannel:
             return
         chat_id = str(message["chat"]["id"])
         text = message.get("text")
+        voice = None
+        media = message.get("voice") or message.get("audio") or message.get("video_note")
+        if text is None and media and media.get("file_id"):
+            voice = VoiceRef(file_id=str(media["file_id"]), duration=int(media.get("duration", 0)),
+                             mime_type=str(media.get("mime_type", "audio/ogg")),
+                             size=int(media.get("file_size", 0)))
+            text = str(message.get("caption") or "")
         if text is None:
             await self.send(chat_id, OutgoingMessage(UNSUPPORTED_REPLY))
             return
@@ -176,8 +184,10 @@ class TelegramChannel:
             channel=self.name, chat_id=chat_id, user_id=str(message["from"]["id"]),
             message_id=str(message["message_id"]), text=text,
             received_at=datetime.fromtimestamp(int(message.get("date", time.time())), UTC),
+            voice=voice,
         )
-        command = text.split()[0] if incoming.is_command else "<text>"
+        command = ("<voice>" if voice else
+                   text.split()[0] if incoming.is_command else "<text>")
         _log.info("message received", extra={"action": f"telegram.recv {command}"})
         try:
             reply = await self.handler(incoming)

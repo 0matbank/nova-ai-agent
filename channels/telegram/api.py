@@ -102,6 +102,26 @@ class TelegramAPI:
         )
         return result
 
+    async def download_file(self, file_id: str, max_bytes: int = 20 * 1024 * 1024) -> bytes:
+        """getFile + download. The download URL contains the token, so errors
+        never include it."""
+        info = await self.call("getFile", file_id=file_id)
+        path = str((info or {}).get("file_path", ""))
+        if not path:
+            raise TelegramError("getFile: no file_path")
+        if int((info or {}).get("file_size") or 0) > max_bytes:
+            raise TelegramError("getFile: file too large")
+        url = f"{self._base}/file/bot{self._token.get_secret_value()}/{path}"
+        try:
+            r = await self._client.get(url, timeout=120)
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            raise TelegramTransientError(f"file download: {type(e).__name__}") from None
+        if r.status_code != 200:
+            raise TelegramError(f"file download: HTTP {r.status_code}")
+        if len(r.content) > max_bytes:
+            raise TelegramError("file download: too large")
+        return r.content
+
     async def send_photo(self, chat_id: str, photo: bytes, caption: str = "",
                          filename: str = "screenshot.jpg") -> dict[str, Any]:
         result: dict[str, Any] = await self._post(

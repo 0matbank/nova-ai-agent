@@ -34,14 +34,18 @@ def _rx(*parts: str) -> re.Pattern[str]:
 
 # Order matters: first match wins.
 RULES: list[tuple[str, re.Pattern[str], tuple[str, str, dict[str, Any]] | None]] = [
-    ("screenshot", _rx(r"screen\s*shot", r"স্ক্রিনশট", r"\bscreen\s*(ta\s*)?(dekhao|dekhaw|"
+    ("screenshot", _rx(r"screen\s*shot", r"\bskin\s*shot\b", r"স্ক্রিনশট", r"স্ক্রিন\s*শট",
+                       r"\bscreen\s*(ta\s*)?(dekhao|dekhaw|"
                        r"dikhao|pathao)\b", r"স্ক্রিন\s*দেখাও"),
      ("screenshot", "capture", {})),
     ("processes", _rx(r"\bprocess(es)?\s*(list|gula|গুলো)?\b.*\b(dekhao|bolo|show|list)\b",
                       r"\bki\s*ki\s*(app|program|process)?\s*chol(che|ce)\b", r"কী কী চলছে",
-                      r"\btask\s*manager\b", r"\bwhat.*running\b"),
+                      r"\btask\s*manager\b", r"\bwhat.*running\b",
+                      r"(কি|কী)\s*(কি|কী\s*)?(কাজ|কাস|app|অ্যাপ|প্রোগ্রাম)?\s*(চলছে|চলতেছে|তলছে)",
+                      r"(কি|কী)\s*(অপেন|ওপেন|খোলা)\s*(আছে|আসে)"),
      ("windows", "processes", {})),
-    ("pc_status", _rx(r"\bpc\s*(er\s*)?(status|obostha|condition)\b", r"পিসি(র)?\s*(অবস্থা|স্ট্যাটাস)",
+    ("pc_status", _rx(r"\bpc\s*(er\s*)?(status|obostha|condition|health)\b",
+                      r"পিসি(র|তে)?\s*(বর্তমান\s*)?(অবস্থা|স্ট্যাটাস|হেল্থ|হেলথ)",
                       r"\b(cpu|ram|gpu|vram|disk|memory)\b.*\b(koto|status|usage|obostha|"
                       r"kemon|left|free|how much)\b",
                       r"\b(koto|how much)\b.*\b(cpu|ram|gpu|disk)\b", r"(র‍্যাম|সিপিইউ).*(কত|অবস্থা)"),

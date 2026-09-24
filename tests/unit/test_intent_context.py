@@ -30,6 +30,10 @@ from tests.mocks.providers import FakeAdapter
     ("what's the latest news in Dhaka", "research", None),
     ("আজকের আবহাওয়া কেমন", "research", None),
     ("ajke 5 tay mone koriye dio", "reminder", None),
+    ("Take a skin shot", "screenshot", ("screenshot", "capture")),
+    ("বর্তমানে আমার পিসিতে কি অপেন আসে, কি কাস চলছে", "processes", ("windows", "processes")),
+    ("এখন পিসির হেল্থ কেমন", "pc_status", ("windows", "status")),
+    ("পিসির বর্তমান অবস্থা বলো", "pc_status", ("windows", "status")),
 ])
 def test_rules(text: str, category: str, skill: tuple[str, str] | None) -> None:
     hit = classify_by_rules(text)

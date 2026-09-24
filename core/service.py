@@ -20,7 +20,7 @@ from collections.abc import Callable
 
 import psutil
 
-from channels.base import IncomingMessage, OutgoingMessage
+from channels.base import CallbackReply, IncomingCallback, IncomingMessage, OutgoingMessage
 from channels.telegram.alerts import TelegramAlertHandler
 from channels.telegram.api import TelegramAPI, TelegramAuthError, TelegramError
 from channels.telegram.auth import ChatWhitelist
@@ -52,6 +52,10 @@ from core.skills.api import ToolEnv
 from core.skills.paths import PathPolicy
 from core.skills.registry import SkillError, SkillRegistry
 from core.skills.runner import SkillRunner
+from core.voice.correct import suggest as suggest_correction
+from core.voice.intake import CALLBACK_PREFIX as VOICE_PREFIX
+from core.voice.intake import VoiceIntake
+from core.voice.transcriber import Transcriber
 from models.router import ProviderRouter
 from providers.provider_base import USABLE
 from providers.registry import ProviderRegistry
@@ -137,8 +141,13 @@ async def run_core_service(
     cfg = ctx.config
 
     async def handle(msg: IncomingMessage) -> OutgoingMessage | None:
-        _record(store, msg.channel, msg.chat_id, "in", msg.text, msg.message_id)
-        reply = await router.handle(msg)
+        _record(store, msg.channel, msg.chat_id, "in",
+                msg.text or ("<voice>" if msg.voice else ""), msg.message_id)
+        reply: OutgoingMessage | None
+        if msg.voice is not None:
+            reply = await voice.handle(msg, channel.api.download_file)
+        else:
+            reply = await router.handle(msg)
         if reply is not None:
             _record(store, msg.channel, msg.chat_id, "out", reply.text, None)
         return reply
@@ -169,7 +178,6 @@ async def run_core_service(
         tasks = TaskCommands(store, engine, cfg.default.task_engine.list_limit,
                              cfg.default.agent.timezone)
         security = SecurityCommands(permissions, approvals, store, audit)
-        channel.callback_handler = security.on_button
     except MigrationError as e:
         safe_reason = str(e) + (" (backup restored)" if e.rolled_back else "")
         _log.critical(f"DATABASE UNAVAILABLE — SAFE MODE: {safe_reason}",
@@ -202,6 +210,26 @@ async def run_core_service(
         engine.register("user_request", UserRequestExecutor(
             IntentRouter(provider_router), provider_router, skill_runner))
 
+    # Voice (plan §7): transcript → the same path as typed text.
+    wcfg = cfg.models.whisper
+    whisper_path = wcfg.path if wcfg.path.is_absolute() else cfg.root / wcfg.path
+    transcriber = Transcriber(whisper_path, wcfg.device, wcfg.compute_type,
+                              cfg.resources.idle_unload_seconds.whisper,
+                              cfg.default.voice.beam_size,
+                              hint_words=cfg.default.voice.hint_words,
+                              vad_speech_pad_ms=cfg.default.voice.vad_speech_pad_ms)
+    voice = VoiceIntake(transcriber, cfg.default.voice, cfg.path("workspace_dir") / "voice",
+                        lambda m: router.handle(m),
+                        corrector=lambda heard, lang: suggest_correction(
+                            provider_router, heard, lang, cfg.default.voice.hint_words))
+
+    async def on_button(cb: IncomingCallback) -> CallbackReply | None:
+        if cb.data.startswith(f"{VOICE_PREFIX}:"):
+            return await voice.on_button(cb)
+        return await security.on_button(cb) if security is not None else None
+
+    channel.callback_handler = on_button
+
     health = HealthSources()
     router = CommandRouter(cfg.root, health, cfg.default.agent.name, tasks, safe_reason,
                            security, skill_cmds, ScreenCommands(desktop))
@@ -227,7 +255,8 @@ async def run_core_service(
 
     _log.info("core service started", extra={"action": "service.start", "status": "ok"})
     background = [asyncio.create_task(monitor.run(stop)),
-                  asyncio.create_task(_provider_health_loop(providers, stop))]
+                  asyncio.create_task(_provider_health_loop(providers, stop)),
+                  asyncio.create_task(transcriber.idle_loop(stop))]
     if engine is not None and store is not None:
         background.append(asyncio.create_task(engine.run(stop)))
         watcher = DesktopWatcher(store, engine, desktop, notifier)

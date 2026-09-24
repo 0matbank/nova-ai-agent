@@ -121,7 +121,7 @@ def test_command_replies(text: str, expected: str, logs: Path, tmp_path: Path) -
 
 def test_non_text_message(logs: Path, tmp_path: Path) -> None:
     fake = FakeTelegram()
-    fake.push_message(None, extra={"voice": {"file_id": "x", "duration": 2}})
+    fake.push_message(None, extra={"photo": [{"file_id": "x", "width": 1, "height": 1}]})
     _poll(_channel(fake, tmp_path))
     assert fake.texts_to(OWNER) == [UNSUPPORTED_REPLY]
 
