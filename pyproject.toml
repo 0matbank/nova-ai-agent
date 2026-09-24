@@ -16,6 +16,9 @@ dependencies = [
     "sqlalchemy>=2.0.30,<3",
     "alembic>=1.13,<2",
     "tzdata>=2024.1",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+    "pywin32>=306 ; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +33,7 @@ dev = [
     "mypy>=1.13",
     "types-pyyaml>=6.0",
     "types-psutil>=7.2.2.20260906",
+    "types-pywin32>=312.0.0.20260827",
 ]
 test = [
     "pytest>=8.3",
@@ -67,3 +71,9 @@ python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
 exclude = ["^tests/", "^docs/"]
+
+[[tool.mypy.overrides]]
+# types-pywin32 types CreateFile's PyHANDLE and ReadFile's bytes result wrongly;
+# runtime behaviour is covered by tests/integration/test_broker_pipe.py.
+module = "core.ipc.pipe"
+disable_error_code = ["arg-type", "call-overload"]

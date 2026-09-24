@@ -29,6 +29,9 @@ from core.bootstrap import EXIT_INVALID_CONFIG, EXIT_OK, AppContext, bootstrap
 from core.config import ConfigError
 from core.db.engine import make_sessionmaker
 from core.db.migrate import MigrationError, check_and_migrate
+from core.ipc.client import WorkerClient
+from core.ipc.monitor import WorkerMonitor
+from core.ipc.token import TokenStore
 from core.log import get_logger, redact, shutdown_logging
 from core.log.setup import ROOT_LOGGER
 from core.notify.notifier import MessageType, Notifier
@@ -175,8 +178,13 @@ async def run_core_service(
         if recovered:
             await _announce_recovery(notifier, recovered)
 
+    monitor = build_worker_monitor(ctx)
+    for c in monitor.clients:
+        health.probes[f"{c.name.capitalize()} worker"] = monitor.probe(c.name)
+    health.probes["Privileged broker"] = lambda: (True, "not built yet (Phase 22) — disabled")
+
     _log.info("core service started", extra={"action": "service.start", "status": "ok"})
-    background = []
+    background = [asyncio.create_task(monitor.run(stop))]
     if engine is not None:
         background.append(asyncio.create_task(engine.run(stop)))
     if approvals is not None:
@@ -187,10 +195,24 @@ async def run_core_service(
         stop.set()
         await asyncio.gather(*background, return_exceptions=True)
         logging.getLogger(ROOT_LOGGER).removeHandler(alert)
+        await monitor.aclose()
         await api.aclose()
         if db_engine is not None:
             db_engine.dispose()
         _log.info("core service stopped", extra={"action": "service.stop", "status": "ok"})
+
+
+def build_worker_monitor(ctx: AppContext) -> WorkerMonitor:
+    wcfg = ctx.config.workers
+    tokens = TokenStore(ctx.config.path("secrets_dir"))
+    tokens.ensure()
+    clients = [
+        WorkerClient(name, w.host, w.port, tokens, wcfg.protocol_version)
+        for name, w in (("desktop", wcfg.workers.desktop_worker),
+                        ("browser", wcfg.workers.browser_worker))
+        if w.enabled
+    ]
+    return WorkerMonitor(clients)
 
 
 async def _expiry_sweeper(approvals: ApprovalManager, stop: asyncio.Event,
