@@ -1,0 +1,94 @@
+# ============================================================
+# Personal AI Agent OS — .gitignore
+# Secrets boundary: nothing below may ever reach GitHub.
+# Runtime data lives OUTSIDE this repo (D:\Personal-Agent\data, secrets,
+# sessions, logs, ...). These rules are a second line of defence.
+# ============================================================
+
+# ---- Secrets / credentials (plan §22) ----
+.env
+.env.*
+!.env.example
+*.env
+secrets/
+vault/
+*.vault
+*.key
+*.pem
+*.pfx
+*.p12
+*.crt
+*.token
+*token*.json
+credentials/
+*credential*.json
+*credentials*.json
+client_secret*.json
+service_account*.json
+id_rsa*
+id_ed25519*
+
+# ---- Sessions / cookies / browser profiles (plan §16, §22) ----
+sessions/
+cookies/
+*.cookies
+cookies.json
+storage_state*.json
+storageState*.json
+browser-profile/
+user-data-dir/
+.wwebjs_auth/
+.wwebjs_cache/
+whatsapp-session*/
+
+# ---- Runtime data that stays on the local PC (plan §23) ----
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+logs/
+*.log
+downloads/
+workspace/
+backups/
+local-models/
+*.gguf
+*.safetensors
+*.bin
+*.onnx
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.python-version.local
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# ---- Node / Playwright ----
+node_modules/
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+
+# ---- Editors / OS ----
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store
