@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import subprocess
 import sys
 import uuid
@@ -95,7 +96,10 @@ async def main() -> int:
         bad = pipe_call(pipe, {**base_msg, "action": "ping", "token": "y" * 43})
         check("broker pipe: wrong token refused", bad.get("error") == "UNAUTHORIZED")
 
-        ns = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True)
+        netstat = shutil.which("netstat")
+        assert netstat, "netstat not found"
+        ns = subprocess.run([netstat, "-ano", "-p", "TCP"], capture_output=True, text=True,  # noqa: S603
+                            check=False)
         ports = {str(w.workers.desktop_worker.port), str(w.workers.browser_worker.port)}
         listening = [ln.split() for ln in ns.stdout.splitlines() if "LISTENING" in ln]
         mine = [p[1] for p in listening if p[1].rsplit(":", 1)[-1] in ports]
