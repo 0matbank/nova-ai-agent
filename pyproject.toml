@@ -1,0 +1,62 @@
+[project]
+name = "personal-agent"
+version = "0.1.0"
+description = "Personal AI Agent OS — remotely controllable, permission-controlled Windows agent"
+readme = "README.md"
+requires-python = "==3.12.*"
+# Base dependencies = the "core" group (Core Service). Worker-specific
+# dependencies live in the optional groups below and are added in the phase
+# that first needs them.
+dependencies = [
+    "pydantic>=2.9,<3",
+    "pyyaml>=6.0.2,<7",
+    "python-dotenv>=1.0,<2",
+]
+
+[project.optional-dependencies]
+desktop = []
+browser = []
+voice = []
+local-ai = []
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "types-pyyaml>=6.0",
+]
+test = [
+    "pytest>=8.3",
+]
+
+[tool.uv]
+package = false
+default-groups = ["dev", "test"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "windows: requires a real Windows desktop session",
+    "e2e: local Windows end-to-end test (not run in CI)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM"]
+ignore = ["S101"]  # assert is fine in tests
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S104", "S105", "S106", "S108", "S603"]
+"scripts/verify_foundation.py" = ["S603", "S607"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+exclude = ["^tests/", "^docs/"]

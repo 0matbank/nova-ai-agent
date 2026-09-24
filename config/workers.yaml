@@ -1,0 +1,21 @@
+# Worker processes + IPC (plan §4, §17A). Internal RPC binds to loopback only.
+
+protocol_version: 1
+
+workers:
+  core_service:
+    enabled: true
+  desktop_worker:
+    enabled: true
+    transport: http
+    host: 127.0.0.1
+    port: 47801
+  browser_worker:
+    enabled: true
+    transport: http
+    host: 127.0.0.1
+    port: 47802
+  privileged_broker:
+    enabled: false          # built in Phase 22
+    transport: named_pipe
+    pipe_name: '\\.\pipe\personal-agent-broker'

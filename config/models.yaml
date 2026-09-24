@@ -1,0 +1,27 @@
+# Role-based model aliases (plan §8.3, §9A). Change models here — never in code.
+# `null` = let the provider CLI/account use its own default model.
+
+ollama_models:
+  fast_general: "qwen3:8b"
+  intent_classification: "qwen3:8b"
+  summarization: "qwen3:8b"
+  bangla_banglish: "qwen3:8b"
+  local_code_review: "deepseek-coder-v2:16b"
+
+ollama_policy:
+  default_alias: fast_general
+  on_demand_aliases: [local_code_review]   # loaded only when coding/review needs it
+  max_heavy_models_loaded: 1
+  idle_unload_seconds: 600
+
+openai_codex:
+  default: null
+
+google_antigravity:
+  default: null
+
+gemini_api:
+  default: null
+
+anthropic_claude:
+  default: null

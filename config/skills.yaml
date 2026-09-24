@@ -1,0 +1,35 @@
+# Skill registry (plan §14). Skills define HOW work is executed.
+# status: planned  = not implemented yet; the loader skips it
+#         enabled  = implemented and loadable
+#         disabled = implemented but switched off
+
+skills:
+  windows:        { status: planned }
+  desktop-ui:     { status: planned }
+  app-control:    { status: planned }
+  browser:        { status: planned }
+  browser-vision: { status: planned }
+  terminal:       { status: planned }
+  powershell:     { status: planned }
+  files:          { status: planned }
+  search:         { status: planned }
+  git:            { status: planned }
+  github:         { status: planned }
+  coding:         { status: planned }
+  download:       { status: planned }
+  screenshot:     { status: planned }
+  clipboard:      { status: planned }
+  documents:      { status: planned }
+  pdf:            { status: planned }
+  spreadsheet:    { status: planned }
+  archive:        { status: planned }
+  ffmpeg:         { status: planned }
+  audio:          { status: planned }
+  image:          { status: planned }
+  network:        { status: planned }
+  monitoring:     { status: planned }
+  scheduler:      { status: planned }
+  notifications:  { status: planned }
+  voice:          { status: planned }
+  web-research:   { status: planned }
+  project:        { status: planned }

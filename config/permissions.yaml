@@ -1,0 +1,38 @@
+# Permission levels (plan §18). Enforced by the Permission Engine (Phase 4).
+#   GREEN  = automatic
+#   BLUE   = automatic + log
+#   YELLOW = safety check
+#   RED    = explicit approval required (single task/action, never reused)
+
+default_level: RED   # unknown actions are treated as RED (fail closed)
+
+approval:
+  timeout_seconds: 300
+  single_use: true
+  require_totp_for: []   # optional §17D secondary confirmation, e.g. [admin_action]
+
+actions:
+  file.read: GREEN
+  search: GREEN
+  screenshot: GREEN
+  pc.status: GREEN
+  research: GREEN
+
+  file.create: BLUE
+  browser.navigate: BLUE
+  test.run: BLUE
+  download: BLUE
+
+  file.overwrite: YELLOW
+  package.install: YELLOW
+  git.commit: YELLOW
+  config.change: YELLOW
+
+  file.delete_important: RED
+  file.delete_pathwide: RED
+  git.push_production: RED
+  message.send_external: RED
+  system.shutdown: RED
+  system.restart: RED
+  account.security_change: RED
+  admin.destructive: RED

@@ -1,0 +1,23 @@
+# Specialist agent roster (plan §12, §50). Agents define HOW to think; they are
+# provider-neutral (§8.11). Only a few are active per request (§58, §61).
+
+runtime:
+  max_active_agents_per_task: 3
+
+agents:
+  master_orchestrator: { enabled: true,  kind: reasoning, task_types: [all] }
+  windows_operator:    { enabled: true,  kind: reasoning, task_types: [pc_control] }
+  developer:           { enabled: true,  kind: reasoning, task_types: [coding] }
+  frontend_ui:         { enabled: true,  kind: reasoning, task_types: [coding, frontend] }
+  browser:             { enabled: true,  kind: reasoning, task_types: [browser] }
+  research:            { enabled: true,  kind: reasoning, task_types: [research] }
+  file_document:       { enabled: true,  kind: reasoning, task_types: [document, files] }
+  devops:              { enabled: true,  kind: reasoning, task_types: [devops] }
+  git:                 { enabled: true,  kind: reasoning, task_types: [coding, git] }
+  media:               { enabled: true,  kind: reasoning, task_types: [media] }
+  automation:          { enabled: true,  kind: reasoning, task_types: [automation, reminder] }
+  security:            { enabled: true,  kind: reasoning, task_types: [security] }
+  verifier:            { enabled: true,  kind: reasoning, task_types: [all] }
+
+# Project-specific agents live in agents/projects/ and config/projects/.
+project_agents: [click-tv, stream-doctor, social-selling, website-development, seo]

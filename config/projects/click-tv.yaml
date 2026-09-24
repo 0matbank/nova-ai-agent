@@ -1,0 +1,12 @@
+# Click TV project profile (plan §13, §51, §52.1). Fill in when known —
+# unknown values stay null; nothing here is guessed.
+
+name: Click TV
+local_folder: null
+repository: null
+site_url: null
+build_command: null
+test_command: null
+deploy_method: null
+knowledge_dir: project-knowledge/click-tv
+approval_required_for: [git.push_production, deploy]

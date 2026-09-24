@@ -1,0 +1,22 @@
+# Resource Manager thresholds (plan §17H), tuned for a 16 GB RAM PC.
+
+monitor_interval_seconds: 30
+
+ram_percent:
+  moderate: 70
+  high: 85
+  critical: 93
+
+vram_percent:
+  high: 85
+  critical: 95
+
+disk_free_gb_min: 20
+
+idle_unload_seconds:
+  whisper: 300
+  ollama: 600
+
+actions:
+  high: [close_idle_browser_tabs, pause_low_priority_workers]
+  critical: [unload_unused_ollama_models, unload_idle_whisper, route_heavy_local_to_cloud, notify_user]

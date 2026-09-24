@@ -1,0 +1,12 @@
+# Stream Doctor project profile (plan §13, §51, §52.2). Fill in when known —
+# unknown values stay null; nothing here is guessed.
+
+name: Stream Doctor
+local_folder: null
+repository: null
+site_url: null
+build_command: null
+test_command: null
+deploy_method: null
+knowledge_dir: project-knowledge/stream-doctor
+approval_required_for: [git.push_production, deploy]

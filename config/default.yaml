@@ -1,0 +1,50 @@
+# Personal AI Agent OS — main non-secret configuration (plan §17G).
+# Secrets never go here: they live in <secrets_dir>/.env (see .env.example).
+
+agent:
+  name: "Personal Agent"
+  timezone: "Asia/Dhaka"
+  languages: [bn, en, banglish]
+
+# Runtime folders are resolved relative to `paths.root`. `root: null` means
+# "parent of the app/ repo folder" (i.e. D:\Personal-Agent). The env var
+# PERSONAL_AGENT_ROOT overrides it. All runtime data stays outside the repo (§23).
+paths:
+  root: null
+  data_dir: data
+  database: data/agent.db
+  secrets_dir: secrets
+  sessions_dir: sessions
+  workspace_dir: workspace
+  downloads_dir: downloads
+  logs_dir: logs
+  backups_dir: backups
+  local_models_dir: local-models
+
+logging:
+  level: INFO
+  format: json
+  rotation:
+    max_bytes: 10485760   # 10 MB per file
+    backup_count: 10
+  categories: [core, desktop, browser, provider, tasks, audit]   # §17E
+
+# §28 — routine progress throttle. Critical messages are always exempt.
+notification_throttle:
+  min_progress_interval_seconds: 30
+  soft_max_progress_updates_per_task: 5
+  repeated_error_cooldown_seconds: 300
+  batch_small_results: true
+  exempt_message_types:
+    - approval_required
+    - user_input_required
+    - critical_security_alert
+    - task_completed
+    - task_failed_permanently
+    - agent_going_offline
+    - recovery_after_restart
+
+# §32A — graceful shutdown
+shutdown:
+  graceful_timeout_seconds: 30
+  worker_kill_after_seconds: 15

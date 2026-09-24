@@ -1,0 +1,4 @@
+# Static schedule definitions (plan §39). Runtime schedules created from
+# Telegram are persisted in the database (Phase 19); this file is for fixed jobs.
+
+schedules: []

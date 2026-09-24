@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # Unit + non-GUI integration tests, lint/type checks, config validation (plan §17C).
+    # Desktop UI, real browser profile, voice/GPU and broker tests run locally only.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install (frozen lock)
+        run: uv sync --frozen
+      - name: Lint
+        run: uv run ruff check .
+      - name: Type check
+        run: uv run mypy core
+      - name: Config validation
+        run: uv run python -m core.bootstrap --check --root "$RUNNER_TEMP/agent-root"
+      - name: Tests
+        run: uv run pytest -q -m "not windows and not e2e"

@@ -1,0 +1,64 @@
+# AI provider pool (plan §8). There is NO global "main AI" — routing is
+# task-type based. Model names are never hard-coded here; each provider points
+# at an alias set in models.yaml.
+#
+# enabled: true | false | optional   (optional = adapter available, off until configured)
+# mode:    subscription | api | subscription_or_api | local
+
+providers:
+  openai_codex:
+    enabled: true
+    mode: subscription
+    model_alias_set: openai_codex
+    priority:
+      coding: 100
+      review: 80
+
+  google_antigravity:
+    enabled: true
+    mode: subscription
+    model_alias_set: google_antigravity
+    priority:
+      coding: 90
+      reasoning: 100
+      review: 90
+
+  gemini_api:
+    enabled: optional
+    mode: api
+    model_alias_set: gemini_api
+    priority:
+      reasoning: 85
+      vision: 90
+
+  anthropic_claude:
+    enabled: false
+    mode: subscription_or_api
+    model_alias_set: anthropic_claude
+    priority:
+      coding: 95
+      reasoning: 95
+      review: 100
+
+  ollama_local:
+    enabled: true
+    mode: local
+    model_alias_set: ollama_models
+    priority:
+      simple: 100
+      offline: 100
+      fallback: 70
+
+# §8.6 circuit breaker
+circuit_breaker:
+  transient_failure_threshold: 3
+  cooldown_backoff_minutes: [10, 20, 30]
+
+# §8.7 error-based switching
+retry:
+  timeout_retries: 1
+  server_error_retries: 2
+
+# §9 budget guard: API-billed providers must be explicitly allowed.
+budget_guard:
+  allow_paid_api_usage: false
