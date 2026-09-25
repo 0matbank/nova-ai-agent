@@ -160,22 +160,38 @@ def test_desktop_session_info(logs: Path, tokens: TokenStore) -> None:
         assert isinstance(body["windows_session_id"], int)
 
 
-def test_browser_sessions(logs: Path, tokens: TokenStore) -> None:
+def test_browser_sessions(logs: Path, tokens: TokenStore, tmp_path: Path) -> None:
+    from tests.mocks.browser import browser_available, real_browser_client
     app = make_worker_app("browser", V, tokens, "browser")
     load_worker_service("browser-worker").register(app)
 
     async def go() -> None:
         async with asgi_client(app) as c:
-            r = await c.post("/v1/sessions", headers=headers(tokens.current()))
-            sid = r.json()["session_id"]
-            assert r.json()["task_id"] == "12" and sid != "12"
             listed = (await c.get("/v1/sessions", headers=headers(tokens.current()))).json()
-            assert [s["session_id"] for s in listed["sessions"]] == [sid]
-            d = await c.delete(f"/v1/sessions/{sid}", headers=headers(tokens.current()))
-            assert d.json()["closed"] == sid
-            d2 = await c.delete(f"/v1/sessions/{sid}", headers=headers(tokens.current()))
-            assert d2.status_code == 404
+            assert listed == {"ok": True, "sessions": []}
+            d = await c.delete("/v1/sessions/nope", headers=headers(tokens.current()))
+            assert d.status_code == 404
+            bad = await c.post("/v1/sessions", headers=headers(tokens.current()),
+                               json={"url": "file:///C:/Windows/win.ini"})
+            assert bad.status_code == 422 and "not allowed" in bad.json()["detail"]
     asyncio.run(go())
+    if not browser_available():
+        return
+    # Session IDs are separate from task IDs (plan §17A).
+    client, cli = real_browser_client(tmp_path)
+
+    async def real() -> None:
+        try:
+            r = await client.call("POST", "/v1/sessions", task_id=12, json={})
+            sid = r["session_id"]
+            assert sid != "12" and cli.sessions[sid].task_id == "12"
+            listed = await client.call("GET", "/v1/sessions")
+            assert [s["session_id"] for s in listed["sessions"]] == [sid]
+            assert (await client.call("DELETE", f"/v1/sessions/{sid}"))["closed"] == sid
+        finally:
+            await cli.close_all()
+            await client.aclose()
+    asyncio.run(real())
 
 
 # ------------------------------------------------------------------ client

@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.skills.urls import URL_RX
 from providers.provider_base import Limits, ProviderRequest
 
 # Categories from plan §49.1.
@@ -40,6 +41,8 @@ READ_ONLY_SKILLS: dict[str, tuple[str, str, dict[str, Any]]] = {
 }
 
 RULES: list[tuple[str, re.Pattern[str], tuple[str, str, dict[str, Any]] | None]] = [
+    # An explicit web address wins: "prothomalo.com খোলো" is browser work.
+    ("browser", URL_RX, None),
     ("screenshot", _rx(r"screen\s*shot", r"\bskin\s*shot\b", r"স্ক্রিনশট", r"স্ক্রিন\s*শট",
                        r"\bscreen\s*(ta\s*)?(dekhao|dekhaw|"
                        r"dikhao|pathao)\b", r"স্ক্রিন\s*দেখাও"),

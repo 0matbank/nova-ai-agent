@@ -1,0 +1,9 @@
+{
+  "name": "nova-browser-worker",
+  "private": true,
+  "description": "Browser Worker tooling (plan §15 Layer 1: Playwright CLI). Versions are pinned; package-lock.json is committed.",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@playwright/cli": "0.1.21"
+  }
+}

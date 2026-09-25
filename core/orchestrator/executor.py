@@ -15,6 +15,7 @@ import base64
 from typing import Any
 
 from core.notify.notifier import MessageType
+from core.orchestrator.browse import BrowserFlow
 from core.orchestrator.context import for_request
 from core.queue.engine import TaskContext, Verdict
 from core.router.intent import Intent, IntentRouter
@@ -35,7 +36,7 @@ NOT_YET = {
     "research": "Phase 16 (Research agent + web research; local AI-র কাছে আজকের তথ্য নেই, "
                 "তাই বানিয়ে বলব না)",
     "coding": "Phase 12–15 (Codex/Antigravity + Git workflow)",
-    "browser": "Phase 10–11 (Browser Worker + Playwright)",
+    "browser": "Phase 11 (Playwright MCP — জটিল/multi-step browsing)",
     "pc_control": "Phase 16 (Windows Operator agent)",
     "files": "Phase 16 (File & Document agent)",
     "reminder": "Phase 19 (Scheduler)",
@@ -44,6 +45,10 @@ NOT_YET = {
     "social": "V2 (Social/Growth modules)",
     "communication": "V2 (Email/WhatsApp integrations)",
 }
+
+
+class ActionFailed(RuntimeError):
+    """The skill/browser action did not achieve its result — retry, then fail."""
 
 
 class UserRequestExecutor:
@@ -75,14 +80,26 @@ class UserRequestExecutor:
                 return {"kind": "not_yet", "answer": (
                     f"'{intent.skill[0]}' skill এই মুহূর্তে চালু নেই (disabled বা এই "
                     "platform-এ নেই), তাই কাজটা করা গেল না।")}
+            if (intent.category == "browser" and self.skills is not None
+                    and "browser" in self.skills.registry.skills):
+                return await BrowserFlow(self.skills).run(ctx)
             if intent.category in NOT_YET:
                 return {"kind": "not_yet", "answer": (
                     f"বুঝেছি — এটা '{intent.category}' ধরনের কাজ। এটা এখনো শেখানো হয়নি; "
                     f"আসবে {NOT_YET[intent.category]}।\nএখন পারি: প্রশ্নের উত্তর (local AI), "
-                    "PC status, screenshot, process list।")}
+                    "PC status, screenshot, process list, website খোলা/পড়া/সাইটের ভেতরে search।")}
             return await self._ask_ai(ctx)
 
-        out = await ctx.run_step(2, act) or {}
+        async def act_or_fail(prev: dict[str, Any] | None) -> dict[str, Any]:
+            out = await act(prev)
+            # A failed action must not be checkpointed as DONE, or a retry would
+            # just replay the failure instead of doing the work again.
+            failed = out.get("kind") in ("skill", "browser") and not out.get("ok")
+            if failed and not out.get("needs_input"):
+                raise ActionFailed(str(out.get("answer", "action failed")))
+            return out
+
+        out = await ctx.run_step(2, act_or_fail) or {}
 
         async def check(prev: dict[str, Any] | None) -> dict[str, Any]:
             return {"answer_present": bool(str(out.get("answer", "")).strip())}
@@ -123,6 +140,12 @@ class UserRequestExecutor:
         if kind == "skill":
             return Verdict(bool(act.get("ok")), f"skill {act.get('skill')} evidence "
                                                 f"{act.get('evidence')}")
+        if kind == "browser":
+            if act.get("needs_input"):
+                return Verdict(True, "PASS WITH KNOWN LIMITATIONS — asked the owner for the site")
+            if not act.get("ok"):
+                return Verdict(False, f"browser: {str(act.get('answer', ''))[:300]}")
+            return Verdict(True, f"browser evidence {act.get('evidence')}")
         if kind == "ai":
             return Verdict(True, f"answer from {act.get('provider')} ({act.get('model')})")
         return Verdict(True, "PASS WITH KNOWN LIMITATIONS — capability not built yet")

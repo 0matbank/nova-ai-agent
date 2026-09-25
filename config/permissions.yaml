@@ -21,6 +21,7 @@ actions:
   powershell.read: GREEN      # only parser-verified read-only commands (skills/powershell)
   terminal.read: GREEN        # only allowlisted read-only programs (skills/terminal)
   ui.read: GREEN              # list windows, inspect controls, read a value
+  browser.read: GREEN         # snapshot, find text, page screenshot — content is untrusted
   clipboard.read: GREEN       # content is untrusted + redacted
 
   file.create: BLUE
@@ -28,6 +29,7 @@ actions:
   file.delete_workspace: BLUE # inside the agent's own workspace only
   app.open: BLUE
   app.close: BLUE             # graceful close; the app may still ask to save
+  browser.fill: BLUE          # typing into a field (not submitting)
   ui.focus: BLUE
   ui.type: BLUE               # appends; never replaces existing content
   clipboard.write: BLUE
@@ -40,6 +42,8 @@ actions:
   ui.click: YELLOW            # safety check = control name has no danger word
   ui.keys: YELLOW             # safety check = not a closing/deleting shortcut
   ui.replace_text: YELLOW     # safety check = previous content backed up
+  browser.click: YELLOW       # safety check = element text has no danger word (buy/pay/send…)
+  browser.submit: YELLOW      # safety check = it is a search box; any other form → approval
   package.install: YELLOW
   git.commit: YELLOW
   config.change: YELLOW
@@ -49,6 +53,7 @@ actions:
   process.kill: RED
   ui.shell_input: RED         # typing/clicking/keys into a terminal or Run dialog
   ui.click_xy: RED            # raw coordinates: last resort (plan §15, §17)
+  browser.fill_secret: RED    # typing into a password field
 
   file.delete_important: RED
   file.delete_pathwide: RED

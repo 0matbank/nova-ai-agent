@@ -1,0 +1,12 @@
+{
+  "open": ["browser.navigate"],
+  "goto": ["browser.navigate"],
+  "snapshot": ["browser.read"],
+  "text": ["browser.read"],
+  "find": ["browser.read"],
+  "click": ["browser.click"],
+  "fill": ["browser.fill", "browser.submit", "browser.fill_secret"],
+  "press": ["browser.fill", "browser.submit"],
+  "screenshot": ["browser.read"],
+  "close": ["browser.navigate"]
+}

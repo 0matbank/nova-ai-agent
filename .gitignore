@@ -92,3 +92,6 @@ blob-report/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Playwright CLI working files (snapshots, traces) — runtime only
+.playwright-cli/

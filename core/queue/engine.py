@@ -23,6 +23,7 @@ from core.permissions.approvals import ApprovalManager, ApprovalStatus, fingerpr
 from core.permissions.engine import Decision, PermissionDenied, PermissionEngine
 from core.queue.states import TaskState
 from core.queue.store import StepStatus, StepView, TaskStore, TaskView
+from core.skills.api import PolicyDenied
 from core.skills.desktop import NEEDS_DESKTOP, DesktopUnavailable
 
 _log = get_logger("tasks")
@@ -43,6 +44,11 @@ class ApprovalPending(Exception):
     def __init__(self, approval_id: int) -> None:
         super().__init__(f"waiting for approval #{approval_id}")
         self.approval_id = approval_id
+
+
+class TaskBlocked(Exception):
+    """BLOCKING (plan §17A): only the owner can unblock it (login expired, a
+    CAPTCHA, …). Reported immediately and never retried."""
 
 
 SafetyCheck = Callable[[], Awaitable[tuple[bool, str]]]
@@ -252,7 +258,12 @@ class TaskEngine:
             await self._tell(task, MessageType.USER_INPUT_REQUIRED,
                              f"🖥️ Task #{task.id}: {NEEDS_DESKTOP}")
             return
-        except PermissionDenied as e:
+        except TaskBlocked as e:
+            store.transition(task.id, TaskState.FAILED, error_code="BLOCKED_NEEDS_USER",
+                             error_message=str(e))
+            await self._tell(task, MessageType.USER_INPUT_REQUIRED, f"🧩 Task #{task.id}: {e}")
+            return
+        except (PermissionDenied, PolicyDenied) as e:
             store.transition(task.id, TaskState.FAILED, error_code="PERMISSION_DENIED",
                              error_message=str(e))
             await self._tell(task, MessageType.TASK_FAILED_PERMANENTLY,

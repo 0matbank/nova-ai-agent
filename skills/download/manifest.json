@@ -1,0 +1,8 @@
+{
+  "name": "download",
+  "version": "1.0.0",
+  "description": "Download a file from the web into the downloads folder, verified by size and SHA-256.",
+  "worker": "core",
+  "platforms": ["win32", "linux", "darwin"],
+  "tools": ["fetch"]
+}

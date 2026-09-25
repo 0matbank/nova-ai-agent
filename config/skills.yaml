@@ -7,7 +7,7 @@ skills:
   windows: { status: enabled }
   desktop-ui: { status: enabled }
   app-control: { status: enabled }
-  browser:        { status: planned }
+  browser: { status: enabled }
   browser-vision: { status: planned }
   terminal: { status: enabled }
   powershell: { status: enabled }
@@ -16,7 +16,7 @@ skills:
   git:            { status: planned }
   github:         { status: planned }
   coding:         { status: planned }
-  download:       { status: planned }
+  download: { status: enabled }
   screenshot: { status: enabled }
   clipboard: { status: enabled }
   documents:      { status: planned }

@@ -200,13 +200,14 @@ async def run_core_service(
 
     monitor = build_worker_monitor(ctx)
     desktop = next((c for c in monitor.clients if c.name == "desktop"), None)
+    browser = next((c for c in monitor.clients if c.name == "browser"), None)
+    tool_workers = {n: c for n, c in (("desktop", desktop), ("browser", browser)) if c}
 
     # Provider layer (plan §8): no single "main AI" — the router picks per task type.
     providers = provider_registry or ProviderRegistry.from_config(cfg)
     provider_router = ProviderRouter(cfg.providers, providers.adapters)
     if engine is not None and security is not None and approvals is not None:
-        skill_runner = (SkillRunner(registry, ToolEnv(cfg, PathPolicy(cfg),
-                                                      {"desktop": desktop} if desktop else {}),
+        skill_runner = (SkillRunner(registry, ToolEnv(cfg, PathPolicy(cfg), tool_workers),
                                     approvals.audit) if registry is not None else None)
         engine.register("user_request", UserRequestExecutor(
             IntentRouter(provider_router), provider_router, skill_runner))
