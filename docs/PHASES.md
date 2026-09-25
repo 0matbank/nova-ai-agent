@@ -13,6 +13,7 @@
 | 8 | Provider Abstraction + Ollama | ✅ PASS (phone: local-AI answers via router, honest refusal for news; §9A benchmark 10/10 with thinking; 355 tests) | `uv run python scripts/benchmark_local_models.py`; phone: any question |
 | 9 | Voice + faster-whisper | ✅ PASS (phone: Bangla/English/Banglish voice; large-v3 on GPU ~0.5–1.7 s; unclear → suggestion + ✅, never guesses; 385 tests) | phone: send a voice message; `uv run pytest -m e2e tests/integration/test_voice.py` |
 | 10 | Browser Worker + Playwright CLI | ✅ PASS (phone: site open / in-site search / download; live drill 25/25 + 6/6 with real AI; Bangla summary via Gemini with automatic local fallback seen live on quota; 468 tests) | start browser worker, then `uv run python scripts/browser_drill.py`; phone: `en.wikipedia.org-এ Dhaka সার্চ করো` |
+| 11 | Playwright MCP + Vision Fallback | ✅ PASS (phone: Wikipedia search → article → GDP, grounded, 3 steps; live drill: shop tab flow + canvas-only button via local vision + real Wikipedia, 11/12 then 3/3; vision click accuracy within ~10 px; 494 tests) | browser worker running, then `uv run python scripts/browser_agent_drill.py 3`; phone: `en.wikipedia.org-এ Bangladesh খুঁজে তারপর Economy section থেকে GDP কত বলো` |
 
 
 ### Notes — Phase 10
@@ -20,3 +21,8 @@
 - Gemini API text adapter pulled forward from Phase 14 at the owner's request (2026-09-25), routed only for `summarization` (`free_tier_only`); reasoning/vision routing stays for Phase 14.
 - Bot checks (CAPTCHA) are never solved → task ends `BLOCKED_NEEDS_USER`.
 - General web search without a named site = Phase 16 research agent.
+
+### Notes — Phase 11
+- Engines: Playwright CLI (routine) + Playwright MCP 0.0.82 (multi-step), same session API and permissions.
+- Planner = router `reasoning` (local qwen3:8b now; Codex/Antigravity automatically once built). Vision = local qwen3-vl:8b first, Gemini fallback (owner choice).
+- Known limit: the small local planner sometimes wanders on real sites (1 miss in 12 live runs); the step cap / repeat guard stop it honestly with the steps shown.

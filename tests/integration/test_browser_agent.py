@@ -258,6 +258,19 @@ def test_parse_box(answer: str, box: tuple[float, ...] | None) -> None:
     assert parse_box(answer) == box
 
 
+def test_type_accepts_value_alias_and_refuses_empty_text(tmp_path: Path) -> None:
+    site = Shop()
+    site.routes[f"/v1/sessions/{SID}/fill"] = lambda body: dict(site.home)
+    brain = Brain([{"action": "type", "ref": "e3"},
+                   {"action": "type", "ref": "e3", "value": "tea"},
+                   {"action": "click", "ref": "e5"},
+                   {"action": "answer", "answer": "Green tea costs 245 taka."}])
+    t = run(setup(tmp_path, site, brain))
+    assert t.state is TaskState.COMPLETED
+    fills = [b for p, b in site.calls if p.endswith("/fill")]
+    assert fills == [{"ref": "e3", "text": "tea", "submit": False}]
+
+
 def test_parse_decision_tolerates_chatter() -> None:
     assert parse_decision('Sure!\n{"action": "click", "ref": "e3"}') == {"action": "click",
                                                                         "ref": "e3"}

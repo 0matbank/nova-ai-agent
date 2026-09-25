@@ -43,8 +43,8 @@ NOTE_CHARS = 3000
 VISIBLE_CHARS = 2500
 ACTIONS = ("click", "type", "select", "press", "goto", "back", "find", "read", "vision_click",
            "answer", "fail")
-_KEYS = {"type": "text", "press": "key", "goto": "url", "find": "text",
-         "vision_click": "target", "read": "", "back": ""}
+# What makes two planner steps "the same" (for the repeat guard).
+_STEP_FIELDS = ("ref", "text", "value", "key", "url", "target", "submit")
 _BOX = re.compile(r"\s*\[box=[^\]]*\]")
 _DIGITS = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
@@ -174,7 +174,8 @@ class BrowserAgent:
                 reason = str(decision.get("reason", "")).strip() or "no reason given"
                 await self._screenshot(ctx, run, run.title)
                 raise _blocked(run, "gave_up", reason=reason, url=_short(run.url))
-            key = f"{action}:{json.dumps(decision.get(_KEYS.get(action, 'ref'), ''))}"
+            key = action + json.dumps({k: decision.get(k) for k in _STEP_FIELDS},
+                                      sort_keys=True, ensure_ascii=False)
             if run.steps and run.last_key == key:
                 run.repeats += 1
                 if run.repeats >= 2:
@@ -234,9 +235,14 @@ class BrowserAgent:
         if action == "click":
             tool, params["ref"] = "click", ref
         elif action == "type":
+            # small planners sometimes put the text under "value" (seen live)
+            text = str(d.get("text") or d.get("value") or "")
+            if not text:
+                run.steps.append(Step(n, action, ref, False, 'no "text" given'))
+                return
             tool = "fill"
-            params.update(ref=ref, text=str(d.get("text", "")), submit=bool(d.get("submit")))
-            detail = f"{ref} {str(d.get('text', ''))[:40]!r}"
+            params.update(ref=ref, text=text, submit=bool(d.get("submit")))
+            detail = f"{ref} {text[:40]!r}"
         elif action == "select":
             tool = "select"
             params.update(ref=ref, value=str(d.get("value", "")))
