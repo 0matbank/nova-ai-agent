@@ -123,6 +123,10 @@ class TaskEngineSection(Strict):
 
 class TTSSection(Strict):
     enabled: bool = False
+    engine: Literal["edge", "gemini"] = "edge"
+    gemini_voice: str = "Kore"
+    gemini_style: str = ""
+    daily_char_budget: Annotated[int, Field(ge=0, le=1_000_000)] = 20000
     voices: dict[str, str] = {}
     max_chars: Annotated[int, Field(ge=50, le=5000)] = 1200
     rate: Annotated[str, Field(pattern=r"^[+-]\d{1,2}%$")] = "+0%"

@@ -33,6 +33,7 @@ google_antigravity:
 
 gemini_api:
   default: null
+  tts: "gemini-3.8-flash-tts"      # spoken replies (verified in Google docs 2026-09-25)
 
 anthropic_claude:
   default: null

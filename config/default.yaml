@@ -70,9 +70,15 @@ voice:
   # edge-tts (online; the reply text is sent to Microsoft to be spoken).
   tts:
     enabled: true
+    # gemini = natural Google voice (needs GEMINI_API_KEY in secrets/.env; free tier);
+    # edge = Microsoft neural voice. Gemini falls back to edge on any problem.
+    engine: gemini
+    gemini_voice: Achernar      # owner picked 2026-09-25 (soft female voice)
+    gemini_style: "sweet, soft and gentle young woman's voice, warm and friendly, natural Bangladeshi Bangla, calm pace"
+    daily_char_budget: 20000     # budget guard (plan §9): beyond this → edge voice
     voices: {bn: bn-BD-NabanitaNeural, en: en-US-AvaMultilingualNeural}
     max_chars: 1200
-    rate: "-8%"                  # a little slower = clearer (owner feedback 2026-09-25)
+    rate: "-8%"                  # edge only: a little slower = clearer
   hint_words: [Nova AI, পিসি, পিসির অবস্থা, স্ট্যাটাস, স্ক্রিনশট, screenshot, status,
                বাংলাদেশ, রাজধানী, খোলো, বন্ধ করো, ফাইল, ফোল্ডার, Notepad, Chrome,
                Click TV, টাস্ক, বলো, দেখাও]

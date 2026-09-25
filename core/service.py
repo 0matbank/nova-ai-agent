@@ -56,7 +56,7 @@ from core.voice.correct import suggest as suggest_correction
 from core.voice.intake import CALLBACK_PREFIX as VOICE_PREFIX
 from core.voice.intake import VoiceIntake
 from core.voice.transcriber import Transcriber
-from core.voice.tts import Speaker
+from core.voice.tts import GeminiTTS, Speaker, TTSBudget
 from models.router import ProviderRouter
 from providers.provider_base import USABLE
 from providers.registry import ProviderRegistry
@@ -219,7 +219,7 @@ async def run_core_service(
                               cfg.default.voice.beam_size,
                               hint_words=cfg.default.voice.hint_words,
                               vad_speech_pad_ms=cfg.default.voice.vad_speech_pad_ms)
-    speaker = Speaker(cfg.default.voice.tts)
+    speaker = build_speaker(ctx)
     voice = VoiceIntake(transcriber, cfg.default.voice, cfg.path("workspace_dir") / "voice",
                         lambda m: router.handle(m),
                         corrector=lambda heard, lang: suggest_correction(
@@ -297,6 +297,20 @@ async def run_core_service(
         if db_engine is not None:
             db_engine.dispose()
         _log.info("core service stopped", extra={"action": "service.stop", "status": "ok"})
+
+
+def build_speaker(ctx: AppContext) -> Speaker:
+    """Natural Gemini voice when a GEMINI_API_KEY is configured, else Microsoft edge."""
+    tts = ctx.config.default.voice.tts
+    key = ctx.secrets.get("GEMINI_API_KEY")
+    model = ctx.config.models.alias_sets.get("gemini_api", {}).get("tts")
+    gemini = (GeminiTTS(key, model, tts.gemini_voice, tts.gemini_style)
+              if key is not None and model else None)
+    budget = TTSBudget(ctx.config.path("data_dir") / "tts_budget.json", tts.daily_char_budget)
+    if tts.engine == "gemini" and gemini is None:
+        _log.info("gemini voice not configured (no GEMINI_API_KEY) — using edge voice",
+                  extra={"action": "voice.tts"})
+    return Speaker(tts, gemini, budget)
 
 
 def provider_summary(router: ProviderRouter) -> tuple[bool, str]:

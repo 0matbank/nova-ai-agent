@@ -12,7 +12,7 @@ from channels.base import IncomingMessage, OutgoingMessage, VoiceRef
 from core.config.schema import EXEMPT_MESSAGE_TYPES, NotificationThrottle, TTSSection
 from core.notify.notifier import MessageType, Notifier
 from core.voice.intake import VoiceIntake
-from core.voice.tts import Speaker, language_of, speakable
+from core.voice.tts import Speaker, TTSBudget, language_of, speakable
 from tests.integration.test_voice import SETTINGS, Echo, FakeModel, fake_download, make
 
 
@@ -137,3 +137,69 @@ def test_real_bangla_tts() -> None:
     if audio is None:
         pytest.skip("TTS service not reachable")
     assert len(audio) > 2000 and (audio[:3] == b"ID3" or audio[0] == 0xFF)   # MP3
+
+
+# ------------------------------------------------------------- Gemini voice
+
+def _wav() -> bytes:
+    import io
+    import wave
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes(b"\x00\x10" * 24000)
+    return buf.getvalue()
+
+
+def _gemini(status: int = 200, calls: list | None = None):  # type: ignore[no-untyped-def]
+    import base64
+
+    import httpx
+    from pydantic import SecretStr
+
+    from core.voice.tts import GeminiTTS
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if calls is not None:
+            calls.append(req)
+        if status != 200:
+            return httpx.Response(status, json={"error": "x"})
+        return httpx.Response(200, json={"steps": [{"type": "model_output", "content": [
+            {"type": "audio", "data": base64.b64encode(_wav()).decode()}]}]})
+    return GeminiTTS(SecretStr("test-gemini-key-123"), "gemini-3.8-flash-tts", "Kore",
+                     "warm", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+
+
+def test_gemini_voice_preferred_and_ogg(tmp_path: Path) -> None:
+    import json
+    calls: list = []
+    sp = Speaker(TTSSection(enabled=True, engine="gemini", voices={"bn": "x"}),
+                 _gemini(calls=calls), TTSBudget(tmp_path / "b.json", 1000))
+    audio = asyncio.run(sp.synthesize("বাংলাদেশের রাজধানী ঢাকা।"))
+    assert audio is not None and audio[:4] == b"OggS" and sp.last_engine == "gemini"
+    body = json.loads(calls[0].content)
+    assert calls[0].headers["x-goog-api-key"] == "test-gemini-key-123"
+    assert body["model"] == "gemini-3.8-flash-tts"
+    assert body["generation_config"]["speech_config"] == [{"voice": "Kore"}]
+    assert body["input"][0]["content"][0]["annotations"][0]["style"] == "warm"
+
+
+@pytest.mark.parametrize("status", [429, 403, 500])
+def test_gemini_problem_falls_back_to_edge(tmp_path: Path, status: int) -> None:
+    class EdgeStub(Speaker):
+        async def _edge(self, clean: str) -> bytes | None:
+            self.last_engine = "edge"
+            return b"ID3edge"
+    sp = EdgeStub(TTSSection(enabled=True, engine="gemini", voices={"bn": "x"}),
+                  _gemini(status), TTSBudget(tmp_path / "b.json", 1000))
+    assert asyncio.run(sp.synthesize("হ্যালো")) == b"ID3edge" and sp.last_engine == "edge"
+
+
+def test_budget_guard_persists_and_blocks(tmp_path: Path) -> None:
+    b = TTSBudget(tmp_path / "b.json", daily_chars=10)
+    assert b.allows(10)
+    b.spend(8)
+    assert not TTSBudget(tmp_path / "b.json", 10).allows(5)   # survives restart
+    assert TTSBudget(tmp_path / "b.json", 10).allows(2)
