@@ -173,6 +173,7 @@ def _gemini(status: int = 200, calls: list | None = None):  # type: ignore[no-un
 
 
 def test_gemini_voice_preferred_and_ogg(tmp_path: Path) -> None:
+    pytest.importorskip("av")                      # voice extra (not on CI)
     import json
     calls: list = []
     sp = Speaker(TTSSection(enabled=True, engine="gemini", voices={"bn": "x"}),
