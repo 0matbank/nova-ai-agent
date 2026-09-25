@@ -20,9 +20,19 @@ from providers.provider_base import (
 )
 
 _log = get_logger("provider")
+_audit = get_logger("audit")
 HEALTH_TTL_SECONDS = 60
 NO_SWITCH = frozenset({ErrorCategory.UNSAFE, ErrorCategory.TOOL_FAILURE,
                        ErrorCategory.BAD_REQUEST})
+
+
+def _switch(request: ProviderRequest, tried: list[str], used: str) -> None:
+    """A fallback happened: the task goes on, but the switch is recorded (plan §8.7)."""
+    msg = f"{request.task_type}: provider switch {' → '.join(tried)} → {used}"
+    extra = {"task_id": request.task_id, "provider": used, "action": "provider.switch",
+             "status": "fallback"}
+    _log.warning(msg, extra=extra)
+    _audit.info(msg, extra=extra)
 
 
 class ProviderRouter:
@@ -51,6 +61,8 @@ class ProviderRouter:
                              "duration": round(result.usage.seconds, 2),
                              "error_code": result.error_category})
             if result.ok or result.error_category in NO_SWITCH:
+                if tried:
+                    _switch(request, tried, cand.provider)
                 return result
             tried.append(f"{cand.provider}={result.error_category}")
         detail = ", ".join(tried) or "no provider is configured for this task type"

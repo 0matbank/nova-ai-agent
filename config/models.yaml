@@ -33,6 +33,8 @@ google_antigravity:
 
 gemini_api:
   default: null
+  summarization: "gemini-3.8-flash"          # listed by the models API 2026-09-25
+  summarization_backup: "gemini-3.5-flash"   # when the first is overloaded (503) / missing
   tts: "gemini-3.8-flash-tts"      # spoken replies (verified in Google docs 2026-09-25)
 
 anthropic_claude:

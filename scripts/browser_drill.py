@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.config import load_config  # noqa: E402
+from core.config import load_config, load_secrets  # noqa: E402
 from core.orchestrator.executor import UserRequestExecutor  # noqa: E402
 from core.router.intent import IntentRouter  # noqa: E402
 from models.router import ProviderRouter  # noqa: E402
@@ -38,8 +38,10 @@ async def main() -> int:
     client, cli = real_browser_client(tmp)
     s = make_skill_env(tmp, {"browser": client})
     cfg = load_config()
-    # Real providers: page summaries come from the local model (Ollama must be running).
-    router = ProviderRouter(cfg.providers, ProviderRegistry.from_config(cfg).adapters)
+    # Real providers: summaries from Gemini, local Ollama as fallback.
+    secrets = load_secrets(cfg.path("secrets_dir"))
+    router = ProviderRouter(cfg.providers,
+                            ProviderRegistry.from_config(cfg, secrets).adapters)
     s.tasks.engine.register("user_request",
                             UserRequestExecutor(IntentRouter(router), router, s.runner))
     fails = 0

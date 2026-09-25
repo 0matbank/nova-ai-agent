@@ -13,7 +13,9 @@ def test_real_config_is_valid(config_dir: Path, runtime_root: Path) -> None:
     assert cfg.root == runtime_root.resolve()
     assert cfg.providers.providers["anthropic_claude"].enabled is False
     assert cfg.providers.providers["ollama_local"].enabled is True
-    assert cfg.providers.providers["gemini_api"].enabled == "optional"
+    gemini = cfg.providers.providers["gemini_api"]   # owner 2026-09-25: summaries only
+    assert gemini.enabled is True and gemini.free_tier_only and set(gemini.priority) == {
+        "summarization"}
     assert cfg.models.alias_sets["ollama_models"]["fast_general"] == "qwen3:8b"
     assert cfg.models.alias_sets["ollama_models"]["local_code_review"] == "deepseek-coder-v2:16b"
     assert cfg.permissions.actions["system.shutdown"] is Level.RED

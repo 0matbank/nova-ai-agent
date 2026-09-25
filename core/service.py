@@ -204,7 +204,7 @@ async def run_core_service(
     tool_workers = {n: c for n, c in (("desktop", desktop), ("browser", browser)) if c}
 
     # Provider layer (plan §8): no single "main AI" — the router picks per task type.
-    providers = provider_registry or ProviderRegistry.from_config(cfg)
+    providers = provider_registry or ProviderRegistry.from_config(cfg, ctx.secrets)
     provider_router = ProviderRouter(cfg.providers, providers.adapters)
     if engine is not None and security is not None and approvals is not None:
         skill_runner = (SkillRunner(registry, ToolEnv(cfg, PathPolicy(cfg), tool_workers),

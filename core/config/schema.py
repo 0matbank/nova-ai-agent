@@ -166,6 +166,9 @@ class ProviderEntry(Strict):
     mode: Literal["subscription", "api", "subscription_or_api", "local"]
     model_alias_set: str
     priority: dict[str, Priority]
+    # An API provider used only through a free-tier key: routable even while paid
+    # API usage is off (budget guard). Quota errors fall back to the next provider.
+    free_tier_only: bool = False
 
 
 class CircuitBreakerSection(Strict):

@@ -1,3 +1,5 @@
-"""gemini_api adapter — real implementation arrives in Phase 14 (plan §41).
-Until then the provider exists in the pool as a placeholder so routing,
-health and config already treat it as a first-class provider (plan §8.2)."""
+"""gemini_api adapter (plan §8.2). Text generation pulled forward from Phase 14 at the
+owner's request for Bangla page summaries; vision/reasoning routing stays for Phase 14."""
+from providers.gemini_api.adapter import GeminiAdapter
+
+__all__ = ["GeminiAdapter"]

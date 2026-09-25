@@ -24,12 +24,13 @@ providers:
       review: 90
 
   gemini_api:
-    enabled: optional
+    enabled: true                 # owner 2026-09-25: primary for Bangla page summaries
     mode: api
+    free_tier_only: true          # free-tier key; quota/errors → local fallback, no billing
     model_alias_set: gemini_api
     priority:
-      reasoning: 85
-      vision: 90
+      summarization: 100
+      # Phase 14 (full Gemini adapter): reasoning: 85, vision: 90
 
   anthropic_claude:
     enabled: false

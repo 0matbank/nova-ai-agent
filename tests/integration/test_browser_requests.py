@@ -259,3 +259,12 @@ def test_failed_action_is_really_retried_not_replayed(tmp_path: Path) -> None:
     s, _, _ = setup(tmp_path, site)
     t = s.tasks.store.get(run(s, "en.wikipedia.org খোলো"))
     assert t.state is TaskState.COMPLETED and t.retry_count == 1 and len(opens) == 2
+
+
+def test_summary_with_key_points(tmp_path: Path) -> None:
+    answer = ('{"summary": "উইকিপিডিয়া একটি মুক্ত অনলাইন বিশ্বকোষ।", '
+              '"points": ["স্বেচ্ছাসেবকরা লেখেন", "* বিনামূল্যে পড়া যায়"]}')
+    s, _, _ = setup(tmp_path, Site(), [answer])
+    t = s.tasks.store.get(run(s, "en.wikipedia.org খোলো"))
+    assert "📝 সংক্ষেপে:\nউইকিপিডিয়া একটি মুক্ত অনলাইন বিশ্বকোষ।" in t.result_summary
+    assert "🔑 মূল কথা:\n• স্বেচ্ছাসেবকরা লেখেন\n• বিনামূল্যে পড়া যায়" in t.result_summary

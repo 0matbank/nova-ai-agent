@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 
+from core.config import Secrets
 from core.config.schema import AppConfig
+from providers.gemini_api import GeminiAdapter
 from providers.ollama_local import OllamaAdapter
 from providers.provider_base import Health, NotImplementedAdapter, ProviderAdapter
 
@@ -24,12 +26,16 @@ class ProviderRegistry:
         self.adapters = adapters
 
     @classmethod
-    def from_config(cls, cfg: AppConfig) -> ProviderRegistry:
+    def from_config(cls, cfg: AppConfig, secrets: Secrets | None = None) -> ProviderRegistry:
         adapters: dict[str, ProviderAdapter] = {}
         for name, entry in cfg.providers.providers.items():
             disabled = entry.enabled is False
             if name == "ollama_local" and not disabled:
                 adapters[name] = OllamaAdapter(cfg.models)
+                continue
+            if name == "gemini_api" and not disabled:
+                key = secrets.get("GEMINI_API_KEY") if secrets is not None else None
+                adapters[name] = GeminiAdapter(key, cfg.models.alias_sets.get(name, {}))
                 continue
             arrives, caps = PLANNED.get(name, ("a later phase", frozenset()))
             adapters[name] = NotImplementedAdapter(name, caps, arrives, disabled=disabled)

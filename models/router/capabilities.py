@@ -28,7 +28,9 @@ class CapabilityRegistry:
         entry = self.config.providers[name]
         if entry.enabled is not True:            # False, or "optional" = off until configured
             return False
-        return not (entry.mode == "api" and not self.config.budget_guard.allow_paid_api_usage)
+        if entry.mode == "api" and not self.config.budget_guard.allow_paid_api_usage:
+            return entry.free_tier_only
+        return True
 
     def candidates(self, capability: str) -> list[Candidate]:
         out: list[Candidate] = []
