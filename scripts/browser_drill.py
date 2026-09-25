@@ -18,29 +18,28 @@ from core.config import load_config  # noqa: E402
 from core.orchestrator.executor import UserRequestExecutor  # noqa: E402
 from core.router.intent import IntentRouter  # noqa: E402
 from models.router import ProviderRouter  # noqa: E402
-from providers.provider_base import HealthState  # noqa: E402
+from providers.registry import ProviderRegistry  # noqa: E402
 from tests.mocks.browser import real_browser_client  # noqa: E402
-from tests.mocks.providers import FakeAdapter  # noqa: E402
 from tests.mocks.skills import make_skill_env  # noqa: E402
 
 REQUESTS = [
     "en.wikipedia.org খোলো",
     "en.wikipedia.org-এ Dhaka সার্চ করো",
     "search Rabindranath Tagore on en.wikipedia.org",
+    "en.wikipedia.org e Sundarbans khojo",
     "example.com open koro",
     "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf download করো",
 ]
-ROUNDS = 5
+ROUNDS = int(sys.argv[1]) if len(sys.argv) > 1 else 3
 
 
-def main() -> int:
+async def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="nova-drill-"))
     client, cli = real_browser_client(tmp)
     s = make_skill_env(tmp, {"browser": client})
     cfg = load_config()
-    adapters = {n: FakeAdapter(n, state=HealthState.UNAVAILABLE) for n in cfg.providers.providers}
-    adapters["ollama_local"] = FakeAdapter("ollama_local", [])
-    router = ProviderRouter(cfg.providers, adapters)
+    # Real providers: page summaries come from the local model (Ollama must be running).
+    router = ProviderRouter(cfg.providers, ProviderRegistry.from_config(cfg).adapters)
     s.tasks.engine.register("user_request",
                             UserRequestExecutor(IntentRouter(router), router, s.runner))
     fails = 0
@@ -51,7 +50,7 @@ def main() -> int:
                                            task_type="user_request", channel="telegram",
                                            chat_id="555").id)
             for _ in range(5):
-                if not asyncio.run(s.tasks.engine.run_once()):
+                if not await s.tasks.engine.run_once():
                     break
             t = s.tasks.store.get(tid)
             ok = t.state.value == "COMPLETED"
@@ -62,7 +61,7 @@ def main() -> int:
             if not ok or rnd == 0:
                 print("      ", (t.result_summary or t.error_message or "")[:600].replace(
                     "\n", "\n       "))
-    asyncio.run(cli.close_all())
+    await cli.close_all()
     left = list(cli.sessions)
     arts = list((tmp / "ws" / "browser" / ".playwright-cli").glob("*"))
     print(f"sessions left open: {left}; approvals asked: {len(s.tasks.buttons)}; "
@@ -73,4 +72,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(asyncio.run(main()))   # one event loop: AI clients are shared

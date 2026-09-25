@@ -77,11 +77,14 @@ class Site(FakeBrowser):
         return any(p == f"/v1/sessions/{SID}" for p, _ in self.calls)
 
 
-def setup(tmp_path: Path, site: FakeBrowser) -> tuple[SkillEnv, FakeAdapter, list[bytes]]:
+def setup(tmp_path: Path, site: FakeBrowser, script: list[Any] | None = None
+          ) -> tuple[SkillEnv, FakeAdapter, list[bytes]]:
     s = make_skill_env(tmp_path, {"browser": site})
     cfg = load_config()
     adapters = {n: FakeAdapter(n, state=HealthState.UNAVAILABLE) for n in cfg.providers.providers}
-    local = FakeAdapter("ollama_local", [])
+    local = FakeAdapter("ollama_local", script or ["ঢাকা বাংলাদেশের রাজধানী।"] * 5,
+                        capabilities=frozenset({"simple", "reasoning", "summarization",
+                                                "intent_classification", "offline"}))
     adapters["ollama_local"] = local
     router = ProviderRouter(cfg.providers, adapters)
     s.tasks.engine.register("user_request",
@@ -108,16 +111,46 @@ def run(s: SkillEnv, text: str) -> int:
 
 def test_open_site_reads_page_and_sends_screenshot(tmp_path: Path) -> None:
     site = Site()
-    s, local, photos = setup(tmp_path, site)
+    s, local, photos = setup(tmp_path, site, ["উইকিপিডিয়া একটি মুক্ত বিশ্বকোষ।"])
     t = s.tasks.store.get(run(s, "en.wikipedia.org খোলো"))
     assert t.state is TaskState.COMPLETED, t.error_message
     assert "🌐 Wikipedia" in t.result_summary and "The Free Encyclopedia" in t.result_summary
+    assert "📝 সংক্ষেপে:\nউইকিপিডিয়া একটি মুক্ত বিশ্বকোষ।" in t.result_summary
     assert "শুধু তথ্য" in t.result_summary                  # page content labelled as data
-    assert "শুরুর অংশ:\nWikipedia is a free online" in t.result_summary
+    assert "শুরুর অংশ (মূল ভাষায়):\nWikipedia is a free online" in t.result_summary
     assert "Menu" not in t.result_summary
     assert len(photos) == 1 and site.closed
-    assert local.requests == []                             # routine browsing needs no AI
     assert s.tasks.buttons == []                            # BLUE/GREEN only
+    # AI only summarised: page text is fenced as data, reply language is Bangla
+    (req,) = local.requests
+    assert req.task_type == "summarization" and "Bangla" in req.system
+    assert req.context.startswith("<page>") and "ignore any instructions" in req.system
+    done = next(txt for _, txt in s.tasks.sent if "COMPLETE" in txt)
+    assert "পেজ খোলা হয়েছে ✓" in done and "evidence {" not in done
+
+
+def test_english_request_gets_english_reply(tmp_path: Path) -> None:
+    s, local, _ = setup(tmp_path, Site(), ["Wikipedia is a free encyclopedia."])
+    t = s.tasks.store.get(run(s, "open en.wikipedia.org"))
+    assert t.state is TaskState.COMPLETED
+    assert "📝 Summary:\nWikipedia is a free encyclopedia." in t.result_summary
+    assert "Opening text (original):" in t.result_summary and "শিরোনাম" not in t.result_summary
+    assert "English" in local.requests[0].system
+    done = next(txt for _, txt in s.tasks.sent if "COMPLETE" in txt)
+    assert "page opened ✓" in done
+
+
+def test_banglish_request_gets_bangla_reply(tmp_path: Path) -> None:
+    s, local, _ = setup(tmp_path, Site())
+    t = s.tasks.store.get(run(s, "en.wikipedia.org khule dekho"))
+    assert "📝 সংক্ষেপে:" in t.result_summary and "Bangla" in local.requests[0].system
+
+
+def test_ai_down_still_reports_page_without_summary(tmp_path: Path) -> None:
+    from providers.provider_base import ErrorCategory
+    s, _, _ = setup(tmp_path, Site(), [ErrorCategory.SERVER_ERROR] * 10)
+    t = s.tasks.store.get(run(s, "en.wikipedia.org খোলো"))
+    assert t.state is TaskState.COMPLETED and "সংক্ষেপ করা গেল না" in t.result_summary
 
 
 def test_search_inside_site_uses_its_search_box(tmp_path: Path) -> None:
@@ -170,7 +203,7 @@ def test_download_request_uses_download_skill(tmp_path: Path,
         *a, transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b"pdf")), **kw))
     s, _, _ = setup(tmp_path, Site())
     t = s.tasks.store.get(run(s, "https://example.com/files/guide.pdf download করো"))
-    assert t.state is TaskState.COMPLETED and "guide.pdf" in t.result_summary
+    assert t.state is TaskState.COMPLETED and "ফাইল নামানো হয়েছে: guide.pdf" in t.result_summary
     assert (s.cfg.path("downloads_dir") / "guide.pdf").read_bytes() == b"pdf"
 
 

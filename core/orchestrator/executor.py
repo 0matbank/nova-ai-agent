@@ -17,6 +17,7 @@ from typing import Any
 from core.notify.notifier import MessageType
 from core.orchestrator.browse import BrowserFlow
 from core.orchestrator.context import for_request
+from core.orchestrator.lang import reply_language
 from core.queue.engine import TaskContext, Verdict
 from core.router.intent import Intent, IntentRouter
 from core.skills.runner import SkillRunner
@@ -73,21 +74,30 @@ class UserRequestExecutor:
         skill = (str(skill_cp[0]), str(skill_cp[1]), dict(skill_cp[2])) if skill_cp else None
         intent = Intent(cp["category"], cp["confidence"], cp["source"], skill)
 
+        lang = reply_language(ctx.task.request_text)
+
         async def act(prev: dict[str, Any] | None) -> dict[str, Any]:
             if intent.skill is not None:
                 if self.skills is not None and intent.skill[0] in self.skills.registry.skills:
                     return await self._run_skill(ctx, intent)
                 return {"kind": "not_yet", "answer": (
                     f"'{intent.skill[0]}' skill এই মুহূর্তে চালু নেই (disabled বা এই "
-                    "platform-এ নেই), তাই কাজটা করা গেল না।")}
+                    "platform-এ নেই), তাই কাজটা করা গেল না।" if lang == "bn" else
+                    f"The '{intent.skill[0]}' skill isn't available right now (disabled or "
+                    "not on this platform), so I couldn't do it.")}
             if (intent.category == "browser" and self.skills is not None
                     and "browser" in self.skills.registry.skills):
-                return await BrowserFlow(self.skills).run(ctx)
+                return await BrowserFlow(self.skills, self.providers).run(ctx)
             if intent.category in NOT_YET:
                 return {"kind": "not_yet", "answer": (
                     f"বুঝেছি — এটা '{intent.category}' ধরনের কাজ। এটা এখনো শেখানো হয়নি; "
                     f"আসবে {NOT_YET[intent.category]}।\nএখন পারি: প্রশ্নের উত্তর (local AI), "
-                    "PC status, screenshot, process list, website খোলা/পড়া/সাইটের ভেতরে search।")}
+                    "PC status, screenshot, process list, website খোলা/পড়া/সাইটের ভেতরে search।"
+                    if lang == "bn" else
+                    f"Understood — this is a '{intent.category}' task. I can't do it yet; it "
+                    f"arrives in {NOT_YET[intent.category]}.\nWhat I can do now: answer "
+                    "questions (local AI), PC status, screenshot, process list, open/read a "
+                    "website and search inside it.")}
             return await self._ask_ai(ctx)
 
         async def act_or_fail(prev: dict[str, Any] | None) -> dict[str, Any]:
@@ -137,7 +147,14 @@ class UserRequestExecutor:
         if not result.strip():
             return Verdict(False, "empty result")
         kind = act.get("kind")
+        bn = reply_language(ctx.task.request_text) == "bn"
         if kind == "skill":
+            if act.get("skill") == "download.fetch" and act.get("ok"):
+                ev = act.get("evidence") or {}
+                exists = "ফাইলটা আছে ✓" if bn else "file exists ✓"
+                return Verdict(bool(ev.get("exists")), (
+                    f"{exists} · {ev.get('size', 0) / 1024:.1f} KB · "
+                    f"SHA-256 {str(ev.get('sha256', ''))[:12]}…"))
             return Verdict(bool(act.get("ok")), f"skill {act.get('skill')} evidence "
                                                 f"{act.get('evidence')}")
         if kind == "browser":
@@ -145,7 +162,17 @@ class UserRequestExecutor:
                 return Verdict(True, "PASS WITH KNOWN LIMITATIONS — asked the owner for the site")
             if not act.get("ok"):
                 return Verdict(False, f"browser: {str(act.get('answer', ''))[:300]}")
-            return Verdict(True, f"browser evidence {act.get('evidence')}")
+            ev = act.get("evidence") or {}
+            where = ev.get("title") or ev.get("url")
+            parts = [f"পেজ খোলা হয়েছে ✓ ({where})" if bn else f"page opened ✓ ({where})"]
+            if ev.get("searched"):
+                parts.append("search-এর ফল মিলেছে ✓" if bn else "search results matched ✓")
+            if ev.get("summary"):
+                parts.append("সংক্ষেপ শুধু পেজের লেখা থেকে ✓" if bn
+                             else "summary from the page text only ✓")
+            if ev.get("screenshot"):
+                parts.append("screenshot পাঠানো হয়েছে ✓" if bn else "screenshot sent ✓")
+            return Verdict(True, " · ".join(parts))
         if kind == "ai":
             return Verdict(True, f"answer from {act.get('provider')} ({act.get('model')})")
         return Verdict(True, "PASS WITH KNOWN LIMITATIONS — capability not built yet")
