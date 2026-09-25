@@ -61,7 +61,7 @@ class TaskCommands:
         if self.store.is_queue_paused():
             lines.append("⏸️ Queue এখন paused — /resume দিলে চলবে।")
         lines.append(f"অবস্থা: /task {task.id}   বাতিল: /cancel {task.id}")
-        return OutgoingMessage("\n".join(lines))
+        return OutgoingMessage("\n".join(lines), task_id=task.id)
 
     # ------------------------------------------------------------ commands
 

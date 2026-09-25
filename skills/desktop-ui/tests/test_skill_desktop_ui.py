@@ -90,6 +90,19 @@ def ui(tmp_path: Path):  # type: ignore[no-untyped-def]
         yield make_skill_env(tmp_path, {"desktop": real_desktop_client(tmp_path)}), title
 
 
+def focus_retry(fn, attempts: int = 3):  # type: ignore[no-untyped-def]
+    """Windows may refuse the foreground while the owner is typing in another app;
+    the worker then (correctly) refuses to send keys. Retry a few times."""
+    import time
+    r = None
+    for _ in range(attempts):
+        r = fn()
+        if r.ok and r.evidence.get("foreground", True) is not False:
+            return r
+        time.sleep(1.0)
+    return r
+
+
 def value(s: SkillEnv, title: str, **target: str) -> str:
     return str(s.call("desktop-ui", "read_value", {"window": title, **target}).data["value"])
 
@@ -105,8 +118,8 @@ def test_see_windows_and_controls(ui) -> None:  # type: ignore[no-untyped-def]
 
 def test_type_appends_and_keeps_existing(ui) -> None:  # type: ignore[no-untyped-def]
     s, title = ui
-    r = s.call("desktop-ui", "type", {"window": title, "name": "Nova Input",
-                                      "text": " + nova"})
+    r = focus_retry(lambda: s.call("desktop-ui", "type", {"window": title, "name": "Nova Input",
+                                                          "text": " + nova"}))
     assert r.ok and r.evidence["previous_content_kept"]
     assert value(s, title, name="Nova Input") == "existing text + nova"
     assert s.tasks.buttons == []                                 # BLUE: no approval
@@ -140,7 +153,7 @@ def test_dangerous_keys_need_approval(ui) -> None:  # type: ignore[no-untyped-de
     with pytest.raises(ApprovalPending):
         s.call("desktop-ui", "keys", {"window": title, "keys": "alt+f4"})
     assert any(w["title"] == title for w in s.call("desktop-ui", "windows", {}).data["windows"])
-    r = s.call("desktop-ui", "keys", {"window": title, "keys": "ctrl+a"})
+    r = focus_retry(lambda: s.call("desktop-ui", "keys", {"window": title, "keys": "ctrl+a"}))
     assert r.ok and r.evidence["window_still_open"]
 
 
@@ -152,4 +165,5 @@ def test_coordinates_are_red(ui) -> None:  # type: ignore[no-untyped-def]
 
 def test_focus_verified(ui) -> None:  # type: ignore[no-untyped-def]
     s, title = ui
-    assert s.call("desktop-ui", "focus", {"window": title}).evidence["foreground"]
+    assert focus_retry(lambda: s.call("desktop-ui", "focus", {"window": title})).evidence[
+        "foreground"]

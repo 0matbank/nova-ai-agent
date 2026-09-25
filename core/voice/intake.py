@@ -19,6 +19,7 @@ from core.config.schema import VoiceSection
 from core.log import get_logger
 from core.router.intent import classify_by_rules
 from core.voice.transcriber import Transcriber
+from core.voice.tts import Speaker
 
 _log = get_logger("core")
 CALLBACK_PREFIX = "vc"
@@ -49,14 +50,27 @@ def is_read_only_request(text: str) -> bool:
 
 class VoiceIntake:
     def __init__(self, transcriber: Transcriber, settings: VoiceSection, audio_dir: Path,
-                 handle_text: Handler, corrector: Corrector | None = None) -> None:
+                 handle_text: Handler, corrector: Corrector | None = None,
+                 speaker: Speaker | None = None) -> None:
         self.transcriber = transcriber
         self.settings = settings
         self.audio_dir = audio_dir
         self.handle_text = handle_text
         self.corrector = corrector
+        self.speaker = speaker
+        # Tasks started by voice: their final answer is spoken too (voice mode).
+        self.voice_tasks: set[int] = set()
         # nonce -> (message, {"y": suggested text, "h": heard text}, expires_at)
         self._pending: dict[str, tuple[IncomingMessage, dict[str, str], float]] = {}
+
+    async def _spoken(self, reply: OutgoingMessage, say: str) -> OutgoingMessage:
+        if self.speaker is None or not self.speaker.enabled:
+            return reply
+        return dataclasses.replace(reply, voice=await self.speaker.synthesize(say))
+
+    def _track(self, reply: OutgoingMessage | None) -> None:
+        if reply is not None and reply.task_id is not None:
+            self.voice_tasks.add(reply.task_id)
 
     async def handle(self, msg: IncomingMessage, download: Downloader) -> OutgoingMessage:
         assert msg.voice is not None
@@ -78,7 +92,8 @@ class VoiceIntake:
                   f"{t.duration:.1f}s audio in {t.seconds:.1f}s on {t.device}",
                   extra={"action": "voice.transcribe", "status": "ok"})
         if not t.text:
-            return OutgoingMessage("🎙️ কিছু বুঝতে পারিনি — আবার একটু স্পষ্ট করে বলবেন?")
+            ask = "কিছু বুঝতে পারিনি — আবার একটু স্পষ্ট করে বলবেন?"
+            return await self._spoken(OutgoingMessage(f"🎙️ {ask}"), ask)
 
         heard = (f"🎙️ শুনলাম ({LANG_NAME.get(t.language, t.language)}, "
                  f"{t.confidence:.0%}): «{t.text}»")
@@ -88,8 +103,13 @@ class VoiceIntake:
         if t.confidence < threshold:
             return await self._ask_to_confirm(text_msg, t.text, t.language, heard)
         reply = await self.handle_text(text_msg)
-        return OutgoingMessage(f"{heard}\n\n{reply.text}" if reply else heard,
-                               reply.buttons if reply else [], reply.photo if reply else None)
+        self._track(reply)
+        out = OutgoingMessage(f"{heard}\n\n{reply.text}" if reply else heard,
+                              reply.buttons if reply else [], reply.photo if reply else None,
+                              task_id=reply.task_id if reply else None)
+        # A task's answer is spoken when it completes; a direct reply is spoken now.
+        return out if out.task_id is not None else await self._spoken(out, reply.text
+                                                                      if reply else "")
 
     async def _ask_to_confirm(self, msg: IncomingMessage, text: str, language: str,
                               heard: str) -> OutgoingMessage:
@@ -111,10 +131,12 @@ class VoiceIntake:
                     f"«{suggestion}»\n\nনিশ্চিত না হওয়া পর্যন্ত কিছু চালাব না।")
             buttons = [[("✅ হ্যাঁ, এটাই", f"{base}:y")],
                        [("✏️ যা শুনেছ সেটাই", f"{base}:h"), ("🔁 আবার বলব", f"{base}:n")]]
+            say = f"পুরোপুরি নিশ্চিত নই। আপনি কি বলতে চেয়েছেন: {suggestion}?"
         else:
             body = f"{heard}\n\nঠিক শুনেছি তো? নিশ্চিত না হওয়া পর্যন্ত কিছু চালাব না।"
             buttons = [[("✅ ঠিক আছে, চালাও", f"{base}:y"), ("🔁 আবার বলব", f"{base}:n")]]
-        return OutgoingMessage(body, buttons)
+            say = f"ঠিক শুনেছি তো? আপনি বলেছেন: {text}?"
+        return await self._spoken(OutgoingMessage(body, buttons), say)
 
     def _expire(self) -> None:
         now = time.time()
@@ -138,6 +160,7 @@ class VoiceIntake:
                                  f"{cb.message_text}\n\n🔁 বাতিল — আবার বলুন বা লিখে দিন।")
         chosen = choices[parts[2]]
         reply = await self.handle_text(dataclasses.replace(msg, text=chosen))
+        self._track(reply)
         result = reply.text if reply else "✅"
         return CallbackReply("✅ চালানো হচ্ছে",
                              f"{cb.message_text}\n\n✅ নিশ্চিত: «{chosen}»\n{result}")

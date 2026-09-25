@@ -199,6 +199,14 @@ class TelegramChannel:
             await self.send(chat_id, reply)
 
     async def send(self, chat_id: str, message: OutgoingMessage) -> None:
+        if message.voice is not None:
+            try:
+                await self.api.send_voice(chat_id, message.voice)
+            except TelegramError as e:           # the text below still goes out
+                _log.warning(f"voice send failed: {e}", extra={"action": "telegram.send_voice"})
+            message = OutgoingMessage(message.text, message.buttons, message.photo)
+            if not message.text.strip() and not message.buttons and message.photo is None:
+                return
         if message.photo is not None:
             caption, rest = message.text[:1024], message.text[1024:]
             try:

@@ -39,6 +39,10 @@ class OutgoingMessage:
     buttons: list[list[tuple[str, str]]] = field(default_factory=list)
     # Optional JPEG image (e.g. /screenshot); `text` becomes its caption.
     photo: bytes | None = None
+    # Optional OGG/Opus voice note (spoken reply); `text` is sent as well.
+    voice: bytes | None = None
+    # Set when this reply created a task (lets voice mode speak the final answer).
+    task_id: int | None = None
 
 
 @dataclass(frozen=True)

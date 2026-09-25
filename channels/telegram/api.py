@@ -129,6 +129,12 @@ class TelegramAPI:
             files={"photo": (filename, photo, "image/jpeg")})
         return result
 
+    async def send_voice(self, chat_id: str, voice: bytes, caption: str = "") -> dict[str, Any]:
+        result: dict[str, Any] = await self._post(
+            "sendVoice", 60.0, data={"chat_id": chat_id, "caption": caption[:1024]},
+            files={"voice": _voice_file(voice)})
+        return result
+
     async def answer_callback_query(self, callback_id: str, text: str) -> None:
         await self.call("answerCallbackQuery", callback_query_id=callback_id, text=text[:200])
 
@@ -149,6 +155,13 @@ class TelegramAPI:
             link_preview_options={"is_disabled": True},
         )
         return result
+
+
+def _voice_file(data: bytes) -> tuple[str, bytes, str]:
+    """sendVoice accepts OGG/Opus, MP3 or M4A — pick the name/type from the bytes."""
+    if data[:4] == b"OggS":
+        return ("nova.ogg", data, "audio/ogg")
+    return ("nova.mp3", data, "audio/mpeg")
 
 
 def chunk_text(text: str, limit: int = MAX_MESSAGE_LEN) -> list[str]:

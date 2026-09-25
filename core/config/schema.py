@@ -121,6 +121,13 @@ class TaskEngineSection(Strict):
     list_limit: Annotated[int, Field(ge=1, le=50)]
 
 
+class TTSSection(Strict):
+    enabled: bool = False
+    voices: dict[str, str] = {}
+    max_chars: Annotated[int, Field(ge=50, le=5000)] = 1200
+    rate: Annotated[str, Field(pattern=r"^[+-]\d{1,2}%$")] = "+0%"
+
+
 class VoiceSection(Strict):
     max_duration_seconds: Annotated[int, Field(ge=5, le=1800)]
     confirm_below_confidence: Annotated[float, Field(ge=0.0, le=1.0)]
@@ -130,6 +137,7 @@ class VoiceSection(Strict):
     beam_size: Annotated[int, Field(ge=1, le=10)]
     vad_speech_pad_ms: Annotated[int, Field(ge=0, le=2000)] = 400
     hint_words: list[str] = []
+    tts: TTSSection = TTSSection()
 
 
 class DefaultConfig(Strict):

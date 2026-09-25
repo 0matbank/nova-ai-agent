@@ -56,6 +56,7 @@ from core.voice.correct import suggest as suggest_correction
 from core.voice.intake import CALLBACK_PREFIX as VOICE_PREFIX
 from core.voice.intake import VoiceIntake
 from core.voice.transcriber import Transcriber
+from core.voice.tts import Speaker
 from models.router import ProviderRouter
 from providers.provider_base import USABLE
 from providers.registry import ProviderRegistry
@@ -218,10 +219,26 @@ async def run_core_service(
                               cfg.default.voice.beam_size,
                               hint_words=cfg.default.voice.hint_words,
                               vad_speech_pad_ms=cfg.default.voice.vad_speech_pad_ms)
+    speaker = Speaker(cfg.default.voice.tts)
     voice = VoiceIntake(transcriber, cfg.default.voice, cfg.path("workspace_dir") / "voice",
                         lambda m: router.handle(m),
                         corrector=lambda heard, lang: suggest_correction(
-                            provider_router, heard, lang, cfg.default.voice.hint_words))
+                            provider_router, heard, lang, cfg.default.voice.hint_words),
+                        speaker=speaker)
+
+    async def speak_final_answer(chat_id: str, kind: MessageType, task_id: int) -> None:
+        """Voice mode (plan §57): a task started by voice gets its answer spoken."""
+        if task_id not in voice.voice_tasks or store is None:
+            return
+        voice.voice_tasks.discard(task_id)
+        task = store.get(task_id)
+        done = kind is MessageType.TASK_COMPLETED and task is not None and task.result_summary
+        say = task.result_summary if done and task else "দুঃখিত, কাজটা শেষ করা যায়নি।"
+        audio = await speaker.synthesize(str(say))
+        if audio is not None:
+            await channel.send(chat_id, OutgoingMessage("", voice=audio))
+
+    notifier.on_task_final.append(speak_final_answer)
 
     async def on_button(cb: IncomingCallback) -> CallbackReply | None:
         if cb.data.startswith(f"{VOICE_PREFIX}:"):

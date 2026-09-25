@@ -25,6 +25,7 @@ class FakeTelegram:
         self.commands: list[dict[str, str]] = []
         self.answered: list[dict[str, Any]] = []
         self.photos: list[dict[str, Any]] = []
+        self.voices: list[dict[str, Any]] = []
         self.edited: list[dict[str, Any]] = []
         # method -> list of scripted responses (dict payload | "hang" | Exception)
         self.script: dict[str, list[Any]] = defaultdict(list)
@@ -96,6 +97,9 @@ class FakeTelegram:
         if method == "sendPhoto":
             self.photos.append(params)
             return self._ok({"message_id": 2000 + len(self.photos)})
+        if method == "sendVoice":
+            self.voices.append(params)
+            return self._ok({"message_id": 3000 + len(self.voices)})
 
         if self.script[method]:
             action = self.script[method].pop(0)

@@ -34,6 +34,8 @@ from tests.mocks.providers import FakeAdapter
     ("বর্তমানে আমার পিসিতে কি অপেন আসে, কি কাস চলছে", "processes", ("windows", "processes")),
     ("এখন পিসির হেল্থ কেমন", "pc_status", ("windows", "status")),
     ("পিসির বর্তমান অবস্থা বলো", "pc_status", ("windows", "status")),
+    ("পিসির বর্তমন অবস্থা বলো", "pc_status", ("windows", "status")),
+    ("আমার পিসির এখন অবস্তা কেমন", "pc_status", ("windows", "status")),
 ])
 def test_rules(text: str, category: str, skill: tuple[str, str] | None) -> None:
     hit = classify_by_rules(text)
@@ -53,6 +55,15 @@ def _router(answer: str) -> ProviderRouter:
     adapters = {n: FakeAdapter(n) for n in cfg.providers.providers}
     adapters["ollama_local"] = FakeAdapter("ollama_local", [answer])
     return ProviderRouter(cfg.providers, adapters)
+
+
+def test_ai_may_route_only_to_read_only_skills() -> None:
+    status = asyncio.run(IntentRouter(_router(json.dumps({"intent": "pc_status"})))
+                         .classify("amar computer ta kemon ase"))
+    assert status.source == "ai" and status.skill == ("windows", "status", {})
+    act = asyncio.run(IntentRouter(_router(json.dumps({"intent": "pc_control"})))
+                      .classify("oi jinish ta bondho kore dao"))
+    assert act.category == "pc_control" and act.skill is None      # AI never picks actions
 
 
 def test_ai_fallback_classification() -> None:

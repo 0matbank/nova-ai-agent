@@ -30,6 +30,7 @@ desktop = [
 ]
 browser = []
 voice = [
+    "edge-tts>=7,<8",
     "faster-whisper>=1.1,<2",
     "nvidia-cublas-cu12>=12.4,<13 ; sys_platform == 'win32'",
     "nvidia-cudnn-cu12>=9,<10 ; sys_platform == 'win32'",

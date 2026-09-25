@@ -10,6 +10,7 @@ the result (plan §54). Nothing here decides permissions — the core does.
 
 from __future__ import annotations
 
+import contextlib
 import sys
 import time
 from collections.abc import Iterator
@@ -180,12 +181,46 @@ def inspect(window: str, max_depth: int = 6, limit: int = 300) -> dict[str, Any]
         return {"window": _describe_window(w), "controls": nodes}
 
 
+def _force_foreground(hwnd: int) -> None:
+    """Windows blocks background processes from taking the foreground while the
+    user works in another app. Attaching our input queue to the current
+    foreground thread is the documented way round it — no fake keystrokes."""
+    if sys.platform != "win32" or not hwnd:
+        return
+    import win32api
+    import win32con
+    import win32gui
+    import win32process
+
+    fg = win32gui.GetForegroundWindow()
+    if fg == hwnd:
+        return
+    fg_thread = win32process.GetWindowThreadProcessId(fg)[0] if fg else 0
+    me = win32api.GetCurrentThreadId()
+    attached = bool(fg_thread) and fg_thread != me
+    try:
+        if attached:
+            win32process.AttachThreadInput(me, fg_thread, True)
+        if win32gui.IsIconic(hwnd):
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        win32gui.BringWindowToTop(hwnd)
+        win32gui.SetForegroundWindow(hwnd)
+    except Exception:  # noqa: S110 - best effort; callers verify focus afterwards
+        pass
+    finally:
+        if attached:
+            with contextlib.suppress(Exception):
+                win32process.AttachThreadInput(me, fg_thread, False)
+
+
 def _activate(w: Any) -> None:
     try:
         w.SetActive()
     except Exception:
         w.SetFocus()
-    time.sleep(0.2)
+    time.sleep(0.15)
+    _force_foreground(int(w.NativeWindowHandle or 0))
+    time.sleep(0.15)
 
 
 def focus(window: str) -> dict[str, Any]:

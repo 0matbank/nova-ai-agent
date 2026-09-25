@@ -65,6 +65,14 @@ voice:
   beam_size: 5
   vad_speech_pad_ms: 400       # keep short commands from being clipped
   # Vocabulary hint for Whisper (initial prompt): words the owner often says.
+  # Spoken replies (plan §57 optional TTS): when the owner speaks, Nova answers in
+  # voice too (text is always sent as well). Engine: Microsoft neural voices via
+  # edge-tts (online; the reply text is sent to Microsoft to be spoken).
+  tts:
+    enabled: true
+    voices: {bn: bn-BD-NabanitaNeural, en: en-US-AvaMultilingualNeural}
+    max_chars: 1200
+    rate: "-8%"                  # a little slower = clearer (owner feedback 2026-09-25)
   hint_words: [Nova AI, পিসি, পিসির অবস্থা, স্ট্যাটাস, স্ক্রিনশট, screenshot, status,
                বাংলাদেশ, রাজধানী, খোলো, বন্ধ করো, ফাইল, ফোল্ডার, Notepad, Chrome,
                Click TV, টাস্ক, বলো, দেখাও]

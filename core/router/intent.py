@@ -33,6 +33,12 @@ def _rx(*parts: str) -> re.Pattern[str]:
 
 
 # Order matters: first match wins.
+READ_ONLY_SKILLS: dict[str, tuple[str, str, dict[str, Any]]] = {
+    "pc_status": ("windows", "status", {}),
+    "screenshot": ("screenshot", "capture", {}),
+    "processes": ("windows", "processes", {}),
+}
+
 RULES: list[tuple[str, re.Pattern[str], tuple[str, str, dict[str, Any]] | None]] = [
     ("screenshot", _rx(r"screen\s*shot", r"\bskin\s*shot\b", r"স্ক্রিনশট", r"স্ক্রিন\s*শট",
                        r"\bscreen\s*(ta\s*)?(dekhao|dekhaw|"
@@ -45,7 +51,9 @@ RULES: list[tuple[str, re.Pattern[str], tuple[str, str, dict[str, Any]] | None]]
                       r"(কি|কী)\s*(অপেন|ওপেন|খোলা)\s*(আছে|আসে)"),
      ("windows", "processes", {})),
     ("pc_status", _rx(r"\bpc\s*(er\s*)?(status|obostha|condition|health)\b",
-                      r"পিসি(র|তে)?\s*(বর্তমান\s*)?(অবস্থা|স্ট্যাটাস|হেল্থ|হেলথ)",
+                      # up to two words in between; tolerant of Whisper spellings
+                      r"পিসি\S*(\s+\S+){0,2}\s+(অবস্থা|অবস্তা|অবস্হা|স্ট্যাটাস|স্টেটাস|"
+                      r"হেল্থ|হেলথ)",
                       r"\b(cpu|ram|gpu|vram|disk|memory)\b.*\b(koto|status|usage|obostha|"
                       r"kemon|left|free|how much)\b",
                       r"\b(koto|how much)\b.*\b(cpu|ram|gpu|disk)\b", r"(র‍্যাম|সিপিইউ).*(কত|অবস্থা)"),
@@ -111,7 +119,9 @@ class IntentRouter:
                 except (ValueError, AttributeError):
                     cat, conf = "", 0.0
                 if cat in CATEGORIES:
-                    # AI never selects a skill directly — only rules do (deterministic).
+                    # AI may only route to fixed READ-ONLY skills (harmless if wrong);
+                    # anything that acts is chosen by deterministic rules, never by AI.
                     return Intent(cat, max(0.0, min(conf, 1.0)), "ai",
+                                  READ_ONLY_SKILLS.get(cat),
                                   meta={"provider": result.provider, "model": result.model})
         return Intent("question", 0.3, "default")

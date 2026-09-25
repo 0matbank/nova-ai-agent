@@ -57,6 +57,8 @@ class Notifier:
         self._exempt = {MessageType(t) for t in policy.exempt_message_types}
         self._progress: dict[int, _TaskProgress] = {}
         self._errors: dict[str, tuple[float, int]] = {}   # key -> (last_sent_at, severity)
+        # Called after a task's final message is delivered (e.g. spoken reply).
+        self.on_task_final: list[Callable[[str, MessageType, int], Awaitable[None]]] = []
 
     async def notify(self, chat_id: str, kind: MessageType, text: str, *,
                      task_id: int | None = None, error_key: str | None = None,
@@ -65,10 +67,18 @@ class Notifier:
                      photo: bytes | None = None) -> bool:
         """Returns True if the message was sent now."""
         if kind in self._exempt or kind is MessageType.INFO:
-            if task_id is not None and kind in (MessageType.TASK_COMPLETED,
-                                                MessageType.TASK_FAILED_PERMANENTLY):
-                self._progress.pop(task_id, None)
-            return await self._deliver(chat_id, text, buttons, photo)
+            final_task = (task_id if kind in (MessageType.TASK_COMPLETED,
+                                              MessageType.TASK_FAILED_PERMANENTLY) else None)
+            if final_task is not None:
+                self._progress.pop(final_task, None)
+            sent = await self._deliver(chat_id, text, buttons, photo)
+            if final_task is not None and sent:
+                for hook in self.on_task_final:
+                    try:
+                        await hook(chat_id, kind, final_task)
+                    except Exception:
+                        _log.exception("task-final hook failed", extra={"action": "notify"})
+            return sent
         if kind is MessageType.PROGRESS:
             return await self._progress_update(chat_id, text, task_id)
         return await self._error(chat_id, text, error_key or text, severity)
