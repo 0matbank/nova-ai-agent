@@ -268,3 +268,16 @@ def test_summary_with_key_points(tmp_path: Path) -> None:
     t = s.tasks.store.get(run(s, "en.wikipedia.org খোলো"))
     assert "📝 সংক্ষেপে:\nউইকিপিডিয়া একটি মুক্ত অনলাইন বিশ্বকোষ।" in t.result_summary
     assert "🔑 মূল কথা:\n• স্বেচ্ছাসেবকরা লেখেন\n• বিনামূল্যে পড়া যায়" in t.result_summary
+
+
+@pytest.mark.parametrize(("answer", "summary", "points"), [
+    ('{"summary": "ঢাকা রাজধানী।", "points": ["এক", "দুই"]}', "ঢাকা রাজধানী।", ["এক", "দুই"]),
+    # the model hit its token limit mid-answer (seen live 2026-09-25): no raw JSON shown
+    ('{ "summary": "সুন্দরবন একটি বন।", "points": [ "এক", "দুই", "অসম্পূ',
+     "সুন্দরবন একটি বন।", ["এক", "দুই"]),
+    ("শুধু লেখা।", "শুধু লেখা।", []),
+    ('{"summary": "cut off', None, []),
+])
+def test_parse_summary(answer: str, summary: str | None, points: list[str]) -> None:
+    from core.orchestrator.browse import parse_summary
+    assert parse_summary(answer) == (summary, points)

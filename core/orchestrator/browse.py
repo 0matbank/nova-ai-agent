@@ -292,7 +292,7 @@ class BrowserFlow:
                 task_id=ctx.task.id, task_type="summarization",
                 user_request=f"Summarise this page in {language}.", context=page,
                 system=SUMMARY_SYSTEM.format(language=language, style=SUMMARY_STYLE[lang]),
-                json_output=True, limits=Limits(timeout_seconds=60, max_output_tokens=700)))
+                json_output=True, limits=Limits(timeout_seconds=60, max_output_tokens=1400)))
         except Exception:
             _log.exception("page summary failed", extra={"action": "browser.summary"})
             return None, []
@@ -316,18 +316,42 @@ def _tidy(text: str) -> str:
     return " ".join(_LABEL_LINE.sub("", text).split())
 
 
+_JSON_STR = r'"((?:[^"\\]|\\.)*)"'
+_SUMMARY_FIELD = re.compile(r'"summary"\s*:\s*' + _JSON_STR)
+_POINTS_FIELD = re.compile(r'"points"\s*:\s*\[(.*)', re.DOTALL)
+
+
+def _unescape(s: str) -> str:
+    try:
+        return str(json.loads(f'"{s}"'))
+    except ValueError:
+        return s
+
+
 def parse_summary(answer: str) -> tuple[str | None, list[str]]:
-    """{"summary": …, "points": […]} → cleaned parts; plain text → summary only."""
+    """{"summary": …, "points": […]} → cleaned parts. A truncated JSON answer
+    (model hit its token limit) still yields the summary and every complete
+    point; plain text → summary only."""
+    summary: Any = None
+    points: list[Any] = []
     try:
         data = json.loads(answer[answer.index("{"):answer.rindex("}") + 1])
     except ValueError:
         data = None
-    if not isinstance(data, dict):
-        return (_tidy(answer)[:700] or None), []
-    raw = data.get("points")
-    points: list[Any] = raw if isinstance(raw, list) else []
-    clean = [_tidy(p).lstrip("•-– ").strip() for p in points]
-    return (_tidy(data.get("summary", ""))[:700] or None), [p[:200] for p in clean if p][:5]
+    if isinstance(data, dict):
+        summary = data.get("summary")
+        raw = data.get("points")
+        points = raw if isinstance(raw, list) else []
+    elif "{" in answer:
+        m = _SUMMARY_FIELD.search(answer)
+        summary = _unescape(m.group(1)) if m else None
+        pm = _POINTS_FIELD.search(answer)
+        if pm:     # only strings that were closed — a cut-off last point is dropped
+            points = [_unescape(s) for s in re.findall(_JSON_STR + r"\s*[,\]]", pm.group(1))]
+    else:
+        summary = answer
+    clean = [_tidy(p).lstrip("•-– ").strip() for p in points if isinstance(p, str)]
+    return (_tidy(summary or "")[:700] or None), [p[:200] for p in clean if p][:5]
 
 
 def _query_reflected(query: str, url: str, title: str) -> bool:
