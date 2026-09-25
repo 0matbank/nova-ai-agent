@@ -1,8 +1,12 @@
 # browser skill
 
-Routine, deterministic browser automation (plan §15 Layer 1) through the
-Browser Worker, which drives **Microsoft Playwright CLI** (`@playwright/cli`,
-Apache-2.0, version pinned in `workers/browser-worker/package-lock.json`).
+Browser automation through the Browser Worker, on one of two engines (both
+Microsoft, Apache-2.0, versions pinned in `workers/browser-worker/package-lock.json`):
+
+- `engine="cli"` — **Playwright CLI** (`@playwright/cli`): routine work (§15 Layer 1)
+- `engine="mcp"` — **Playwright MCP** (`@playwright/mcp`, a persistent process per
+  session, ~0.3 s start, sub-second steps): multi-step agent work (Layer 2) and the
+  coordinate tools used by `browser-vision` (Layer 3)
 
 Flow: `open` → `snapshot` (elements get refs `e1`, `e2`, …) → `click` / `fill`
 by ref → `snapshot` again to verify. Page content is **untrusted data** (§19).
@@ -10,7 +14,8 @@ by ref → `snapshot` again to verify. Page content is **untrusted data** (§19)
 | Tool | Action (level) | Notes |
 |---|---|---|
 | `open` | browser.navigate 🔵 | new session with its own ID; agent profile, headless by default |
-| `goto` | browser.navigate 🔵 | |
+| `goto`, `back` | browser.navigate 🔵 | |
+| `select` | browser.select 🔵 | dropdown option (not a submit) |
 | `snapshot`, `text`, `find`, `screenshot` | browser.read 🟢 | screenshot file is deleted after reading |
 | `click` | browser.click 🟡 | element text with buy/pay/send/delete/confirm… → approval |
 | `fill` | browser.fill 🔵 / browser.submit 🟡 / browser.fill_secret 🔴 | password fields always RED; submit auto only for search boxes |
@@ -40,4 +45,11 @@ A request with an explicit web address is routed here without AI:
 General web search without a site is the Phase 16 research agent; multi-step /
 exploratory browsing is Phase 11 (Playwright MCP + vision).
 
-Live check: `uv run python scripts/browser_drill.py` (5 rounds × 5 requests).
+Multi-step requests ("…গিয়ে Prices থেকে দাম কত বলো", "…then tell me…") go to
+`core/orchestrator/browser_agent.py`: observe → the router's planner picks ONE
+step → gated skill call → repeat (max 12). Answers must be grounded (every
+number must appear on the page); vision fallback for things the snapshot
+can't show; login/CAPTCHA/consequential steps go to the owner.
+
+Live checks: `uv run python scripts/browser_drill.py` (routine) and
+`uv run python scripts/browser_agent_drill.py [rounds] [-v] [--only word]` (complex).

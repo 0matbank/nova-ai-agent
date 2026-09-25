@@ -37,6 +37,15 @@ from providers.provider_base import Limits, ProviderRequest
 _log = get_logger("core")
 
 DOWNLOAD_RX = re.compile(r"\b(download|downlod)\b|ডাউনলোড|নামাও|\bnamao\b", re.IGNORECASE)
+# Multi-step / question requests go to the browser agent (Layer 2), not the
+# routine open/search/download path: "…গিয়ে Economy section থেকে GDP কত বলো".
+COMPLEX_RX = re.compile(
+    r"\b(then|after that|and then|click|menu|section|tab|page\s*\d|form|select|choose|login|"
+    r"sign\s*in|list|collect|compare|price|cost|how\s+many|how\s+much|what|which|who|when|"
+    r"latest|check|find\s+out|tell\s+me|giye|tarpor|erpor|koto|kon|ki|kara|koyta|bolo|"
+    r"dekhe|ber\s*koro)\b"
+    r"|তারপর|এরপর|গিয়ে|ক্লিক|মেনু|সেকশন|ট্যাব|ফর্ম|বেছে|লগইন|তালিকা|সংগ্রহ|তুলনা|দাম|কত|"
+    r"কোন|কী|কি(?![ঀ-৿])|কারা|কয়টা|বলো|দেখে|বের\s*কর", re.IGNORECASE)
 SEARCH_RX = re.compile(r"\b(search|khoj\w*|khuj\w*)\b|সার্চ|খোঁজ|খুঁজ", re.IGNORECASE)
 # Command words removed to leave the search query (whole words only).
 FILLER = {
@@ -179,6 +188,11 @@ class BrowserFlow:
         if req.url is None:
             return {"kind": "browser", "ok": False, "needs_input": True,
                     "answer": TEXT[lang]["ask_site"]}
+        if (not req.download and self.providers is not None
+                and COMPLEX_RX.search(URL_RX.sub(" ", ctx.task.request_text))):
+            from core.orchestrator.browser_agent import BrowserAgent
+            url = req.url if "://" in req.url else f"https://{req.url}"
+            return await BrowserAgent(self.skills, self.providers).run(ctx, url, lang)
         if req.download:
             r = await self.skills.invoke(ctx, "download", "fetch", {"url": req.url})
             answer = r.summary

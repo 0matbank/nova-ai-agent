@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import base64
 import time
 from typing import Any
 
@@ -35,6 +36,7 @@ TASK_ALIAS = {
     "reasoning": "fast_general", "intent_classification": "intent_classification",
     "summarization": "summarization", "bangla": "bangla_banglish",
     "coding": "local_code_review", "review": "local_code_review",
+    "vision": "vision",
 }
 
 
@@ -120,14 +122,19 @@ class OllamaAdapter(ProviderAdapter):
         content = request.user_request
         if request.context:
             content = f"{request.context}\n\n---\n{request.user_request}"
-        messages.append({"role": "user", "content": content})
+        user: dict[str, Any] = {"role": "user", "content": content}
+        if request.images:
+            user["images"] = [base64.b64encode(img).decode() for img in request.images]
+        messages.append(user)
         # Thinking per task type comes from models.yaml (benchmark-driven, plan §9A).
-        think = request.task_type in self.policy.think_task_types and not request.json_output
+        # JSON replies may think too: Ollama keeps the thinking apart and applies the
+        # format to the answer only (planner steps need it — Phase 11 drill).
+        think = request.task_type in self.policy.think_task_types
         budget = request.limits.max_output_tokens + (1536 if think else 0)
         body: dict[str, Any] = {
             "model": model, "messages": messages, "stream": False, "think": think,
             "keep_alive": f"{self.policy.idle_unload_seconds}s",
-            "options": {"num_predict": budget, "temperature": 0.3},
+            "options": {"num_predict": budget, "temperature": 0.3, "num_ctx": self.policy.num_ctx},
         }
         if request.json_output:
             body["format"] = "json"

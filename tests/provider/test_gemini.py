@@ -110,7 +110,9 @@ def test_summaries_route_gemini_first_then_local(cfg) -> None:  # type: ignore[n
     assert [c.provider for c in caps.candidates("summarization")] == ["gemini_api",
                                                                       "ollama_local"]
     # the budget guard still keeps it away from everything else
-    for cap in ("reasoning", "vision", "simple", "intent_classification"):
+    # vision: local qwen3-vl first, Gemini only as fallback (owner 2026-09-25)
+    assert [c.provider for c in caps.candidates("vision")] == ["ollama_local", "gemini_api"]
+    for cap in ("reasoning", "simple", "intent_classification"):
         assert "gemini_api" not in [c.provider for c in caps.candidates(cap)], cap
 
 

@@ -208,6 +208,9 @@ class OllamaPolicy(Strict):
     max_heavy_models_loaded: Annotated[int, Field(ge=1, le=2)]
     idle_unload_seconds: PositiveInt
     think_task_types: list[str] = []
+    # Context window per request. Ollama's own default (4096) silently cuts longer
+    # prompts such as page snapshots.
+    num_ctx: Annotated[int, Field(ge=2048, le=131072)] = 16384
 
 
 class WhisperConfig(Strict):

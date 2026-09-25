@@ -65,6 +65,8 @@ class ProviderRequest:
     limits: Limits = field(default_factory=Limits)
     json_output: bool = False
     model_alias: str | None = None        # e.g. "intent_classification"
+    # PNG/JPEG bytes for vision task types (screenshot understanding, plan §57).
+    images: tuple[bytes, ...] = ()
 
 
 @dataclass(frozen=True)

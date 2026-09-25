@@ -30,7 +30,8 @@ providers:
     model_alias_set: gemini_api
     priority:
       summarization: 100
-      # Phase 14 (full Gemini adapter): reasoning: 85, vision: 90
+      vision: 60                  # fallback after local qwen3-vl (owner: local first)
+      # Phase 14 (full Gemini adapter): reasoning: 85
 
   anthropic_claude:
     enabled: false
@@ -48,6 +49,7 @@ providers:
     priority:
       simple: 100
       offline: 100
+      vision: 100                 # local qwen3-vl first — screenshots stay on this PC
       fallback: 70
 
 # §8.6 circuit breaker

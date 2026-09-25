@@ -1,0 +1,8 @@
+{
+  "name": "browser-vision",
+  "version": "1.0.0",
+  "description": "Vision fallback for the browser (plan §15 Layer 3): act on a point a vision model found, when the page's structure doesn't expose the target.",
+  "worker": "browser",
+  "platforms": ["win32", "linux", "darwin"],
+  "tools": ["click_xy"]
+}

@@ -89,10 +89,13 @@ def test_simple_tasks_never_go_to_cloud(cfg) -> None:  # type: ignore[no-untyped
 
 
 def test_optional_and_paid_api_not_routed(cfg) -> None:  # type: ignore[no-untyped-def]
+    """A paid API provider is never routed while the budget guard is off; only a
+    free-tier key (free_tier_only) may be, and only for its own task types."""
     caps = CapabilityRegistry(cfg.providers, _adapters())
-    assert "gemini_api" not in [c.provider for c in caps.candidates("vision")]
-    on = CapabilityRegistry(_with(cfg, gemini_api__enabled=True), _adapters())
-    assert "gemini_api" not in [c.provider for c in on.candidates("vision")]   # budget guard
+    assert "gemini_api" not in [c.provider for c in caps.candidates("reasoning")]
+    paid = CapabilityRegistry(_with(cfg, gemini_api__free_tier_only=False), _adapters())
+    for cap in ("vision", "summarization", "reasoning"):
+        assert "gemini_api" not in [c.provider for c in paid.candidates(cap)], cap
 
 
 # ------------------------------------------------------------------ router
@@ -201,6 +204,9 @@ def test_thinking_is_config_driven(cfg) -> None:  # type: ignore[no-untyped-def]
     run(a.complete(req("reasoning")))
     assert fake.chats[-1]["think"] is True
     assert fake.chats[-1]["options"]["num_predict"] > fake.chats[1]["options"]["num_predict"]
+    run(a.complete(req("reasoning", json_output=True)))           # planner steps think too
+    assert fake.chats[-1]["think"] is True and fake.chats[-1]["format"] == "json"
+    assert fake.chats[-1]["options"]["num_ctx"] == cfg.models.ollama_policy.num_ctx
 
 
 @pytest.mark.parametrize("fail,cat", [(404, None), ("timeout", ErrorCategory.TIMEOUT),

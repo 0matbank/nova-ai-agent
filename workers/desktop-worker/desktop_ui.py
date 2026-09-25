@@ -58,8 +58,16 @@ def _describe_window(w: Any) -> dict[str, Any]:
 
 
 def _top_windows(auto: Any) -> list[Any]:
-    return [w for w in auto.GetRootControl().GetChildren()
-            if w.Name and not w.IsOffscreen]
+    out = []
+    for w in auto.GetRootControl().GetChildren():
+        # A hung or closing window can throw COMError on any property read; one bad
+        # window must not break listing all the others (seen live 2026-09-25).
+        try:
+            if w.Name and not w.IsOffscreen:
+                out.append(w)
+        except Exception:
+            continue
+    return out
 
 
 def list_windows() -> list[dict[str, Any]]:
@@ -67,8 +75,13 @@ def list_windows() -> list[dict[str, Any]]:
     with _uia() as auto:
         fg = auto.GetForegroundControl()
         fg_hwnd = fg.GetTopLevelControl().NativeWindowHandle if fg else None
-        return [{**_describe_window(w), "foreground": w.NativeWindowHandle == fg_hwnd}
-                for w in _top_windows(auto)]
+        out = []
+        for w in _top_windows(auto):
+            try:        # the window may vanish / hang between listing and reading it
+                out.append({**_describe_window(w), "foreground": w.NativeWindowHandle == fg_hwnd})
+            except Exception:
+                continue
+        return out
 
 
 def _find_window(auto: Any, spec: str) -> Any:

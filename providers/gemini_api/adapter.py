@@ -13,6 +13,7 @@ task types given a priority in providers.yaml are routed here.
 
 from __future__ import annotations
 
+import base64
 import time
 from typing import Any
 
@@ -36,9 +37,13 @@ COOLDOWN_SECONDS = 600
 OVERLOADED = {500, 502, 503, 504}
 
 
+def _mime(img: bytes) -> str:
+    return "image/png" if img.startswith(b"\x89PNG") else "image/jpeg"
+
+
 class GeminiAdapter(ProviderAdapter):
     name = "gemini_api"
-    capabilities = frozenset({"summarization", "reasoning", "bangla"})
+    capabilities = frozenset({"summarization", "reasoning", "bangla", "vision"})
 
     def __init__(self, api_key: SecretStr | None, aliases: dict[str, str | None],
                  client: httpx.AsyncClient | None = None) -> None:
@@ -96,7 +101,11 @@ class GeminiAdapter(ProviderAdapter):
         }
         if request.json_output:
             gen["responseMimeType"] = "application/json"
-        body: dict[str, Any] = {"contents": [{"role": "user", "parts": [{"text": text}]}],
+        parts: list[dict[str, Any]] = [
+            {"inline_data": {"mime_type": _mime(img), "data": base64.b64encode(img).decode()}}
+            for img in request.images]
+        parts.append({"text": text})
+        body: dict[str, Any] = {"contents": [{"role": "user", "parts": parts}],
                                 "generationConfig": gen}
         if request.system:
             body["systemInstruction"] = {"parts": [{"text": request.system}]}

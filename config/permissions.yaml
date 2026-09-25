@@ -34,6 +34,7 @@ actions:
   ui.type: BLUE               # appends; never replaces existing content
   clipboard.write: BLUE
   browser.navigate: BLUE
+  browser.select: BLUE        # choosing a dropdown option (not submitting)
   test.run: BLUE
   download: BLUE
 
@@ -44,6 +45,8 @@ actions:
   ui.replace_text: YELLOW     # safety check = previous content backed up
   browser.click: YELLOW       # safety check = element text has no danger word (buy/pay/send…)
   browser.submit: YELLOW      # safety check = it is a search box; any other form → approval
+  browser.click_xy: YELLOW    # vision click; safety check = element at the point is
+                              # identified and has no danger word, else approval
   package.install: YELLOW
   git.commit: YELLOW
   config.change: YELLOW

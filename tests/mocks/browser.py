@@ -40,7 +40,22 @@ def real_browser_client(tmp_path: Path) -> tuple[WorkerClient, Any]:
     mod.register(app, ctx)
     client = WorkerClient("browser", "127.0.0.1", 1, tokens, 1, client=httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app, client=("127.0.0.1", 5555)), timeout=120))
-    return client, app.state.browser
+    return client, Handle(app)
+
+
+class Handle:
+    """Both engines' sessions of a test worker, and a way to close them all."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    @property
+    def sessions(self) -> dict[str, Any]:
+        return {sid: m for e in self.app.state.engines.values()
+                for sid, m in e.sessions().items()}
+
+    async def close_all(self) -> None:
+        await self.app.state.close_all()
 
 
 class FakeBrowser(FakeDesktop):

@@ -184,7 +184,7 @@ def test_browser_sessions(logs: Path, tokens: TokenStore, tmp_path: Path) -> Non
         try:
             r = await client.call("POST", "/v1/sessions", task_id=12, json={})
             sid = r["session_id"]
-            assert sid != "12" and cli.sessions[sid].task_id == "12"
+            assert sid != "12" and cli.sessions[sid]["task_id"] == "12"
             listed = await client.call("GET", "/v1/sessions")
             assert [s["session_id"] for s in listed["sessions"]] == [sid]
             assert (await client.call("DELETE", f"/v1/sessions/{sid}"))["closed"] == sid

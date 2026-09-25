@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from core.skills.api import Params, PolicyDenied, Tool, ToolEnv, ToolResult
 from core.skills.browser_rpc import browser_call, page_evidence
 from core.skills.urls import UrlBlocked, check_url
@@ -11,6 +13,7 @@ class P(Params):
     #                                   None = throwaway in-memory profile
     headed: bool = False              # visible window (e.g. for the owner to log in)
     device: str | None = None         # "mobile" or a device name (plan §46 mobile test)
+    engine: Literal["cli", "mcp"] = "cli"   # mcp = persistent session for multi-step work
 
 
 def precheck(p: P, env: ToolEnv) -> None:

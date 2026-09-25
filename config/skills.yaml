@@ -8,7 +8,7 @@ skills:
   desktop-ui: { status: enabled }
   app-control: { status: enabled }
   browser: { status: enabled }
-  browser-vision: { status: planned }
+  browser-vision: { status: enabled }
   terminal: { status: enabled }
   powershell: { status: enabled }
   files: { status: enabled }

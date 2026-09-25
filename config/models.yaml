@@ -7,16 +7,18 @@ ollama_models:
   summarization: "qwen3:8b"
   bangla_banglish: "qwen3:8b"
   local_code_review: "deepseek-coder-v2:16b"
+  vision: "qwen3-vl:8b"                    # screenshots stay on this PC (owner 2026-09-25)
 
 ollama_policy:
   default_alias: fast_general
-  on_demand_aliases: [local_code_review]   # loaded only when coding/review needs it
+  on_demand_aliases: [local_code_review, vision]   # loaded only when needed
   max_heavy_models_loaded: 1
   idle_unload_seconds: 600
   # Benchmark 2026-09-24 (scripts/benchmark_local_models.py): qwen3:8b scored
   # 7/10 on Bangla facts without thinking vs 10/10 with it (~3.8 s avg).
   # Fast paths (intent, simple) stay without thinking.
   think_task_types: [reasoning, bangla, coding, review, summarization]
+  num_ctx: 16384        # Ollama defaults to 4096 and silently truncates longer prompts
 
 # Speech-to-text (plan §7). Loaded on demand, unloaded when idle (resources.yaml).
 whisper:
@@ -35,6 +37,8 @@ gemini_api:
   default: null
   summarization: "gemini-3.8-flash"          # listed by the models API 2026-09-25
   summarization_backup: "gemini-3.5-flash"   # when the first is overloaded (503) / missing
+  vision: "gemini-3.8-flash"                 # vision fallback when local qwen3-vl fails
+  vision_backup: "gemini-3.5-flash"
   tts: "gemini-3.8-flash-tts"      # spoken replies (verified in Google docs 2026-09-25)
 
 anthropic_claude:

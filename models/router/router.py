@@ -26,6 +26,12 @@ NO_SWITCH = frozenset({ErrorCategory.UNSAFE, ErrorCategory.TOOL_FAILURE,
                        ErrorCategory.BAD_REQUEST})
 
 
+# Skipping a provider that is simply not set up (placeholder, no key) is normal
+# routing; these states mean something went wrong and are worth recording.
+NOTEWORTHY_STATES = frozenset({HealthState.RATE_LIMITED, HealthState.COOLDOWN,
+                               HealthState.AUTH_REQUIRED, HealthState.DEGRADED})
+
+
 def _switch(request: ProviderRequest, tried: list[str], used: str) -> None:
     """A fallback happened: the task goes on, but the switch is recorded (plan §8.7)."""
     msg = f"{request.task_type}: provider switch {' → '.join(tried)} → {used}"
@@ -48,11 +54,14 @@ class ProviderRouter:
 
     async def complete(self, request: ProviderRequest) -> ProviderResult:
         tried: list[str] = []
+        noteworthy = False          # a provider that should have served failed / is limited
         for cand in self.capabilities.candidates(request.task_type):
             adapter = self.adapters[cand.provider]
             state = await self._fresh_health(adapter)
             if state not in USABLE:
                 tried.append(f"{cand.provider}={state}")
+                if state in NOTEWORTHY_STATES:
+                    noteworthy = True
                 continue
             result = await self._attempt(adapter, request)
             _log.info(f"{request.task_type} via {cand.provider}: {result.status}",
@@ -61,10 +70,11 @@ class ProviderRouter:
                              "duration": round(result.usage.seconds, 2),
                              "error_code": result.error_category})
             if result.ok or result.error_category in NO_SWITCH:
-                if tried:
+                if noteworthy:
                     _switch(request, tried, cand.provider)
                 return result
             tried.append(f"{cand.provider}={result.error_category}")
+            noteworthy = True
         detail = ", ".join(tried) or "no provider is configured for this task type"
         return ProviderResult(ResultStatus.ERROR, "none",
                               error_category=ErrorCategory.MODEL_UNAVAILABLE,

@@ -1,8 +1,25 @@
 {
   "name": "browser",
   "version": "1.0.0",
-  "description": "Routine browser automation through the Browser Worker (Microsoft Playwright CLI, plan §15 Layer 1).",
+  "description": "Browser automation through the Browser Worker: Microsoft Playwright CLI for routine work (plan §15 Layer 1) and Playwright MCP for multi-step work (Layer 2).",
   "worker": "browser",
-  "platforms": ["win32", "linux", "darwin"],
-  "tools": ["open", "goto", "snapshot", "text", "find", "click", "fill", "press", "screenshot", "close"]
+  "platforms": [
+    "win32",
+    "linux",
+    "darwin"
+  ],
+  "tools": [
+    "open",
+    "goto",
+    "back",
+    "snapshot",
+    "text",
+    "find",
+    "click",
+    "fill",
+    "select",
+    "press",
+    "screenshot",
+    "close"
+  ]
 }
