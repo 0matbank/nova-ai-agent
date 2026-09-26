@@ -105,10 +105,11 @@ def test_no_key_is_unavailable_not_a_crash() -> None:
     assert asyncio.run(a.complete(req())).error_category is ErrorCategory.AUTH
 
 
-def test_summaries_route_gemini_first_then_local(cfg) -> None:  # type: ignore[no-untyped-def]
+def test_summaries_route_gemini_then_antigravity_then_local(cfg) -> None:  # type: ignore[no-untyped-def]
     caps = CapabilityRegistry(cfg.providers, ProviderRegistry.from_config(cfg).adapters)
-    assert [c.provider for c in caps.candidates("summarization")] == ["gemini_api",
-                                                                      "ollama_local"]
+    # owner 2026-09-26: Gemini API → Antigravity (AI Pro quota) → local Qwen
+    assert [c.provider for c in caps.candidates("summarization")] == [
+        "gemini_api", "google_antigravity", "ollama_local"]
     # the budget guard still keeps it away from everything else
     # vision: local qwen3-vl first, Gemini only as fallback (owner 2026-09-25)
     assert [c.provider for c in caps.candidates("vision")] == ["ollama_local", "gemini_api"]

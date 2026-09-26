@@ -1,3 +1,5 @@
-"""google_antigravity adapter — real implementation arrives in Phase 13 (plan §41).
-Until then the provider exists in the pool as a placeholder so routing,
-health and config already treat it as a first-class provider (plan §8.2)."""
+"""google_antigravity adapter (plan §8.2, Phase 13): the official Antigravity CLI
+(`agy`) signed in with the owner's Google account (Google AI Pro quota)."""
+from providers.google_antigravity.adapter import AntigravityAdapter
+
+__all__ = ["AntigravityAdapter"]

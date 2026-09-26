@@ -57,6 +57,8 @@ TEXT = {
         "undo": "↩️ বাতিল করতে: git -C \"{folder}\" checkout -- .  (commit/push করিনি — push-এর "
                 "আগে সবসময় আপনার অনুমতি লাগবে)",
         "summary": "{name}-এ কোড বদলানো: \"{goal}\"",
+        "committed": "⚠️ {provider} নিজে থেকে commit করে ফেলেছে, যেটা নিষেধ ছিল। কিছু push হয়নি। "
+                     "আগের অবস্থায় ফিরতে: git -C \"{folder}\" reset --soft {head}",
     },
     "en": {
         "which": "Which project should I work on? Set up: {names}. (To add one, put its folder "
@@ -74,6 +76,8 @@ TEXT = {
         "undo": "↩️ To undo: git -C \"{folder}\" checkout -- .  (not committed or pushed — a push "
                 "always needs your approval)",
         "summary": "Code change in {name}: \"{goal}\"",
+        "committed": "⚠️ {provider} made a commit on its own, which it must not do. Nothing was "
+                     "pushed. To go back: git -C \"{folder}\" reset --soft {head}",
     },
 }
 
@@ -99,6 +103,11 @@ async def git(folder: Path, *args: str, timeout: float = 60) -> tuple[int, str]:
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     out, _ = await asyncio.wait_for(proc.communicate(), timeout)
     return proc.returncode or 0, out.decode("utf-8", "replace")
+
+
+async def _head(folder: Path) -> str:
+    code, out = await git(folder, "rev-parse", "HEAD")
+    return out.strip() if code == 0 else ""
 
 
 async def git_clean(folder: Path) -> tuple[bool, str]:
@@ -164,6 +173,7 @@ class CodingFlow:
                           summary=t["summary"].format(name=project.name, goal=goal[:200]),
                           details={"project": key, "request": goal[:300]},
                           safety_check=lambda: git_clean(folder))
+        head = await _head(folder)
         language = "Bangla (বাংলা)" if lang == "bn" else "English"
         request = ProviderRequest(
             task_id=ctx.task.id, task_type="coding", workspace=str(folder),
@@ -183,6 +193,10 @@ class CodingFlow:
             if retry.ok:
                 agent_text = retry.answer or agent_text
                 passed, test_out = await self._test(ctx, project, folder)
+        if head and await _head(folder) != head:
+            # the rules forbid commits (commit = Phase 15, with the owner): stop and say how to undo
+            raise TaskBlocked(t["committed"].format(provider=provider, folder=folder,
+                                                    head=head[:12]))
         return await self._report(lang, project, folder, provider, agent_text, passed,
                                   test_out, result.session_id)
 

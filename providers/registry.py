@@ -10,12 +10,12 @@ import asyncio
 from core.config import Secrets
 from core.config.schema import AppConfig
 from providers.gemini_api import GeminiAdapter
+from providers.google_antigravity import AntigravityAdapter
 from providers.ollama_local import OllamaAdapter
 from providers.openai_codex import CodexAdapter
 from providers.provider_base import Health, NotImplementedAdapter, ProviderAdapter
 
 PLANNED = {
-    "google_antigravity": ("Phase 13", frozenset({"coding", "reasoning", "review"})),
     "gemini_api": ("Phase 14", frozenset({"reasoning", "vision"})),
     "anthropic_claude": ("Phase 14", frozenset({"coding", "reasoning", "review"})),
 }
@@ -35,6 +35,11 @@ class ProviderRegistry:
                 continue
             if name == "openai_codex" and not disabled:
                 adapters[name] = CodexAdapter(cfg.models.alias_sets.get(name, {}).get("default"))
+                continue
+            if name == "google_antigravity" and not disabled:
+                adapters[name] = AntigravityAdapter(
+                    cfg.models.alias_sets.get(name, {}).get("default"),
+                    scratch_dir=cfg.path("workspace_dir") / ".antigravity-scratch")
                 continue
             if name == "gemini_api" and not disabled:
                 key = secrets.get("GEMINI_API_KEY") if secrets is not None else None

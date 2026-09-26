@@ -34,6 +34,9 @@ from providers.provider_base import (
     ResultStatus,
     Usage,
 )
+from providers.provider_base.adapter import retry_after
+
+__all__ = ["CodexAdapter", "parse_events", "retry_after"]
 
 HERE = Path(__file__).resolve().parent
 CODEX_JS = HERE / "cli" / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
@@ -42,21 +45,11 @@ DEFAULT_COOLDOWN = 1800
 _LIMIT = re.compile(r"usage limit|rate limit|too many requests|\b429\b|quota", re.IGNORECASE)
 _AUTH = re.compile(r"not logged in|log ?in again|unauthori[sz]ed|\b401\b|token.*expired|"
                    r"refresh token", re.IGNORECASE)
-_RETRY = re.compile(r"try again in\s+(?:(\d+)\s*h\w*)?\s*(?:(\d+)\s*m\w*)?\s*(?:(\d+)\s*s\w*)?",
-                    re.IGNORECASE)
 
 
 def _node() -> str:
     node = shutil.which("node") or r"C:\Program Files\nodejs\node.exe"
     return node
-
-
-def retry_after(text: str) -> float | None:
-    m = _RETRY.search(text)
-    if not m or not any(m.groups()):
-        return None
-    h, mi, s = (int(g) if g else 0 for g in m.groups())
-    return float(h * 3600 + mi * 60 + s) or None
 
 
 class CodexAdapter(ProviderAdapter):

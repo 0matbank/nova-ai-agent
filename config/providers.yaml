@@ -22,6 +22,7 @@ providers:
       coding: 90
       reasoning: 100
       review: 90
+      summarization: 80           # owner 2026-09-26: Gemini API → Antigravity → local Qwen
 
   gemini_api:
     enabled: true                 # owner 2026-09-25: primary for Bangla page summaries

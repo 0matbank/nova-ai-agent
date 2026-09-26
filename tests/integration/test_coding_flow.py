@@ -178,3 +178,17 @@ def test_find_project(tmp_path: Path, text: str, found: str | None) -> None:
     s, _ = setup(tmp_path, Coder([]))
     got = find_project(s.runner.env.config, text)
     assert (got[0] if got else None) == found
+
+
+def fix_and_commit(repo: Path) -> None:
+    fix(repo)
+    git(repo, "commit", "-qam", "agent committed on its own")
+
+
+def test_a_commit_by_the_coding_agent_is_caught(tmp_path: Path) -> None:
+    coder = Coder([fix_and_commit])
+    s, repo = setup(tmp_path, coder)
+    first = git(repo, "rev-parse", "HEAD").strip()
+    t = run(s)
+    assert t.state is TaskState.FAILED and t.error_code == "BLOCKED_NEEDS_USER"
+    assert "commit" in t.error_message and f"reset --soft {first[:12]}" in t.error_message

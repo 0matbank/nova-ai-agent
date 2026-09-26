@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import abc
+import re
 import time
 from dataclasses import dataclass
 
@@ -14,6 +15,18 @@ from providers.provider_base.types import (
     ResultStatus,
     Usage,
 )
+
+_RETRY = re.compile(r"(?:try again|retry|reset[s]?) in\s+(?:(\d+)\s*h\w*)?\s*(?:(\d+)\s*m\w*)?\s*"
+                    r"(?:(\d+)\s*s\w*)?", re.IGNORECASE)
+
+
+def retry_after(text: str) -> float | None:
+    """Seconds from a CLI's "try again in 2 hours 5 minutes" style message."""
+    m = _RETRY.search(text)
+    if not m or not any(m.groups()):
+        return None
+    h, mi, s = (int(g) if g else 0 for g in m.groups())
+    return float(h * 3600 + mi * 60 + s) or None
 
 
 @dataclass

@@ -11,6 +11,7 @@ import pytest
 from core.config import load_config
 from core.config.schema import ModelsConfig, ProvidersConfig
 from models.router import CapabilityRegistry, ProviderRouter
+from providers.google_antigravity import AntigravityAdapter
 from providers.ollama_local import OllamaAdapter
 from providers.openai_codex import CodexAdapter
 from providers.provider_base import (
@@ -48,8 +49,7 @@ def test_every_configured_provider_exists_from_day_one(cfg) -> None:  # type: ig
     health = run(reg.adapters["anthropic_claude"].check_health())
     assert health.state is HealthState.DISABLED                      # plan §8.2
     assert isinstance(reg.adapters["openai_codex"], CodexAdapter)          # real since Phase 12
-    placeholder = run(reg.adapters["google_antigravity"].check_health())
-    assert placeholder.state is HealthState.UNAVAILABLE
+    assert isinstance(reg.adapters["google_antigravity"], AntigravityAdapter)  # Phase 13
 
 
 def test_placeholder_never_answers() -> None:
