@@ -122,6 +122,16 @@ async def git_clean(folder: Path) -> tuple[bool, str]:
     return True, "clean git working tree — every change will be visible in git diff"
 
 
+async def _file_list(folder: Path, limit: int = 200) -> str:
+    """The project's tracked files, so any coding agent starts from the real layout."""
+    code, out = await git(folder, "ls-files")
+    files = [f for f in out.splitlines() if f.strip()] if code == 0 else []
+    if not files:
+        return ""
+    more = f"\n… and {len(files) - limit} more" if len(files) > limit else ""
+    return "Files in this project (git ls-files):\n" + "\n".join(files[:limit]) + more
+
+
 def test_argv(command: str) -> list[str]:
     argv = shlex.split(command, posix=False)
     if argv and argv[0].lower() in ("python", "python3", "py"):
@@ -178,6 +188,7 @@ class CodingFlow:
         request = ProviderRequest(
             task_id=ctx.task.id, task_type="coding", workspace=str(folder),
             allowed_tools=("code.edit",), risk_level="YELLOW", user_request=goal,
+            context=await _file_list(folder),
             system=CODING_SYSTEM.format(name=project.name, language=language,
                                         test=project.test_command or "if any"),
             limits=Limits(timeout_seconds=1200, max_output_tokens=4000))

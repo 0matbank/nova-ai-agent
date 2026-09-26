@@ -120,6 +120,8 @@ def test_clean_repo_fix_is_verified_by_the_projects_own_tests(tmp_path: Path) ->
     assert "__pycache__" not in t.result_summary
     (req,) = coder.requests
     assert "do not commit, push" in req.system and "Bangla" in req.system
+    # every coding agent starts from the real file layout (agy has no list tool)
+    assert "stats.py" in req.context and "test_stats.py" in req.context
 
 
 def test_dirty_repo_needs_approval_first(tmp_path: Path) -> None:

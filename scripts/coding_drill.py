@@ -3,9 +3,13 @@ edits a project → Nova runs the project's tests → report. Uses a fresh copy 
 a small buggy demo repo in a temp folder, so no real project is touched.
 
     uv run python scripts/coding_drill.py
+    uv run python scripts/coding_drill.py --only google_antigravity   # Phase 13
 
-PASS = task COMPLETED, tests pass after Codex's change, nothing committed,
-no approval needed (clean git tree → code.edit safety check passes).
+PASS = task COMPLETED, tests pass after the provider's change, nothing
+committed, no approval needed (clean git tree → code.edit safety check passes).
+With --only <provider>, every other cloud provider is made unavailable, so the
+router has to fall over to that one (and a Bangla reasoning question is asked
+through it first).
 """
 
 import asyncio
@@ -22,7 +26,9 @@ from core.config import load_config, load_secrets  # noqa: E402
 from core.orchestrator.executor import UserRequestExecutor  # noqa: E402
 from core.router.intent import IntentRouter  # noqa: E402
 from models.router import ProviderRouter  # noqa: E402
+from providers.provider_base import HealthState, Limits, ProviderRequest  # noqa: E402
 from providers.registry import ProviderRegistry  # noqa: E402
+from tests.mocks.providers import FakeAdapter  # noqa: E402
 from tests.mocks.skills import make_skill_env  # noqa: E402
 
 STATS = '''"""Tiny statistics helpers (Nova Codex demo project)."""
@@ -75,6 +81,9 @@ def make_repo(folder: Path) -> None:
         subprocess.run([GIT, "-C", str(folder), *args], check=True)  # noqa: S603
 
 
+ONLY = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
+
+
 async def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="nova-coding-drill-"))
     # Codex's Windows sandbox cannot write under %TEMP%; use the workspace folder.
@@ -93,8 +102,15 @@ async def drill(tmp: Path, repo: Path) -> int:
         encoding="utf-8")
     cfg = load_config(tmp / "config", tmp / "rt")
     s.runner.env.config = cfg
-    router = ProviderRouter(cfg.providers, ProviderRegistry.from_config(
-        cfg, load_secrets(load_config().path("secrets_dir"))).adapters)
+    adapters = ProviderRegistry.from_config(
+        cfg, load_secrets(load_config().path("secrets_dir"))).adapters
+    if ONLY:
+        for name, entry in cfg.providers.providers.items():
+            if name != ONLY and entry.mode != "local":
+                adapters[name] = FakeAdapter(name, state=HealthState.UNAVAILABLE)
+    router = ProviderRouter(cfg.providers, adapters)
+    if ONLY and not await reasoning(router):
+        return 1
     s.tasks.engine.register("user_request",
                             UserRequestExecutor(IntentRouter(router), router, s.runner))
     t0 = time.time()
@@ -112,10 +128,23 @@ async def drill(tmp: Path, repo: Path) -> int:
                          capture_output=True, text=True).stdout.strip().splitlines()
     print(f"independent test run: {'PASS' if tests.returncode == 0 else 'FAIL'}; "
           f"commits: {len(log)} (must stay 1); approvals asked: {len(s.tasks.buttons)}")
+    provider = (t.result_summary or "").split("🤖 ", 1)[-1].split(" ", 1)[0]
     ok = (t.state.value == "COMPLETED" and tests.returncode == 0 and len(log) == 1
-          and not s.tasks.buttons)
-    print(f"PHASE 12 CODING DRILL: {'PASS' if ok else 'FAIL'}")
+          and not s.tasks.buttons and (not ONLY or provider == ONLY))
+    print(f"coding provider: {provider}")
+    print(f"CODING DRILL{f' ({ONLY})' if ONLY else ''}: {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
+
+
+async def reasoning(router: ProviderRouter) -> bool:
+    t0 = time.time()
+    r = await router.complete(ProviderRequest(
+        task_id=0, task_type="reasoning", user_request="পদ্মা সেতু কোন নদীর ওপর? এক লাইনে বলো।",
+        limits=Limits(timeout_seconds=180, max_output_tokens=300)))
+    ok = r.ok and r.provider == ONLY and "পদ্মা" in r.answer
+    print(f"reasoning via {r.provider} in {time.time() - t0:.0f}s: {(r.answer or r.error)[:200]}"
+          f" → {'ok' if ok else 'FAIL'}")
+    return ok
 
 
 if __name__ == "__main__":
