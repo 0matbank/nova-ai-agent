@@ -15,6 +15,7 @@
 | 10 | Browser Worker + Playwright CLI | ✅ PASS (phone: site open / in-site search / download; live drill 25/25 + 6/6 with real AI; Bangla summary via Gemini with automatic local fallback seen live on quota; 468 tests) | start browser worker, then `uv run python scripts/browser_drill.py`; phone: `en.wikipedia.org-এ Dhaka সার্চ করো` |
 | 11 | Playwright MCP + Vision Fallback | ✅ PASS (phone: Wikipedia search → article → GDP, grounded, 3 steps; live drill: shop tab flow + canvas-only button via local vision + real Wikipedia, 11/12 then 3/3; vision click accuracy within ~10 px; 493 tests) | browser worker running, then `uv run python scripts/browser_agent_drill.py 3`; phone: `en.wikipedia.org-এ Bangladesh খুঁজে তারপর Economy section থেকে GDP কত বলো` |
 | 12 | OpenAI Codex Adapter + Coding Flow | ✅ PASS (phone: demo project bug fix → Codex edit → Nova's own test run 4/4 ✅, approval path seen live on a dirty tree; live drill PASS, nothing committed; 514 tests) | `uv run python scripts/coding_drill.py`; phone: `codex demo project-er test fail korche, bug fix koro` |
+| 13 | Google Antigravity Adapter | ✅ PASS (phone: general question answered via Antigravity ~18 s; live drill: same coding task via Antigravity 49 s, 4/4 tests, nothing committed + Bangla reasoning; summary fallback Gemini→Antigravity seen live; browser agent drill 3/3; 533 tests) | `uv run python scripts/antigravity_setup.py`, then `uv run python scripts/coding_drill.py --only google_antigravity`; phone: any general question |
 
 
 ### Notes — Phase 10
@@ -33,3 +34,9 @@
 - Sandbox: read-only unless `code.edit` is granted for a registered project folder, then workspace-write, no network, never commit/push. Nova's own folders are never editable.
 - `code.edit` YELLOW: automatic on a clean git tree, otherwise the owner approves first (owner choice). Nova's test command decides success; one follow-up round, then BLOCKED_NEEDS_USER.
 - Windows: Codex's sandbox cannot write under %TEMP% — project folders live under the workspace.
+
+### Notes — Phase 13
+- Official Antigravity CLI `agy` 1.2.11 (Google, auto-updates itself — cannot be pinned) signed in with the owner's Google account (AI Pro quota); credentials stay in the system keyring. Health = `agy models` (no quota).
+- Safety rules live in agy's own settings (`scripts/antigravity_setup.py`, backup first): no web fetch/actuation, no history-changing git, nothing outside the workspace, never paid Google One credits. Health refuses to run the agent if they drift. agy's built-in Google search tool is not covered by permissions (queries go only to Google).
+- Windows: agy's terminal sandbox is a preview needing admin, so print mode refuses every terminal command; the agent edits with file tools and Nova runs the tests. Coding flow now sends the project's file list to every provider.
+- Routing: coding Codex → Antigravity → local; reasoning Antigravity first; summaries Gemini API → Antigravity → local; browser planner = new `planning` task type, local first with Antigravity backup (owner choice).
