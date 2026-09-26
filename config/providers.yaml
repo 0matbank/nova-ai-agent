@@ -23,6 +23,7 @@ providers:
       reasoning: 100
       review: 90
       summarization: 80           # owner 2026-09-26: Gemini API → Antigravity → local Qwen
+      planning: 60                # browser planner backup (owner 2026-09-26: local first)
 
   gemini_api:
     enabled: true                 # owner 2026-09-25: primary for Bangla page summaries
@@ -51,6 +52,7 @@ providers:
       simple: 100
       offline: 100
       vision: 100                 # local qwen3-vl first — screenshots stay on this PC
+      planning: 100               # browser agent steps: local first (owner 2026-09-26)
       fallback: 70
 
 # §8.6 circuit breaker

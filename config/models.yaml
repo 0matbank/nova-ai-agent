@@ -17,7 +17,7 @@ ollama_policy:
   # Benchmark 2026-09-24 (scripts/benchmark_local_models.py): qwen3:8b scored
   # 7/10 on Bangla facts without thinking vs 10/10 with it (~3.8 s avg).
   # Fast paths (intent, simple) stay without thinking.
-  think_task_types: [reasoning, bangla, coding, review, summarization]
+  think_task_types: [reasoning, planning, bangla, coding, review, summarization]
   num_ctx: 16384        # Ollama defaults to 4096 and silently truncates longer prompts
 
 # Speech-to-text (plan §7). Loaded on demand, unloaded when idle (resources.yaml).

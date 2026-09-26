@@ -88,7 +88,7 @@ def default_cli() -> str:
 
 class AntigravityAdapter(ProviderAdapter):
     name = "google_antigravity"
-    capabilities = frozenset({"coding", "review", "reasoning", "summarization"})
+    capabilities = frozenset({"coding", "review", "reasoning", "summarization", "planning"})
 
     def __init__(self, model: str | None = None, agy_cmd: list[str] | None = None,
                  scratch_dir: Path | None = None, settings_file: Path | None = None) -> None:

@@ -3,8 +3,9 @@
   observe (snapshot / find / read) → planner picks ONE step → the step runs as
   a gated skill call → result recorded → repeat, at most MAX_STEPS
 
-- The planner is whatever AI the router picks for "reasoning" — local qwen3
-  today; Codex/Antigravity once their phases land (provider-neutral, plan §8).
+- The planner is whatever AI the router picks for "planning": local qwen3
+  first (fast step-by-step loop), Antigravity as the backup (owner choice
+  2026-09-26 — per step the agy agent is slower and got lost on one test page).
 - It works on a persistent Playwright MCP session (engine="mcp").
 - Every step goes through the SkillRunner: consequential clicks, non-search
   submits and password fields still need the owner's approval.
@@ -207,7 +208,7 @@ class BrowserAgent:
                    + (f"Last find/read result:\n{run.note[:NOTE_CHARS]}\n" if run.note else "")
                    + "</page>\n\nSteps so far:\n" + history)
         result = await self.providers.complete(ProviderRequest(
-            task_id=ctx.task.id, task_type="reasoning", user_request="Next action (JSON only).",
+            task_id=ctx.task.id, task_type="planning", user_request="Next action (JSON only).",
             context=context, json_output=True,
             system=PLANNER_SYSTEM.format(goal=run.goal, actions=", ".join(ACTIONS)),
             limits=Limits(timeout_seconds=180, max_output_tokens=500)))

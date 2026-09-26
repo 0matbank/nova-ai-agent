@@ -96,7 +96,7 @@ class Brain(FakeAdapter):
     def __init__(self, plans: list[dict[str, Any]], vision: list[str] | None = None,
                  phrase: Callable[[ProviderRequest], str] = lambda r: r.user_request) -> None:
         super().__init__("ollama_local", capabilities=frozenset(
-            {"reasoning", "vision", "summarization", "intent_classification", "simple",
+            {"planning", "vision", "summarization", "intent_classification", "simple",
              "fallback"}))
         self.plans = list(plans)
         self.vision = list(vision or [])
@@ -105,7 +105,7 @@ class Brain(FakeAdapter):
 
     async def _complete(self, request: ProviderRequest) -> ProviderResult:
         self.requests.append(request)
-        if request.task_type == "reasoning":
+        if request.task_type == "planning":
             answer = json.dumps(self.plans.pop(0) if self.plans else {"action": "read"})
         elif request.task_type == "vision":
             answer = self.vision.pop(0) if self.vision else '{"bbox_2d": null}'
@@ -157,7 +157,7 @@ def test_multi_step_flow_answers_from_the_page(tmp_path: Path) -> None:
     assert "1. click e5" in t.result_summary and site.closed
     open_body = next(b for p, b in site.calls if p == "/v1/sessions")
     assert open_body["engine"] == "mcp"                     # Layer 2 session
-    planner = next(r for r in brain.requests if r.task_type == "reasoning")
+    planner = next(r for r in brain.requests if r.task_type == "planning")
     assert planner.context.startswith("<page>") and "untrusted data" in planner.system
     assert s.tasks.buttons == [] and len(s.photos) == 1     # type: ignore[attr-defined]
 
@@ -170,7 +170,7 @@ def test_ungrounded_answer_is_rejected_then_corrected(tmp_path: Path) -> None:
     t = run(s)
     assert t.state is TaskState.COMPLETED and "245" in t.result_summary
     assert "999" not in t.result_summary.split("🧭")[0]
-    third = [r for r in brain.requests if r.task_type == "reasoning"][2]
+    third = [r for r in brain.requests if r.task_type == "planning"][2]
     assert "999 not found on the page" in third.context
 
 
@@ -236,7 +236,7 @@ def test_blocked_url_from_the_planner_is_a_failed_step_not_a_crash(tmp_path: Pat
     t = run(setup(tmp_path, site, brain))
     assert t.state is TaskState.COMPLETED
     assert not any(p.endswith("/goto") for p, _ in site.calls)          # never sent
-    second = [r for r in brain.requests if r.task_type == "reasoning"][1]
+    second = [r for r in brain.requests if r.task_type == "planning"][1]
     assert "blocked by policy" in second.context
 
 

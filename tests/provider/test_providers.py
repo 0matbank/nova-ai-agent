@@ -239,3 +239,13 @@ def test_real_ollama_bangla_answer(cfg) -> None:  # type: ignore[no-untyped-def]
     if r is None:
         pytest.skip("local Ollama with the default model is not running")
     assert r.ok and ("2" in r.answer or "২" in r.answer), r.answer
+
+
+def test_browser_planner_is_local_first_with_antigravity_backup(cfg) -> None:  # type: ignore[no-untyped-def]
+    """Owner 2026-09-26: the step-by-step browser planner stays on local qwen3;
+    Antigravity only when the local model can't answer. General reasoning goes
+    to Antigravity first (plan §8.8)."""
+    caps = CapabilityRegistry(cfg.providers, _adapters())
+    assert [c.provider for c in caps.candidates("planning")] == ["ollama_local",
+                                                                 "google_antigravity"]
+    assert [c.provider for c in caps.candidates("reasoning")][0] == "google_antigravity"

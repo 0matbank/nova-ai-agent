@@ -33,7 +33,8 @@ DEFAULT_URL = "http://127.0.0.1:11434"
 # capability / task type → role alias (plan §9A)
 TASK_ALIAS = {
     "simple": "fast_general", "offline": "fast_general", "fallback": "fast_general",
-    "reasoning": "fast_general", "intent_classification": "intent_classification",
+    "reasoning": "fast_general", "planning": "fast_general",
+    "intent_classification": "intent_classification",
     "summarization": "summarization", "bangla": "bangla_banglish",
     "coding": "local_code_review", "review": "local_code_review",
     "vision": "vision",
