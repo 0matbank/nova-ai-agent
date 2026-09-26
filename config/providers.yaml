@@ -33,7 +33,7 @@ providers:
     priority:
       summarization: 100
       vision: 60                  # fallback after local qwen3-vl (owner: local first)
-      # Phase 14 (full Gemini adapter): reasoning: 85
+      reasoning: 85               # API fallback after Antigravity (plan §8.3; free tier only)
 
   anthropic_claude:
     enabled: false

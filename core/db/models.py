@@ -208,3 +208,46 @@ class Setting(Base):
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[Any] = mapped_column(JSON)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class ProviderCall(Base):
+    """One AI provider call (plan §8.9): success rate and latency for routing."""
+    __tablename__ = "provider_calls"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
+    provider: Mapped[str] = mapped_column(String(50), index=True)
+    task_type: Mapped[str] = mapped_column(String(50))
+    task_id: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20))
+    error_category: Mapped[str | None] = mapped_column(String(30))
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ProviderState(Base):
+    """Circuit breaker state per provider (plan §8.6) — survives a restart."""
+    __tablename__ = "provider_state"
+
+    provider: Mapped[str] = mapped_column(String(50), primary_key=True)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
+    trips: Mapped[int] = mapped_column(Integer, default=0)
+    cooldown_until: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    reason: Mapped[str | None] = mapped_column(String(300))
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class SideEffect(Base):
+    """Idempotency ledger (plan §9.1): an external side effect of a task, so a
+    retry or another provider can never run the same action twice."""
+    __tablename__ = "side_effects"
+    __table_args__ = (UniqueConstraint("task_id", "key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id"), index=True)
+    key: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(100))
+    target: Mapped[str | None] = mapped_column(String(300))
+    status: Mapped[str] = mapped_column(String(20))
+    summary: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)

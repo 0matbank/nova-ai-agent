@@ -9,16 +9,14 @@ import asyncio
 
 from core.config import Secrets
 from core.config.schema import AppConfig
+from providers.anthropic_claude import ClaudeAdapter
 from providers.gemini_api import GeminiAdapter
 from providers.google_antigravity import AntigravityAdapter
 from providers.ollama_local import OllamaAdapter
 from providers.openai_codex import CodexAdapter
 from providers.provider_base import Health, NotImplementedAdapter, ProviderAdapter
 
-PLANNED = {
-    "gemini_api": ("Phase 14", frozenset({"reasoning", "vision"})),
-    "anthropic_claude": ("Phase 14", frozenset({"coding", "reasoning", "review"})),
-}
+PLANNED: dict[str, tuple[str, frozenset[str]]] = {}   # every configured provider is built
 
 
 class ProviderRegistry:
@@ -40,6 +38,12 @@ class ProviderRegistry:
                 adapters[name] = AntigravityAdapter(
                     cfg.models.alias_sets.get(name, {}).get("default"),
                     scratch_dir=cfg.path("workspace_dir") / ".antigravity-scratch")
+                continue
+            if name == "anthropic_claude":
+                # real adapter even while disabled: enabling Claude = a config change only
+                adapters[name] = ClaudeAdapter(
+                    cfg.models.alias_sets.get(name, {}).get("default"),
+                    scratch_dir=cfg.path("workspace_dir") / ".claude-scratch", disabled=disabled)
                 continue
             if name == "gemini_api" and not disabled:
                 key = secrets.get("GEMINI_API_KEY") if secrets is not None else None

@@ -1,14 +1,29 @@
-"""Provider Router (plan §8.4–§8.9): pick the best HEALTHY provider for the
-task type, react to failures by error category. Circuit breaker, quota
-awareness and checkpoint handoff arrive with the failover engine (Phase 14)."""
+"""Provider Router (plan §8.4–§8.9) — the failover engine.
+
+- Picks the best usable provider for the task type (capability registry); no
+  global "main AI".
+- Reacts by error category (§8.7): usage limit → next provider now; 5xx /
+  timeout → limited retry, then next; auth → provider off + Telegram alert
+  (CRITICAL log); unsafe / tool failure / bad request → no switch.
+- Circuit breaker (§8.6): a provider that keeps failing is skipped for
+  10/20/30 min, then probed before it gets work again.
+- Quota / history aware (§8.9): a provider whose recent calls mostly failed
+  ranks lower ("degraded"); simple tasks never go to the cloud (registry).
+- Handoff (§8.5, §9.2): when a provider fails mid-task the next one does not
+  start from zero — it gets the previous provider's failure summary, and the
+  caller can add the current state (e.g. the coding flow adds the git diff).
+"""
 
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
+from dataclasses import replace
 
 from core.config.schema import ProvidersConfig
 from core.log import get_logger
-from models.router.capabilities import CapabilityRegistry
+from models.router.capabilities import Candidate, CapabilityRegistry
+from models.router.circuit import CircuitBreaker, ProviderHistory
 from providers.provider_base import (
     USABLE,
     ErrorCategory,
@@ -30,6 +45,20 @@ NO_SWITCH = frozenset({ErrorCategory.UNSAFE, ErrorCategory.TOOL_FAILURE,
 # routing; these states mean something went wrong and are worth recording.
 NOTEWORTHY_STATES = frozenset({HealthState.RATE_LIMITED, HealthState.COOLDOWN,
                                HealthState.AUTH_REQUIRED, HealthState.DEGRADED})
+DEGRADED_PENALTY = 30       # priority points a mostly-failing provider loses
+
+# (request, failed provider, its result) → the request for the next provider
+Handoff = Callable[[ProviderRequest, str, ProviderResult], Awaitable[ProviderRequest]]
+
+
+async def default_handoff(request: ProviderRequest, failed: str,
+                          result: ProviderResult) -> ProviderRequest:
+    """The next provider continues, it does not restart: tell it what happened."""
+    note = (f"Another assistant ({failed}) was working on this and stopped before finishing "
+            f"({result.error_category}: {(result.error or '')[:300]}). Continue from the "
+            "current state — do not start over, and do not repeat actions already done.")
+    prev = f"{request.previous_attempt}\n\n{note}" if request.previous_attempt else note
+    return replace(request, previous_attempt=prev)
 
 
 def _switch(request: ProviderRequest, tried: list[str], used: str) -> None:
@@ -42,22 +71,39 @@ def _switch(request: ProviderRequest, tried: list[str], used: str) -> None:
 
 
 class ProviderRouter:
-    def __init__(self, config: ProvidersConfig, adapters: dict[str, ProviderAdapter]) -> None:
+    def __init__(self, config: ProvidersConfig, adapters: dict[str, ProviderAdapter],
+                 history: ProviderHistory | None = None) -> None:
         self.config = config
         self.adapters = adapters
         self.capabilities = CapabilityRegistry(config, adapters)
+        self.history = history
+        self.breaker = CircuitBreaker(config.circuit_breaker, history)
 
-    async def _fresh_health(self, adapter: ProviderAdapter) -> HealthState:
-        if time.time() - adapter.health.checked_at > HEALTH_TTL_SECONDS:
+    async def _fresh_health(self, adapter: ProviderAdapter, force: bool = False) -> HealthState:
+        if force or time.time() - adapter.health.checked_at > HEALTH_TTL_SECONDS:
             await adapter.check_health()
         return adapter.health.state
 
-    async def complete(self, request: ProviderRequest) -> ProviderResult:
+    def ranked(self, task_type: str) -> list[Candidate]:
+        """Candidates by priority; a degraded provider (recent calls mostly
+        failed) loses DEGRADED_PENALTY points."""
+        cands = self.capabilities.candidates(task_type)
+        return sorted(cands, key=lambda c: -(c.priority - (
+            DEGRADED_PENALTY if self.breaker.degraded(c.provider) else 0)))
+
+    async def complete(self, request: ProviderRequest,
+                       handoff: Handoff | None = None) -> ProviderResult:
         tried: list[str] = []
         noteworthy = False          # a provider that should have served failed / is limited
-        for cand in self.capabilities.candidates(request.task_type):
+        for cand in self.ranked(request.task_type):
             adapter = self.adapters[cand.provider]
-            state = await self._fresh_health(adapter)
+            left = self.breaker.open_for(cand.provider)
+            if left > 0:
+                tried.append(f"{cand.provider}=CIRCUIT_OPEN({int(left // 60)}m)")
+                noteworthy = True
+                continue
+            probe = self.breaker.in_probe(cand.provider)
+            state = await self._fresh_health(adapter, force=probe)
             if state not in USABLE:
                 tried.append(f"{cand.provider}={state}")
                 if state in NOTEWORTHY_STATES:
@@ -75,6 +121,7 @@ class ProviderRouter:
                 return result
             tried.append(f"{cand.provider}={result.error_category}")
             noteworthy = True
+            request = await (handoff or default_handoff)(request, cand.provider, result)
         detail = ", ".join(tried) or "no provider is configured for this task type"
         return ProviderResult(ResultStatus.ERROR, "none",
                               error_category=ErrorCategory.MODEL_UNAVAILABLE,
@@ -87,8 +134,15 @@ class ProviderRouter:
         while True:
             result = await adapter.complete(request)
             cat = result.error_category
+            if self.history is not None:
+                self.history.record(adapter.name, request.task_type, request.task_id,
+                                    str(result.status), str(cat) if cat else None,
+                                    result.usage.seconds)
             if result.ok or cat is None:
+                self.breaker.success(adapter.name)
                 return result
+            opened = self.breaker.failure(adapter.name, cat, result.retry_after_seconds,
+                                          result.error or "")
             if cat is ErrorCategory.RATE_LIMIT:
                 adapter._set(HealthState.RATE_LIMITED, result.error or "rate limited")
                 return result                       # → next provider immediately
@@ -98,7 +152,7 @@ class ProviderRouter:
                               extra={"provider": adapter.name, "action": "provider.auth",
                                      "status": "auth_required"})
                 return result
-            if cat in retries and used.get(cat, 0) < retries[cat]:
+            if not opened and cat in retries and used.get(cat, 0) < retries[cat]:
                 used[cat] = used.get(cat, 0) + 1
                 continue
             return result
@@ -107,6 +161,9 @@ class ProviderRouter:
         lines = []
         for name, a in self.adapters.items():
             routable = self.capabilities.routable(name)
-            lines.append(f"{name}: {a.health.state} — {a.health.detail}"
+            left = self.breaker.open_for(name)
+            circuit = (f" — circuit open {int(left // 60) + 1} min: {self.breaker.reason(name)}"
+                       if left > 0 else "")
+            lines.append(f"{name}: {a.health.state} — {a.health.detail}{circuit}"
                          + ("" if routable else " (not routed)"))
         return lines

@@ -19,7 +19,9 @@ from core.queue.states import TaskState
 from core.router.intent import IntentRouter
 from models.router import ProviderRouter
 from providers.provider_base import (
+    ErrorCategory,
     HealthState,
+    ProviderError,
     ProviderRequest,
     ProviderResult,
     ResultStatus,
@@ -194,3 +196,47 @@ def test_a_commit_by_the_coding_agent_is_caught(tmp_path: Path) -> None:
     t = run(s)
     assert t.state is TaskState.FAILED and t.error_code == "BLOCKED_NEEDS_USER"
     assert "commit" in t.error_message and f"reset --soft {first[:12]}" in t.error_message
+
+
+class Crasher(FakeAdapter):
+    """Makes part of the change, then dies with a server error (every retry too)."""
+
+    def __init__(self) -> None:
+        super().__init__("openai_codex", capabilities=frozenset({"coding"}))
+        self._set(HealthState.HEALTHY, "test")
+
+    async def _complete(self, request: ProviderRequest) -> ProviderResult:
+        self.requests.append(request)
+        path = Path(request.workspace or ".") / "stats.py"
+        if not path.read_text(encoding="utf-8").startswith("# started by codex"):
+            path.write_text("# started by codex\n" + BUGGY, encoding="utf-8")
+        raise ProviderError(ErrorCategory.SERVER_ERROR, "codex: 503 overloaded mid-task")
+
+
+def finish(repo: Path) -> None:
+    """The second provider builds on what is already there (keeps codex's line)."""
+    path = repo / "stats.py"
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        "return sum(v) / len(v)\n", "return sum(v) / len(v) if v else 0.0\n"), encoding="utf-8")
+
+
+def test_provider_dies_mid_task_and_the_next_one_continues(tmp_path: Path) -> None:
+    """Plan Phase 14 pass: provider A fails → provider B continues from the
+    current state (failure summary + the diff already made), not from zero."""
+    crasher = Crasher()
+    google = Coder([finish])
+    google.name = "google_antigravity"
+    s, repo = setup(tmp_path, google)
+    router = s.tasks.engine.executors["user_request"].providers  # type: ignore[attr-defined]
+    router.adapters["openai_codex"] = crasher
+    router.adapters["google_antigravity"] = google
+    t = run(s)
+    assert t.state is TaskState.COMPLETED, t.error_message
+    body = (repo / "stats.py").read_text(encoding="utf-8")
+    assert body.startswith("# started by codex") and "if v else 0.0" in body   # both edits
+    (handed,) = google.requests
+    prev = handed.previous_attempt or ""
+    assert "openai_codex" in prev and "SERVER_ERROR" in prev and "do not start over" in prev
+    assert "+# started by codex" in prev                      # the diff so far was handed over
+    assert "🔁 openai_codex" in t.result_summary and "Test পাস ✅" in t.result_summary
+    assert len(git(repo, "log", "--oneline").splitlines()) == 1

@@ -49,6 +49,7 @@ from core.queue.engine import TaskEngine
 from core.queue.store import TaskStore, TaskView
 from core.router.intent import IntentRouter
 from core.skills.api import ToolEnv
+from core.skills.ledger import SideEffectLedger
 from core.skills.paths import PathPolicy
 from core.skills.registry import SkillError, SkillRegistry
 from core.skills.runner import SkillRunner
@@ -58,6 +59,7 @@ from core.voice.intake import VoiceIntake
 from core.voice.transcriber import Transcriber
 from core.voice.tts import GeminiTTS, Speaker, TTSBudget
 from models.router import ProviderRouter
+from models.router.circuit import ProviderHistory
 from providers.provider_base import USABLE
 from providers.registry import ProviderRegistry
 
@@ -205,10 +207,15 @@ async def run_core_service(
 
     # Provider layer (plan §8): no single "main AI" — the router picks per task type.
     providers = provider_registry or ProviderRegistry.from_config(cfg, ctx.secrets)
-    provider_router = ProviderRouter(cfg.providers, providers.adapters)
+    db_sessions = make_sessionmaker(db_engine) if db_engine is not None else None
+    # Circuit breaker state + call history live in the DB (plan §8.6, §8.9).
+    history = ProviderHistory(db_sessions) if db_sessions is not None else None
+    provider_router = ProviderRouter(cfg.providers, providers.adapters, history)
     if engine is not None and security is not None and approvals is not None:
+        # plan §9.1: side effects go through the idempotency ledger
         skill_runner = (SkillRunner(registry, ToolEnv(cfg, PathPolicy(cfg), tool_workers),
-                                    approvals.audit) if registry is not None else None)
+                                    approvals.audit, SideEffectLedger(db_sessions))
+                        if registry is not None and db_sessions is not None else None)
         engine.register("user_request", UserRequestExecutor(
             IntentRouter(provider_router), provider_router, skill_runner))
 
@@ -318,11 +325,15 @@ def provider_summary(router: ProviderRouter) -> tuple[bool, str]:
     """At least one routable provider must be usable (plan §9: one provider
     failing must never stop the whole agent)."""
     usable = [n for n, a in router.adapters.items()
-              if a.health.state in USABLE and router.capabilities.routable(n)]
+              if a.health.state in USABLE and router.capabilities.routable(n)
+              and router.breaker.open_for(n) == 0]
     parts = []
     for name, a in router.adapters.items():
         short = name.split("_")[0] if name != "ollama_local" else "ollama"
-        parts.append(f"{short}={a.health.state.value.lower()}")
+        left = router.breaker.open_for(name)       # plan §8.6: skipped while open
+        state = (f"circuit-open {int(left // 60) + 1}m" if left > 0
+                 else a.health.state.value.lower())
+        parts.append(f"{short}={state}")
     return bool(usable), " · ".join(parts)
 
 

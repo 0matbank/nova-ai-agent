@@ -12,6 +12,7 @@ from core.config import load_config
 from core.config.schema import AppConfig
 from core.queue.engine import ApprovalPending, TaskContext
 from core.skills.api import ToolEnv, ToolResult
+from core.skills.ledger import SideEffectLedger
 from core.skills.paths import PathPolicy
 from core.skills.registry import SkillRegistry
 from core.skills.runner import SkillRunner
@@ -73,4 +74,5 @@ def make_skill_env(tmp_path: Path, workers: dict[str, Any] | None = None) -> Ski
     tasks = make_task_env(tmp_path / "db" / "agent.db", tmp_path / "db-bk")
     registry = SkillRegistry.load(cfg.skills)
     env = ToolEnv(cfg, PathPolicy(cfg), workers or {})
-    return SkillEnv(cfg, tasks, SkillRunner(registry, env, tasks.audit), root)
+    ledger = SideEffectLedger(tasks.store._sessions)    # plan §9.1, as in the service
+    return SkillEnv(cfg, tasks, SkillRunner(registry, env, tasks.audit, ledger), root)

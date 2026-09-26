@@ -31,7 +31,8 @@ from core.orchestrator.lang import reply_language
 from core.queue.engine import TaskBlocked, TaskContext
 from core.skills.api import PolicyDenied
 from models.router import ProviderRouter
-from providers.provider_base import Limits, ProviderRequest
+from models.router.router import Handoff, default_handoff
+from providers.provider_base import Limits, ProviderRequest, ProviderResult
 
 CODING_SYSTEM = """You are working on the owner's software project "{name}" in the
 current folder. Make the smallest correct change that does what the owner asks.
@@ -57,6 +58,7 @@ TEXT = {
         "undo": "↩️ বাতিল করতে: git -C \"{folder}\" checkout -- .  (commit/push করিনি — push-এর "
                 "আগে সবসময় আপনার অনুমতি লাগবে)",
         "summary": "{name}-এ কোড বদলানো: \"{goal}\"",
+        "switched": "🔁 {failed} মাঝপথে থেমে গিয়েছিল — {provider} আগের কাজ থেকেই বাকিটা শেষ করেছে।",
         "committed": "⚠️ {provider} নিজে থেকে commit করে ফেলেছে, যেটা নিষেধ ছিল। কিছু push হয়নি। "
                      "আগের অবস্থায় ফিরতে: git -C \"{folder}\" reset --soft {head}",
     },
@@ -76,6 +78,7 @@ TEXT = {
         "undo": "↩️ To undo: git -C \"{folder}\" checkout -- .  (not committed or pushed — a push "
                 "always needs your approval)",
         "summary": "Code change in {name}: \"{goal}\"",
+        "switched": "🔁 {failed} stopped midway — {provider} finished it from where it left off.",
         "committed": "⚠️ {provider} made a commit on its own, which it must not do. Nothing was "
                      "pushed. To go back: git -C \"{folder}\" reset --soft {head}",
     },
@@ -120,6 +123,22 @@ async def git_clean(folder: Path) -> tuple[bool, str]:
     if out.strip():
         return False, f"uncommitted changes present ({len(out.splitlines())} file(s))"
     return True, "clean git working tree — every change will be visible in git diff"
+
+
+def _handoff(folder: Path, switched: list[str]) -> Handoff:
+    """Provider failover mid-task (plan §8.5): the next provider gets the failure
+    summary plus the edits already in the working tree, and builds on them."""
+    async def handoff(request: ProviderRequest, failed: str,
+                      result: ProviderResult) -> ProviderRequest:
+        switched.append(failed)
+        request = await default_handoff(request, failed, result)
+        _, stat = await git(folder, "diff", "--stat")
+        _, diff = await git(folder, "diff")
+        state = ("No files have been changed yet." if not diff.strip() else
+                 "Changes already made in the working tree — keep them and build on them:\n"
+                 f"{stat.strip()}\n\n{diff[-6000:]}")
+        return replace(request, previous_attempt=f"{request.previous_attempt}\n\n{state}")
+    return handoff
 
 
 async def _file_list(folder: Path, limit: int = 200) -> str:
@@ -192,7 +211,9 @@ class CodingFlow:
             system=CODING_SYSTEM.format(name=project.name, language=language,
                                         test=project.test_command or "if any"),
             limits=Limits(timeout_seconds=1200, max_output_tokens=4000))
-        result = await self.providers.complete(request)
+        switched: list[str] = []
+        handoff = _handoff(folder, switched)
+        result = await self.providers.complete(request, handoff=handoff)
         if not result.ok:
             raise RuntimeError(f"coding provider unavailable: {result.error}")
         agent_text, provider = result.answer, result.provider
@@ -200,7 +221,8 @@ class CodingFlow:
         if passed is False and await self._changed(folder):
             # one follow-up round with the real test output (plan §8.5: no restart from zero)
             retry = await self.providers.complete(replace(request, previous_attempt=(
-                f"Your change was applied, but the tests still fail:\n{test_out[-3000:]}")))
+                f"Your change was applied, but the tests still fail:\n{test_out[-3000:]}")),
+                handoff=handoff)
             if retry.ok:
                 agent_text = retry.answer or agent_text
                 passed, test_out = await self._test(ctx, project, folder)
@@ -208,6 +230,9 @@ class CodingFlow:
             # the rules forbid commits (commit = Phase 15, with the owner): stop and say how to undo
             raise TaskBlocked(t["committed"].format(provider=provider, folder=folder,
                                                     head=head[:12]))
+        if switched:
+            agent_text = t["switched"].format(failed=", ".join(dict.fromkeys(switched)),
+                                              provider=provider) + "\n" + agent_text
         return await self._report(lang, project, folder, provider, agent_text, passed,
                                   test_out, result.session_id)
 

@@ -95,7 +95,8 @@ def test_optional_and_paid_api_not_routed(cfg) -> None:  # type: ignore[no-untyp
     """A paid API provider is never routed while the budget guard is off; only a
     free-tier key (free_tier_only) may be, and only for its own task types."""
     caps = CapabilityRegistry(cfg.providers, _adapters())
-    assert "gemini_api" not in [c.provider for c in caps.candidates("reasoning")]
+    assert [c.provider for c in caps.candidates("reasoning")][:2] == ["google_antigravity",
+                                                                     "gemini_api"]
     paid = CapabilityRegistry(_with(cfg, gemini_api__free_tier_only=False), _adapters())
     for cap in ("vision", "summarization", "reasoning"):
         assert "gemini_api" not in [c.provider for c in paid.candidates(cap)], cap

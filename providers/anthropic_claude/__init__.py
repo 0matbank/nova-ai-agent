@@ -1,3 +1,5 @@
-"""anthropic_claude adapter — real implementation arrives in Phase 14 (plan §41).
-Until then the provider exists in the pool as a placeholder so routing,
-health and config already treat it as a first-class provider (plan §8.2)."""
+"""anthropic_claude adapter (plan §8.2, Phase 14): the official Claude Code CLI with a
+Claude subscription — built, but disabled in providers.yaml until the owner has one."""
+from providers.anthropic_claude.adapter import ClaudeAdapter
+
+__all__ = ["ClaudeAdapter"]

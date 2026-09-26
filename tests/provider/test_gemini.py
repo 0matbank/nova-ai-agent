@@ -113,8 +113,11 @@ def test_summaries_route_gemini_then_antigravity_then_local(cfg) -> None:  # typ
     # the budget guard still keeps it away from everything else
     # vision: local qwen3-vl first, Gemini only as fallback (owner 2026-09-25)
     assert [c.provider for c in caps.candidates("vision")] == ["ollama_local", "gemini_api"]
-    for cap in ("reasoning", "simple", "intent_classification"):
+    for cap in ("simple", "intent_classification", "coding"):
         assert "gemini_api" not in [c.provider for c in caps.candidates(cap)], cap
+    # Phase 14 (plan §8.3): reasoning API fallback after Antigravity, before local
+    assert [c.provider for c in caps.candidates("reasoning")] == [
+        "google_antigravity", "gemini_api", "ollama_local"]
 
 
 @pytest.mark.parametrize("failure", [httpx.Response(429), httpx.Response(403),

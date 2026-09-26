@@ -306,7 +306,7 @@ def test_service_end_to_end(config_dir: Path, runtime_root: Path) -> None:
         "lockdown",
         "help"]
     [reply] = fake.texts_to(OWNER)
-    assert "✅ Database: ok (schema 001)" in reply
+    assert "✅ Database: ok (schema 003)" in reply
     assert "✅ Telegram: connected" in reply and "✅ Config: valid" in reply
     assert fake.texts_to(STRANGER) == []
     core_log = (runtime_root / "logs/core/core.log").read_text("utf-8")
