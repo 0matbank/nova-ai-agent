@@ -1,3 +1,4 @@
-"""openai_codex adapter — real implementation arrives in Phase 12 (plan §41).
-Until then the provider exists in the pool as a placeholder so routing,
-health and config already treat it as a first-class provider (plan §8.2)."""
+"""openai_codex adapter (plan §8.2, Phase 12): the official Codex CLI signed in with ChatGPT."""
+from providers.openai_codex.adapter import CodexAdapter
+
+__all__ = ["CodexAdapter"]

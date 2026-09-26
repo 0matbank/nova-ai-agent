@@ -22,7 +22,7 @@ def test_real_config_is_valid(config_dir: Path, runtime_root: Path) -> None:
     assert cfg.default.notification_throttle.min_progress_interval_seconds == 30
     assert cfg.default.notification_throttle.soft_max_progress_updates_per_task == 5
     assert cfg.default.notification_throttle.repeated_error_cooldown_seconds == 300
-    assert set(cfg.projects) == {"click-tv", "stream-doctor"}
+    assert set(cfg.projects) == {"click-tv", "stream-doctor", "codex-demo"}
     assert cfg.path("logs_dir") == runtime_root.resolve() / "logs"
 
 

@@ -16,6 +16,7 @@ from typing import Any
 
 from core.notify.notifier import MessageType
 from core.orchestrator.browse import BrowserFlow
+from core.orchestrator.coding import CodingFlow
 from core.orchestrator.context import for_request
 from core.orchestrator.lang import reply_language
 from core.queue.engine import TaskContext, Verdict
@@ -88,6 +89,8 @@ class UserRequestExecutor:
             if (intent.category == "browser" and self.skills is not None
                     and "browser" in self.skills.registry.skills):
                 return await BrowserFlow(self.skills, self.providers).run(ctx)
+            if intent.category == "coding" and self.skills is not None:
+                return await CodingFlow(self.skills.env.config, self.providers).run(ctx)
             if intent.category in NOT_YET:
                 return {"kind": "not_yet", "answer": (
                     f"বুঝেছি — এটা '{intent.category}' ধরনের কাজ। এটা এখনো শেখানো হয়নি; "
@@ -104,7 +107,7 @@ class UserRequestExecutor:
             out = await act(prev)
             # A failed action must not be checkpointed as DONE, or a retry would
             # just replay the failure instead of doing the work again.
-            failed = out.get("kind") in ("skill", "browser") and not out.get("ok")
+            failed = out.get("kind") in ("skill", "browser", "coding") and not out.get("ok")
             if failed and not out.get("needs_input"):
                 raise ActionFailed(str(out.get("answer", "action failed")))
             return out
@@ -157,6 +160,14 @@ class UserRequestExecutor:
                     f"SHA-256 {str(ev.get('sha256', ''))[:12]}…"))
             return Verdict(bool(act.get("ok")), f"skill {act.get('skill')} evidence "
                                                 f"{act.get('evidence')}")
+        if kind == "coding":
+            if act.get("needs_input"):
+                return Verdict(True, "PASS WITH KNOWN LIMITATIONS — asked the owner which project")
+            ev = act.get("evidence") or {}
+            tests = ("tests passed ✓" if ev.get("tests_passed") else "no test command"
+                     if ev.get("tests_passed") is None else "tests failed")
+            return Verdict(bool(act.get("ok")), f"{ev.get('provider')}: "
+                           f"{len(ev.get('files_changed') or [])} file(s) changed · {tests}")
         if kind == "browser":
             if act.get("needs_input"):
                 return Verdict(True, "PASS WITH KNOWN LIMITATIONS — asked the owner for the site")

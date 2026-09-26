@@ -49,6 +49,8 @@ actions:
                               # identified and has no danger word, else approval
   package.install: YELLOW
   git.commit: YELLOW
+  code.edit: YELLOW           # AI coding agent (Codex) edits a project folder; safety check =
+                              # allowed project folder + clean git tree, else approval
   config.change: YELLOW
 
   powershell.run: RED         # any command not proven read-only

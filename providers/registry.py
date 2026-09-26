@@ -11,10 +11,10 @@ from core.config import Secrets
 from core.config.schema import AppConfig
 from providers.gemini_api import GeminiAdapter
 from providers.ollama_local import OllamaAdapter
+from providers.openai_codex import CodexAdapter
 from providers.provider_base import Health, NotImplementedAdapter, ProviderAdapter
 
 PLANNED = {
-    "openai_codex": ("Phase 12", frozenset({"coding", "review", "reasoning"})),
     "google_antigravity": ("Phase 13", frozenset({"coding", "reasoning", "review"})),
     "gemini_api": ("Phase 14", frozenset({"reasoning", "vision"})),
     "anthropic_claude": ("Phase 14", frozenset({"coding", "reasoning", "review"})),
@@ -32,6 +32,9 @@ class ProviderRegistry:
             disabled = entry.enabled is False
             if name == "ollama_local" and not disabled:
                 adapters[name] = OllamaAdapter(cfg.models)
+                continue
+            if name == "openai_codex" and not disabled:
+                adapters[name] = CodexAdapter(cfg.models.alias_sets.get(name, {}).get("default"))
                 continue
             if name == "gemini_api" and not disabled:
                 key = secrets.get("GEMINI_API_KEY") if secrets is not None else None

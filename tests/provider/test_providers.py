@@ -12,6 +12,7 @@ from core.config import load_config
 from core.config.schema import ModelsConfig, ProvidersConfig
 from models.router import CapabilityRegistry, ProviderRouter
 from providers.ollama_local import OllamaAdapter
+from providers.openai_codex import CodexAdapter
 from providers.provider_base import (
     ErrorCategory,
     HealthState,
@@ -46,7 +47,9 @@ def test_every_configured_provider_exists_from_day_one(cfg) -> None:  # type: ig
     assert isinstance(reg.adapters["ollama_local"], OllamaAdapter)
     health = run(reg.adapters["anthropic_claude"].check_health())
     assert health.state is HealthState.DISABLED                      # plan §8.2
-    assert run(reg.adapters["openai_codex"].check_health()).state is HealthState.UNAVAILABLE
+    assert isinstance(reg.adapters["openai_codex"], CodexAdapter)          # real since Phase 12
+    placeholder = run(reg.adapters["google_antigravity"].check_health())
+    assert placeholder.state is HealthState.UNAVAILABLE
 
 
 def test_placeholder_never_answers() -> None:

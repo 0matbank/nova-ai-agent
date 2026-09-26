@@ -1,0 +1,12 @@
+# Practice project for the Phase 12 Codex test (owner choice 2026-09-26): real
+# projects stay untouched. Created by Nova in the workspace folder.
+
+name: Codex Demo
+local_folder: D:\Personal-Agent\workspace\codex-demo
+repository: null
+site_url: null
+build_command: null
+test_command: "python -m unittest -v"
+deploy_method: null
+knowledge_dir: null
+approval_required_for: [git.push_production, deploy]

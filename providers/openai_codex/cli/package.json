@@ -1,0 +1,9 @@
+{
+  "name": "nova-codex-cli",
+  "private": true,
+  "description": "Official OpenAI Codex CLI for the openai_codex provider (plan §8.2, Phase 12). Version pinned; package-lock.json is committed.",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@openai/codex": "0.157.0"
+  }
+}
