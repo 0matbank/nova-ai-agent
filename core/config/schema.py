@@ -207,6 +207,8 @@ class OllamaPolicy(Strict):
     on_demand_aliases: list[str]
     max_heavy_models_loaded: Annotated[int, Field(ge=1, le=2)]
     idle_unload_seconds: PositiveInt
+    # keep the default (light) model in GPU memory instead of unloading it when idle
+    keep_default_loaded: bool = False
     think_task_types: list[str] = []
     # Context window per request. Ollama's own default (4096) silently cuts longer
     # prompts such as page snapshots.

@@ -24,6 +24,11 @@ providers:
       review: 90
       summarization: 80           # owner 2026-09-26: Gemini API → Antigravity → local Qwen
       planning: 60                # browser planner backup (owner 2026-09-26: local first)
+      # Questions (owner 2026-10-15): quick → local first; numbers/dates → Gemini first;
+      # current/live facts → Antigravity first (it may use Google search for these only).
+      quick_answer: 80
+      fact_check: 90
+      current_info: 100
 
   gemini_api:
     enabled: true                 # owner 2026-09-25: primary for Bangla page summaries
@@ -34,13 +39,16 @@ providers:
       summarization: 100
       vision: 60                  # fallback after local qwen3-vl (owner: local first)
       reasoning: 85               # API fallback after Antigravity (plan §8.3; free tier only)
+      quick_answer: 90            # when local Qwen is unsure or down
+      fact_check: 100             # exact numbers / dates / statistics — fast cloud check
+      current_info: 80
 
   anthropic_claude:
     enabled: false
     mode: subscription_or_api
     model_alias_set: anthropic_claude
     priority:
-      coding: 95
+      coding: 85                  # owner order: Codex → Antigravity → Claude → local
       reasoning: 95
       review: 100
 
@@ -53,6 +61,7 @@ providers:
       offline: 100
       vision: 100                 # local qwen3-vl first — screenshots stay on this PC
       planning: 100               # browser agent steps: local first (owner 2026-09-26)
+      quick_answer: 100           # short simple questions: ~2–3 s, nothing leaves the PC
       fallback: 70
 
 # §8.6 circuit breaker

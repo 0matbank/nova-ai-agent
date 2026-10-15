@@ -174,7 +174,7 @@ def test_ollama_chat_uses_alias_and_policy(cfg) -> None:  # type: ignore[no-unty
     assert r.usage.input_tokens == 11 and r.usage.output_tokens == 7
     body = fake.chats[0]
     assert body["think"] is True and body["stream"] is False   # reasoning → thinking (config)
-    assert body["keep_alive"] == "600s" and body["messages"][0]["role"] == "system"
+    assert body["keep_alive"] == -1 and body["messages"][0]["role"] == "system"  # stays loaded
 
 
 def test_ollama_model_names_come_from_config(cfg) -> None:  # type: ignore[no-untyped-def]
@@ -250,3 +250,12 @@ def test_browser_planner_is_local_first_with_antigravity_backup(cfg) -> None:  #
     assert [c.provider for c in caps.candidates("planning")] == ["ollama_local",
                                                                  "google_antigravity"]
     assert [c.provider for c in caps.candidates("reasoning")][0] == "google_antigravity"
+
+
+def test_ollama_prompt_carries_handoff_and_heavy_models_unload(cfg) -> None:  # type: ignore[no-untyped-def]
+    fake = FakeOllama(installed=["qwen3:8b", "deepseek-coder-v2:16b"], reply="ok")
+    a = _ollama(cfg, fake)
+    run(a.complete(req("reasoning", previous_attempt="google stopped: TIMEOUT")))
+    assert "google stopped: TIMEOUT" in fake.chats[0]["messages"][-1]["content"]
+    assert a.keep_alive("local_code_review") == "600s"         # heavy: unload when idle
+    assert a.keep_alive("fast_general") == -1                  # default: stays loaded

@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import time
 from typing import Any
@@ -33,7 +34,8 @@ DEFAULT_URL = "http://127.0.0.1:11434"
 # capability / task type → role alias (plan §9A)
 TASK_ALIAS = {
     "simple": "fast_general", "offline": "fast_general", "fallback": "fast_general",
-    "reasoning": "fast_general", "planning": "fast_general",
+    "reasoning": "fast_general", "planning": "fast_general", "quick_answer": "fast_general",
+    "fact_check": "fast_general", "current_info": "fast_general",
     "intent_classification": "intent_classification",
     "summarization": "summarization", "bangla": "bangla_banglish",
     "coding": "local_code_review", "review": "local_code_review",
@@ -52,6 +54,7 @@ class OllamaAdapter(ProviderAdapter):
         self.policy = models.ollama_policy
         self.base = base_url.rstrip("/")
         self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(300, connect=5))
+        self._rewarm: asyncio.Future[bool] | None = None
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -67,6 +70,25 @@ class OllamaAdapter(ProviderAdapter):
 
     def is_heavy(self, alias: str) -> bool:
         return alias in self.policy.on_demand_aliases
+
+    def keep_alive(self, alias: str) -> str | int:
+        """The default model stays in GPU memory (owner 2026-10-15: no cold-start wait
+        on a quick question); heavy on-demand models unload when idle."""
+        if self.policy.keep_default_loaded and not self.is_heavy(alias):
+            return -1
+        return f"{self.policy.idle_unload_seconds}s"
+
+    async def warm(self) -> bool:
+        """Load the default model now (empty request = load only)."""
+        model = self.aliases[self.policy.default_alias]
+        try:
+            r = await self._client.post(f"{self.base}/api/generate", timeout=180,
+                                        json={"model": model, "keep_alive": -1
+                                              if self.policy.keep_default_loaded
+                                              else f"{self.policy.idle_unload_seconds}s"})
+            return r.status_code == 200
+        except httpx.HTTPError:
+            return False
 
     async def _get(self, path: str) -> dict[str, Any]:
         try:
@@ -120,9 +142,10 @@ class OllamaAdapter(ProviderAdapter):
         messages = []
         if request.system:
             messages.append({"role": "system", "content": request.system})
-        content = request.user_request
-        if request.context:
-            content = f"{request.context}\n\n---\n{request.user_request}"
+        parts = [p for p in (request.context, request.previous_attempt and
+                             f"Previous attempt / current state:\n{request.previous_attempt}")
+                 if p]
+        content = "\n\n---\n".join([*parts, request.user_request])
         user: dict[str, Any] = {"role": "user", "content": content}
         if request.images:
             user["images"] = [base64.b64encode(img).decode() for img in request.images]
@@ -134,7 +157,7 @@ class OllamaAdapter(ProviderAdapter):
         budget = request.limits.max_output_tokens + (1536 if think else 0)
         body: dict[str, Any] = {
             "model": model, "messages": messages, "stream": False, "think": think,
-            "keep_alive": f"{self.policy.idle_unload_seconds}s",
+            "keep_alive": self.keep_alive(alias),
             "options": {"num_predict": budget, "temperature": 0.3, "num_ctx": self.policy.num_ctx},
         }
         if request.json_output:
@@ -159,6 +182,10 @@ class OllamaAdapter(ProviderAdapter):
                                 f"ollama HTTP {r.status_code}: {r.text[:200]}")
         data = r.json()
         answer = str((data.get("message") or {}).get("content", "")).strip()
+        if self.is_heavy(alias) and self.policy.keep_default_loaded:
+            # a heavy model may have pushed the default out of VRAM: bring it back now,
+            # so the owner's next quick question does not wait for a cold start
+            self._rewarm = asyncio.ensure_future(self.warm())
         return ProviderResult(
             ResultStatus.OK, self.name, model=model, answer=answer,
             usage=Usage(input_tokens=int(data.get("prompt_eval_count", 0)),

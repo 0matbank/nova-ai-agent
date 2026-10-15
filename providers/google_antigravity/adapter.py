@@ -88,7 +88,8 @@ def default_cli() -> str:
 
 class AntigravityAdapter(ProviderAdapter):
     name = "google_antigravity"
-    capabilities = frozenset({"coding", "review", "reasoning", "summarization", "planning"})
+    capabilities = frozenset({"coding", "review", "reasoning", "summarization", "planning",
+                              "quick_answer", "fact_check", "current_info"})
 
     def __init__(self, model: str | None = None, agy_cmd: list[str] | None = None,
                  scratch_dir: Path | None = None, settings_file: Path | None = None) -> None:
@@ -270,7 +271,13 @@ def _stopped_on_refused_command(body: dict[str, Any]) -> bool:
 
 
 def _prompt(request: ProviderRequest) -> str:
-    parts = [p for p in (TOOL_NOTE, request.system, request.context) if p]
+    note = TOOL_NOTE
+    if "web.search" in request.allowed_tools:
+        # live facts (owner 2026-10-15): Google search only — fetching pages stays denied
+        note = note.replace("Do not search or open the web.",
+                            "You may use your Google search tool (search_web) for current "
+                            "facts; do not open or fetch any web page.")
+    parts = [p for p in (note, request.system, request.context) if p]
     if request.previous_attempt:
         parts.append(f"Previous attempt (did not pass):\n{request.previous_attempt}")
     parts.append(request.user_request)

@@ -43,7 +43,8 @@ def _mime(img: bytes) -> str:
 
 class GeminiAdapter(ProviderAdapter):
     name = "gemini_api"
-    capabilities = frozenset({"summarization", "reasoning", "bangla", "vision"})
+    capabilities = frozenset({"summarization", "reasoning", "bangla", "vision",
+                              "quick_answer", "fact_check", "current_info"})
 
     def __init__(self, api_key: SecretStr | None, aliases: dict[str, str | None],
                  client: httpx.AsyncClient | None = None) -> None:
@@ -57,9 +58,10 @@ class GeminiAdapter(ProviderAdapter):
         await self._client.aclose()
 
     def models_for(self, task_type: str) -> list[str]:
-        names = [self.aliases.get(task_type) or self.aliases.get("default"),
-                 self.aliases.get(f"{task_type}_backup")]
-        return [n for n in names if n]
+        own = self.aliases.get(task_type)
+        names = ([own, self.aliases.get(f"{task_type}_backup")] if own else
+                 [self.aliases.get("default"), self.aliases.get("default_backup")])
+        return list(dict.fromkeys(n for n in names if n))
 
     async def check_health(self) -> Health:
         if self.api_key is None:
@@ -90,9 +92,10 @@ class GeminiAdapter(ProviderAdapter):
 
     async def _call(self, model: str, request: ProviderRequest) -> ProviderResult:
         assert self.api_key is not None
-        text = request.user_request
-        if request.context:
-            text = f"{request.context}\n\n---\n{request.user_request}"
+        sections = [p for p in (request.context, request.previous_attempt and
+                                f"Previous attempt / current state:\n{request.previous_attempt}")
+                    if p]
+        text = "\n\n---\n".join([*sections, request.user_request])
         gen: dict[str, Any] = {
             # thinking tokens count against this, so leave room beyond the answer
             "maxOutputTokens": request.limits.max_output_tokens + 1536,

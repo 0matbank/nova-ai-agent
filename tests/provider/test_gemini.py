@@ -139,3 +139,19 @@ def test_gemini_failure_falls_back_and_is_audited(cfg, failure: httpx.Response, 
     switch = [rec for rec in caplog.records if getattr(rec, "action", "") == "provider.switch"]
     assert switch and "gemini_api" in switch[0].getMessage()
     assert {rec.name.rsplit(".", 1)[-1] for rec in switch} >= {"audit"}
+
+
+def test_task_without_own_alias_uses_default_then_default_backup(cfg) -> None:  # type: ignore[no-untyped-def]
+    """Audit fix: reasoning/fact_check had no Gemini model → every call failed and
+    the failures could open the circuit that summaries share."""
+    a = GeminiAdapter(SecretStr("k"), cfg.models.alias_sets["gemini_api"])
+    for task in ("reasoning", "fact_check", "current_info", "quick_answer"):
+        assert a.models_for(task) == ["gemini-3.8-flash", "gemini-3.5-flash"], task
+    assert a.models_for("summarization")[0] == "gemini-3.8-flash"
+
+
+def test_handoff_text_reaches_the_model() -> None:
+    g = Google(gem_a=[ok("done")])
+    asyncio.run(gem(g).complete(req(previous_attempt="codex stopped; diff: +x")))
+    sent = g.calls[0][1]["contents"][0]["parts"][0]["text"]
+    assert "codex stopped; diff: +x" in sent and sent.endswith("sum")

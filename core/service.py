@@ -17,6 +17,7 @@ import signal
 import sys
 import time
 from collections.abc import Callable
+from typing import Any
 
 import psutil
 
@@ -60,6 +61,7 @@ from core.voice.transcriber import Transcriber
 from core.voice.tts import GeminiTTS, Speaker, TTSBudget
 from models.router import ProviderRouter
 from models.router.circuit import ProviderHistory
+from providers.ollama_local import OllamaAdapter
 from providers.provider_base import USABLE
 from providers.registry import ProviderRegistry
 
@@ -279,9 +281,14 @@ async def run_core_service(
     health.probes["AI providers"] = lambda: provider_summary(provider_router)
 
     _log.info("core service started", extra={"action": "service.start", "status": "ok"})
-    background = [asyncio.create_task(monitor.run(stop)),
-                  asyncio.create_task(_provider_health_loop(providers, stop)),
-                  asyncio.create_task(transcriber.idle_loop(stop))]
+    background: list[asyncio.Task[Any]] = [
+        asyncio.create_task(monitor.run(stop)),
+        asyncio.create_task(_provider_health_loop(providers, stop)),
+        asyncio.create_task(transcriber.idle_loop(stop))]
+    local = providers.adapters.get("ollama_local")
+    if isinstance(local, OllamaAdapter) and local.policy.keep_default_loaded:
+        # owner 2026-10-15: the quick-answer model is ready before the first question
+        background.append(asyncio.create_task(local.warm()))
     if engine is not None and store is not None:
         background.append(asyncio.create_task(engine.run(stop)))
         watcher = DesktopWatcher(store, engine, desktop, notifier)

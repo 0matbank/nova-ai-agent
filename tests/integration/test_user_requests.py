@@ -64,7 +64,7 @@ def test_question_answered_by_local_ai_via_router(tmp_path: Path) -> None:
     assert t.state is TaskState.COMPLETED and t.result_summary == "ঢাকা বাংলাদেশের রাজধানী।"
     classify, answer = local.requests
     assert classify.task_type == "intent_classification"
-    assert answer.task_type == "reasoning"                # asked for reasoning, got local
+    assert answer.task_type == "quick_answer"             # short question → local first
     assert "## Relevant User Instruction" in answer.context
     assert "Chat History" not in answer.context
     done = [txt for _, txt in s.tasks.sent if "COMPLETE" in txt][0]

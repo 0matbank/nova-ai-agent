@@ -15,6 +15,7 @@ import base64
 from typing import Any
 
 from core.notify.notifier import MessageType
+from core.orchestrator.answer import answer
 from core.orchestrator.browse import BrowserFlow
 from core.orchestrator.coding import CodingFlow
 from core.orchestrator.context import for_request
@@ -23,20 +24,15 @@ from core.queue.engine import TaskContext, Verdict
 from core.router.intent import Intent, IntentRouter
 from core.skills.runner import SkillRunner
 from models.router import ProviderRouter
-from providers.provider_base import Limits, ProviderRequest
 
 SYSTEM_PROMPT = (
     "You are Nova AI, a personal assistant running on the owner's Windows PC. "
     "Reply in the same language the user wrote in (Bangla, English or Banglish). "
-    "Be concise and practical. You have NO internet access and your knowledge may be "
-    "outdated or wrong. Never invent facts, dates, names or numbers: if you are not "
-    "sure, say clearly that you are not sure. For current events or news, say you "
-    "cannot know them. You cannot see the screen or run commands from this answer — "
-    "never pretend you did."
+    "Be concise and practical. Never invent facts, dates, names or numbers: if you are "
+    "not sure, say clearly that you are not sure. You cannot see the screen or run "
+    "commands from this answer — never pretend you did."
 )
 NOT_YET = {
-    "research": "Phase 16 (Research agent + web research; local AI-র কাছে আজকের তথ্য নেই, "
-                "তাই বানিয়ে বলব না)",
     "coding": "Phase 12–15 (Codex/Antigravity + Git workflow)",
     "browser": "Phase 11 (Playwright MCP — জটিল/multi-step browsing)",
     "pc_control": "Phase 16 (Windows Operator agent)",
@@ -133,15 +129,17 @@ class UserRequestExecutor:
                 "answer": result.summary, "evidence": result.evidence}
 
     async def _ask_ai(self, ctx: TaskContext) -> dict[str, Any]:
+        """Questions, incl. current-information ones (owner 2026-10-15): quick ones
+        stay local, the rest escalate automatically — see core/orchestrator/answer.py."""
         package = for_request(goal="Answer the owner's request",
                               instruction=ctx.task.request_text, risk="GREEN")
-        result = await self.providers.complete(ProviderRequest(
-            task_id=ctx.task.id, task_type="reasoning", user_request=ctx.task.request_text,
-            context=package.render(), system=SYSTEM_PROMPT,
-            limits=Limits(timeout_seconds=180, max_output_tokens=800)))
+        got = await answer(self.providers, ctx.task.id, ctx.task.request_text,
+                           SYSTEM_PROMPT, package.render())
+        result = got.result
         if not result.ok:
             raise RuntimeError(f"AI unavailable: {result.error}")
         return {"kind": "ai", "provider": result.provider, "model": result.model,
+                "tier": got.tier, "escalated": got.escalated,
                 "answer": result.answer, "ok": True}
 
     async def verify(self, ctx: TaskContext, result: str) -> Verdict:
