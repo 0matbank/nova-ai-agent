@@ -54,3 +54,4 @@
   - phone-facing (9dcc9ca): tasks never keep typed secrets, messages tied to tasks, /cancel stops running coding/browser agents in seconds, coding progress, known errors on retry, /logs, app open/close from the phone, scripts/browser_login.py;
   - provider policy (103ddbd): task budgets in providers.yaml, latency + RAM/VRAM pressure in routing, benchmark with tool-use JSON and memory, honest reply instead of a local guess for live info, screen questions answered by vision.
 - Still Phase 16 by plan: file / PowerShell / desktop-UI work from the phone (Windows Operator + File agents).
+- Phone check of the audit fixes (2026-10-15): /status (Task engine line), /logs, "notepad kholo", "screen e ki dekhacche?" all PASS. It exposed VRAM 98% (qwen3 + qwen3-vl resident together) → Resource Manager now keeps one LLM in VRAM at a time (17081ff); live: 6.4 GB → 10.2 GB during vision (qwen3-vl only) → 6.4 GB 60 s later.
