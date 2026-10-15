@@ -133,3 +133,20 @@ def test_ai_down_retries_then_fails(tmp_path: Path) -> None:
         asyncio.run(s.tasks.engine.run_once())
     t = s.tasks.store.get(tid)
     assert t.state is TaskState.FAILED and "AI unavailable" in (t.error_message or "")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="screenshot skill is Windows-only")
+def test_question_about_the_screen_is_answered_by_vision(tmp_path: Path) -> None:
+    """Plan §57 (audit 2026-10-15): screenshot analysis / visual error detection."""
+    desk = FakeDesktop({"/v1/screenshot": {"width": 10, "height": 10, "monitors": 1,
+                                           "blank": False, "path": "x.png",
+                                           "preview_jpeg_b64": _jpeg()}})
+    s, local = setup(tmp_path, local_script=[
+        "স্ক্রিনে Notepad খোলা, একটা error box: \"File not found\"।"], desktop=desk)
+    local.capabilities = local.capabilities | {"vision"}
+    tid = submit(s, "screen e ki error dekhacche?")
+    run_all(s)
+    t = s.tasks.store.get(tid)
+    assert t.state is TaskState.COMPLETED and "File not found" in t.result_summary
+    (vision,) = [r for r in local.requests if r.task_type == "vision"]
+    assert vision.images and "untrusted" in vision.system and "Bangla" in vision.system

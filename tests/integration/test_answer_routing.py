@@ -92,10 +92,12 @@ def test_current_info_goes_to_antigravity_with_search_allowed() -> None:
     assert "web.search" in req.allowed_tools and "never guess current facts" in req.system
 
 
-def test_current_info_falls_back_when_cloud_is_down() -> None:
-    local = fake("ollama_local", ["এখন live তথ্য আনতে পারছি না।"])
+def test_current_info_never_shows_a_local_guess_when_cloud_is_down() -> None:
+    """Benchmark 2026-10-15: qwen3 invents 'today's news' — an honest reply instead."""
+    local = fake("ollama_local", ["আজ ডলারের রেট ১০৫ টাকা।"])              # a made-up number
     got = ask(router(ollama_local=local), "dollar er rate koto ajke")
     assert got.result.ok and got.result.provider == "ollama_local"      # always a reply
+    assert "১০৫" not in got.result.answer and "বানিয়ে বলছি না" in got.result.answer
 
 
 def test_web_search_is_never_allowed_outside_current_info() -> None:

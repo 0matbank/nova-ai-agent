@@ -49,6 +49,7 @@ from core.permissions.engine import PermissionEngine
 from core.queue.desktop_watch import DesktopWatcher
 from core.queue.engine import TaskEngine
 from core.queue.store import TaskStore, TaskView
+from core.resources import ResourcePressure
 from core.router.intent import IntentRouter
 from core.skills.api import ToolEnv
 from core.skills.ledger import SideEffectLedger
@@ -239,7 +240,8 @@ async def run_core_service(
     db_sessions = make_sessionmaker(db_engine) if db_engine is not None else None
     # Circuit breaker state + call history live in the DB (plan §8.6, §8.9).
     history = ProviderHistory(db_sessions) if db_sessions is not None else None
-    provider_router = ProviderRouter(cfg.providers, providers.adapters, history)
+    pressure = ResourcePressure(cfg.resources, cfg.root)     # plan §17H
+    provider_router = ProviderRouter(cfg.providers, providers.adapters, history, pressure)
     if engine is not None and security is not None and approvals is not None:
         # plan §9.1: side effects go through the idempotency ledger
         skill_runner = (SkillRunner(registry, ToolEnv(cfg, PathPolicy(cfg), tool_workers),
@@ -314,7 +316,8 @@ async def run_core_service(
     background: list[asyncio.Task[Any]] = [
         asyncio.create_task(monitor.run(stop)),
         asyncio.create_task(_provider_health_loop(providers, stop, provider_router)),
-        asyncio.create_task(transcriber.idle_loop(stop))]
+        asyncio.create_task(transcriber.idle_loop(stop)),
+        asyncio.create_task(pressure.run(stop))]
     local = providers.adapters.get("ollama_local")
     if isinstance(local, OllamaAdapter) and local.policy.keep_default_loaded:
         # owner 2026-10-15: the quick-answer model is ready before the first question

@@ -74,6 +74,20 @@ class ProviderHistory:
             return 1.0, 0
         return sum(1 for r in rows if r == "OK") / len(rows), len(rows)
 
+    def median_seconds(self, provider: str) -> float | None:
+        """Median duration of the provider's recent successful calls (plan §8.9 latency)."""
+        try:
+            with self.sessions() as s:
+                rows = s.scalars(select(ProviderCall.duration_ms).where(
+                    ProviderCall.provider == provider, ProviderCall.status == "OK").order_by(
+                    ProviderCall.id.desc()).limit(RECENT_CALLS)).all()
+        except Exception:  # noqa: BLE001
+            return None
+        if len(rows) < MIN_CALLS:
+            return None
+        ordered = sorted(rows)
+        return ordered[len(ordered) // 2] / 1000.0
+
     def load(self) -> dict[str, Breaker]:
         try:
             with self.sessions() as s:

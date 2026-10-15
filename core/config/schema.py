@@ -185,11 +185,19 @@ class BudgetGuard(Strict):
     allow_paid_api_usage: bool
 
 
+class TaskBudget(Strict):
+    """Per task type usage budget (plan §58 Token / Context Control)."""
+    timeout_seconds: PositiveInt
+    max_output_tokens: PositiveInt
+
+
 class ProvidersConfig(Strict):
     providers: dict[str, ProviderEntry]
     circuit_breaker: CircuitBreakerSection
     retry: RetrySection
     budget_guard: BudgetGuard
+    # task type → budget; when set it replaces the call site's own limits
+    task_budgets: dict[str, TaskBudget] = {}
 
     @field_validator("providers")
     @classmethod

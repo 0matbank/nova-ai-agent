@@ -198,3 +198,47 @@ def test_sign_in_problem_alerts_once_until_it_works_again(cfg, caplog) -> None: 
     with caplog.at_level(logging.CRITICAL):
         r.note_health("openai_codex", HealthState.AUTH_REQUIRED, "signed out again")
     assert len([x for x in caplog.records if "sign-in needed" in x.getMessage()]) == 2
+
+
+def test_task_budgets_come_from_config(cfg) -> None:  # type: ignore[no-untyped-def]
+    """Plan §58 (audit 2026-10-15): limits per task type live in providers.yaml."""
+    from providers.provider_base import Limits
+    local = FakeAdapter("ollama_local", ["ok"])
+    r = router(cfg, ollama_local=local)
+    run(r.complete(req("intent_classification", limits=Limits(timeout_seconds=999,
+                                                              max_output_tokens=9999))))
+    sent = local.requests[0].limits
+    want = cfg.providers.task_budgets["intent_classification"]
+    assert sent.timeout_seconds == want.timeout_seconds
+    assert sent.max_output_tokens == want.max_output_tokens
+    assert set(cfg.providers.task_budgets) >= {"quick_answer", "coding", "summarization"}
+
+
+def test_critical_memory_sends_heavy_local_work_to_the_cloud(cfg) -> None:  # type: ignore[no-untyped-def]
+    """Plan §17H 'critical → route_heavy_local_to_cloud' (audit 2026-10-15)."""
+    level = {"now": "normal"}
+    a: dict[str, Any] = {n: FakeAdapter(n) for n in NAMES}
+    r = ProviderRouter(cfg.providers, a, pressure=lambda: level["now"])
+    assert r.ranked("vision")[0].provider == "ollama_local"         # local first normally
+    level["now"] = "critical"
+    assert r.ranked("vision")[0].provider == "gemini_api"           # cloud while critical
+    assert r.ranked("quick_answer")[0].provider == "ollama_local"   # light work stays local
+
+
+def test_a_slow_provider_loses_a_little_rank(cfg, history: ProviderHistory) -> None:  # type: ignore[no-untyped-def]
+    for _ in range(5):
+        history.record("openai_codex", "coding", 1, "OK", None, 400.0)      # ~7 min each
+    r = router(cfg, history)
+    scores = {c.provider: c.priority for c in r.capabilities.candidates("coding")}
+    assert scores["openai_codex"] - scores["google_antigravity"] == 10       # config gap
+    assert history.median_seconds("openai_codex") == 400.0
+    assert [c.provider for c in r.ranked("coding")][0] == "openai_codex"     # 10 pts max
+
+
+def test_resource_levels_follow_the_thresholds(cfg) -> None:  # type: ignore[no-untyped-def]
+    from core.resources import level_for
+    rc = cfg.resources
+    assert level_for(rc, 50, 40) == "normal"
+    assert level_for(rc, rc.ram_percent.moderate, None) == "moderate"
+    assert level_for(rc, 50, rc.vram_percent.high) == "high"
+    assert level_for(rc, rc.ram_percent.critical, 10) == "critical"

@@ -74,6 +74,21 @@ retry:
   timeout_retries: 1
   server_error_retries: 2
 
+# §58 token / context control: how long and how much output each task type may use.
+# Change here — never in code (the router applies these to every request).
+task_budgets:
+  intent_classification: {timeout_seconds: 60, max_output_tokens: 60}
+  simple:                {timeout_seconds: 45, max_output_tokens: 120}    # e.g. voice wording fix
+  quick_answer:          {timeout_seconds: 120, max_output_tokens: 400}
+  fact_check:            {timeout_seconds: 120, max_output_tokens: 600}
+  current_info:          {timeout_seconds: 180, max_output_tokens: 800}
+  reasoning:             {timeout_seconds: 180, max_output_tokens: 800}
+  planning:              {timeout_seconds: 180, max_output_tokens: 500}
+  summarization:         {timeout_seconds: 60, max_output_tokens: 1400}
+  vision:                {timeout_seconds: 90, max_output_tokens: 2000}   # qwen3-vl always thinks
+  coding:                {timeout_seconds: 1200, max_output_tokens: 4000}
+  review:                {timeout_seconds: 600, max_output_tokens: 2000}
+
 # §9 budget guard: API-billed providers must be explicitly allowed.
 budget_guard:
   allow_paid_api_usage: false

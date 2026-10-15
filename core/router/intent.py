@@ -124,7 +124,23 @@ def app_command(text: str) -> tuple[str, str, dict[str, Any]] | None:
     return None
 
 
+# Plan §57 screen understanding: "screen-e ki error dekhacche", "স্ক্রিনে কী আছে"
+SCREEN_Q = re.compile(
+    r"\b(screen|display|monitor)\b.*\b(ki|kí|what|which|error|dekhacche|dekhache|dekhay|"
+    r"lekha|written|says?|showing|open|ache|chole)\b|"
+    r"\b(what|which|ki)\b.*\b(on|in)\s+(my\s+|the\s+)?(screen|display)\b|"
+    r"(স্ক্রিন|পর্দা)\S*.*(কী|কি|কোন|এরর|"
+    r"error|দেখাচ্ছে|লেখা|আছে|চলছে)", re.IGNORECASE)
+
+
+def is_screen_question(text: str) -> bool:
+    return bool(SCREEN_Q.search(text))
+
+
 def classify_by_rules(text: str) -> Intent | None:
+    if is_screen_question(text) and not URL_RX.search(text):
+        # plan §57: a question ABOUT the screen → screenshot + vision answer
+        return Intent("screenshot", 0.9, "rule", None, matched="screen question")
     if not URL_RX.search(text):
         app = app_command(text)
         if app is not None:

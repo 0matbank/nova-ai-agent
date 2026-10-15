@@ -46,6 +46,12 @@ NO_SWITCH = frozenset({ErrorCategory.UNSAFE, ErrorCategory.TOOL_FAILURE,
 NOTEWORTHY_STATES = frozenset({HealthState.RATE_LIMITED, HealthState.COOLDOWN,
                                HealthState.AUTH_REQUIRED, HealthState.DEGRADED})
 DEGRADED_PENALTY = 30       # priority points a mostly-failing provider loses
+# plan §17H "critical → route_heavy_local_to_cloud": heavy local work moves to the cloud
+HEAVY_LOCAL_TASKS = frozenset({"vision", "coding", "review"})
+PRESSURE_PENALTY = 50
+# plan §8.9 latency: a mild tie-breaker — at most this many points for a slow provider
+MAX_LATENCY_PENALTY = 10
+LATENCY_SECONDS_PER_POINT = 30.0
 
 # (request, failed provider, its result) → the request for the next provider
 Handoff = Callable[[ProviderRequest, str, ProviderResult], Awaitable[ProviderRequest]]
@@ -72,11 +78,13 @@ def _switch(request: ProviderRequest, tried: list[str], used: str) -> None:
 
 class ProviderRouter:
     def __init__(self, config: ProvidersConfig, adapters: dict[str, ProviderAdapter],
-                 history: ProviderHistory | None = None) -> None:
+                 history: ProviderHistory | None = None,
+                 pressure: Callable[[], str] | None = None) -> None:
         self.config = config
         self.adapters = adapters
         self.capabilities = CapabilityRegistry(config, adapters)
         self.history = history
+        self.pressure = pressure          # "normal" | "moderate" | "high" | "critical"
         self.breaker = CircuitBreaker(config.circuit_breaker, history)
         self._auth_alerted: set[str] = set()      # one Telegram alert per sign-in problem
 
@@ -86,14 +94,33 @@ class ProviderRouter:
         return adapter.health.state
 
     def ranked(self, task_type: str) -> list[Candidate]:
-        """Candidates by priority; a degraded provider (recent calls mostly
-        failed) loses DEGRADED_PENALTY points."""
-        cands = self.capabilities.candidates(task_type)
-        return sorted(cands, key=lambda c: -(c.priority - (
-            DEGRADED_PENALTY if self.breaker.degraded(c.provider) else 0)))
+        """Candidates by priority, adjusted by recent history (plan §8.9): a degraded
+        provider (recent calls mostly failed) loses DEGRADED_PENALTY points, a slow
+        one up to MAX_LATENCY_PENALTY, and under critical memory pressure heavy local
+        work goes to the cloud (plan §17H)."""
+        critical = self.pressure is not None and self.pressure() == "critical"
+
+        def score(c: Candidate) -> float:
+            s = float(c.priority)
+            if self.breaker.degraded(c.provider):
+                s -= DEGRADED_PENALTY
+            if self.history is not None:
+                median = self.history.median_seconds(c.provider)
+                if median is not None:
+                    s -= min(MAX_LATENCY_PENALTY, median / LATENCY_SECONDS_PER_POINT)
+            if critical and task_type in HEAVY_LOCAL_TASKS and c.provider == "ollama_local":
+                s -= PRESSURE_PENALTY
+            return s
+
+        return sorted(self.capabilities.candidates(task_type), key=lambda c: -score(c))
 
     async def complete(self, request: ProviderRequest,
                        handoff: Handoff | None = None) -> ProviderResult:
+        budget = self.config.task_budgets.get(request.task_type)
+        if budget is not None:          # plan §58: limits come from config, not call sites
+            request = replace(request, limits=replace(
+                request.limits, timeout_seconds=float(budget.timeout_seconds),
+                max_output_tokens=budget.max_output_tokens))
         tried: list[str] = []
         noteworthy = False          # a provider that should have served failed / is limited
         for cand in self.ranked(request.task_type):

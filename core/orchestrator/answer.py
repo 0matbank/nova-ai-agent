@@ -19,7 +19,7 @@ Every tier ends in the local model as last resort, so a text reply is always pos
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from providers.provider_base import Limits, ProviderRequest, ProviderResult
 
@@ -110,4 +110,23 @@ async def answer(providers: object, task_id: int, text: str, system: str, contex
         result = await providers.complete(request(FACT))
         return Answer(result, FACT, escalated=True)
     extra = LIVE_RULE if tier == CURRENT else ""
-    return Answer(await providers.complete(request(tier, extra)), tier, escalated=False)
+    result = await providers.complete(request(tier, extra))
+    if tier == CURRENT and result.ok and result.provider == "ollama_local":
+        # every cloud provider is down: the local model has no live data and invents
+        # "today's news" (benchmark 2026-10-15) — say so honestly instead
+        result = replace(result, answer=NO_LIVE_BN if _bangla(text) else NO_LIVE_EN,
+                         verification_hints=(*result.verification_hints, "no live source"))
+    return Answer(result, tier, escalated=False)
+
+
+NO_LIVE_BN = ("এখন আজকের/লাইভ তথ্য আনার মতো কোনো online AI পাওয়া যাচ্ছে না (Gemini/Antigravity "
+              "বন্ধ বা সীমা শেষ), আর local AI-র কাছে আজকের তথ্য নেই — তাই বানিয়ে বলছি না। "
+              "একটু পরে আবার জিজ্ঞেস করুন।")
+NO_LIVE_EN = ("No online AI is reachable right now for live information (Gemini/Antigravity are "
+              "down or out of quota), and the local AI has no current data — so I won't guess. "
+              "Please ask again a little later.")
+
+
+def _bangla(text: str) -> bool:
+    from core.orchestrator.lang import reply_language
+    return reply_language(text) == "bn"
