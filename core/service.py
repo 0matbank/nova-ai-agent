@@ -319,6 +319,8 @@ async def run_core_service(
         asyncio.create_task(transcriber.idle_loop(stop)),
         asyncio.create_task(pressure.run(stop))]
     local = providers.adapters.get("ollama_local")
+    if isinstance(local, OllamaAdapter):
+        pressure.relievers.append(local.relieve)       # plan §17H critical
     if isinstance(local, OllamaAdapter) and local.policy.keep_default_loaded:
         # owner 2026-10-15: the quick-answer model is ready before the first question
         background.append(asyncio.create_task(local.warm()))

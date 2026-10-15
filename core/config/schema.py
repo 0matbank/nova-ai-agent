@@ -217,6 +217,11 @@ class OllamaPolicy(Strict):
     idle_unload_seconds: PositiveInt
     # keep the default (light) model in GPU memory instead of unloading it when idle
     keep_default_loaded: bool = False
+    # Only one LLM in GPU memory at a time (owner 2026-10-15, VRAM hit 98% with qwen3 +
+    # qwen3-vl): a heavy model replaces the default while it works; after
+    # `heavy_idle_seconds` without heavy work the default comes back.
+    exclusive_vram: bool = False
+    heavy_idle_seconds: PositiveInt = 60
     think_task_types: list[str] = []
     # Context window per request. Ollama's own default (4096) silently cuts longer
     # prompts such as page snapshots.

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from core.config.schema import ResourcesConfig
@@ -34,6 +35,8 @@ class ResourcePressure:
         self.disk_path = disk_path
         self.level = "normal"
         self.detail = ""
+        # plan §17H critical actions (e.g. unload_unused_ollama_models)
+        self.relievers: list[Callable[[], Awaitable[object]]] = []
 
     def __call__(self) -> str:
         return self.level
@@ -53,6 +56,13 @@ class ResourcePressure:
                 _log.info(f"resource pressure {self.level} → {new} ({self.detail})",
                           extra={"action": "resources.pressure", "status": new})
         self.level = new
+        if new == "critical":
+            for relieve in self.relievers:
+                try:
+                    await relieve()
+                except Exception:  # noqa: BLE001 - relief is best effort
+                    _log.exception("resource relief failed",
+                                   extra={"action": "resources.relieve"})
         return new
 
     async def run(self, stop: asyncio.Event) -> None:

@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 
 from core.config.schema import ModelsConfig
+from core.log import get_logger
 from providers.provider_base import (
     ErrorCategory,
     Health,
@@ -29,6 +30,7 @@ from providers.provider_base import (
     Usage,
 )
 
+_log = get_logger("provider")
 DEFAULT_URL = "http://127.0.0.1:11434"
 
 # capability / task type → role alias (plan §9A)
@@ -54,9 +56,14 @@ class OllamaAdapter(ProviderAdapter):
         self.policy = models.ollama_policy
         self.base = base_url.rstrip("/")
         self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(300, connect=5))
-        self._rewarm: asyncio.Future[bool] | None = None
+        self._heavy_inflight = 0                       # heavy requests running now
+        # set after heavy use: only then does a default request check /api/ps (no extra
+        # round-trip before every quick question)
+        self._heavy_maybe_resident = False
+        self._swap_back: asyncio.Task[None] | None = None
 
     async def aclose(self) -> None:
+        self._cancel_swap_back()
         await self._client.aclose()
 
     # --------------------------------------------------------------- models
@@ -79,8 +86,11 @@ class OllamaAdapter(ProviderAdapter):
         return f"{self.policy.idle_unload_seconds}s"
 
     async def warm(self) -> bool:
-        """Load the default model now (empty request = load only)."""
+        """Load the default model now (empty request = load only). With exclusive VRAM an
+        idle heavy model (e.g. left over from before a restart) is unloaded first."""
         model = self.aliases[self.policy.default_alias]
+        if self.policy.exclusive_vram:
+            await self.relieve()
         try:
             r = await self._client.post(f"{self.base}/api/generate", timeout=180,
                                         json={"model": model, "keep_alive": -1
@@ -110,15 +120,61 @@ class OllamaAdapter(ProviderAdapter):
         await self._client.post(f"{self.base}/api/generate",
                                 json={"model": model, "keep_alive": 0}, timeout=30)
 
+    def heavy_models(self) -> set[str]:
+        return {str(self.aliases[a]) for a in self.policy.on_demand_aliases
+                if self.aliases.get(a)}
+
     async def _make_room_for(self, alias: str, model: str) -> None:
+        heavy_models = self.heavy_models()
         if not self.is_heavy(alias):
+            if (self.policy.exclusive_vram and self._heavy_inflight == 0
+                    and self._heavy_maybe_resident):
+                # the default is needed again: an idle heavy model makes way now
+                self._cancel_swap_back()
+                await self.relieve()
             return
-        heavy_models = {self.aliases[a] for a in self.policy.on_demand_aliases
-                        if self.aliases.get(a)}
-        resident = (await self.loaded()) & (heavy_models - {model})
+        self._heavy_maybe_resident = True
+        self._cancel_swap_back()
+        loaded = await self.loaded()
+        resident = loaded & (heavy_models - {model})
         excess = len(resident) + 1 - self.policy.max_heavy_models_loaded
         for m in sorted(resident)[:max(excess, 0)]:
             await self.unload(m)
+        default = str(self.aliases[self.policy.default_alias])
+        if self.policy.exclusive_vram and default in loaded:
+            await self.unload(default)              # one LLM in VRAM at a time
+
+    def _cancel_swap_back(self) -> None:
+        if self._swap_back is not None and not self._swap_back.done():
+            self._swap_back.cancel()
+        self._swap_back = None
+
+    async def _swap_back_later(self) -> None:
+        """Heavy work finished: after a quiet period the heavy model leaves VRAM and the
+        default model returns (owner 2026-10-15: no two LLMs resident without need)."""
+        await asyncio.sleep(self.policy.heavy_idle_seconds)
+        if self._heavy_inflight:
+            return
+        await self.relieve()
+        if self.policy.keep_default_loaded:
+            await self.warm()
+
+    async def relieve(self) -> list[str]:
+        """Unload heavy models that are not working right now (plan §17H critical:
+        unload_unused_ollama_models). Returns what was unloaded."""
+        if self._heavy_inflight:
+            return []
+        try:
+            idle = sorted((await self.loaded()) & self.heavy_models())
+            for m in idle:
+                await self.unload(m)
+        except (ProviderError, httpx.HTTPError):
+            return []
+        self._heavy_maybe_resident = False
+        if idle:
+            _log.info(f"unloaded idle heavy model(s): {', '.join(idle)}",
+                      extra={"action": "resources.unload", "status": "ok"})
+        return idle
 
     # --------------------------------------------------------------- health
 
@@ -138,7 +194,20 @@ class OllamaAdapter(ProviderAdapter):
 
     async def _complete(self, request: ProviderRequest) -> ProviderResult:
         alias, model = self.model_for(request)
+        heavy = self.is_heavy(alias)
         await self._make_room_for(alias, model)
+        if heavy:
+            self._heavy_inflight += 1
+        try:
+            return await self._chat(request, alias, model)
+        finally:
+            if heavy:
+                self._heavy_inflight -= 1
+                if self.policy.exclusive_vram and self._heavy_inflight == 0:
+                    self._cancel_swap_back()
+                    self._swap_back = asyncio.create_task(self._swap_back_later())
+
+    async def _chat(self, request: ProviderRequest, alias: str, model: str) -> ProviderResult:
         messages = []
         if request.system:
             messages.append({"role": "system", "content": request.system})
@@ -182,10 +251,6 @@ class OllamaAdapter(ProviderAdapter):
                                 f"ollama HTTP {r.status_code}: {r.text[:200]}")
         data = r.json()
         answer = str((data.get("message") or {}).get("content", "")).strip()
-        if self.is_heavy(alias) and self.policy.keep_default_loaded:
-            # a heavy model may have pushed the default out of VRAM: bring it back now,
-            # so the owner's next quick question does not wait for a cold start
-            self._rewarm = asyncio.ensure_future(self.warm())
         return ProviderResult(
             ResultStatus.OK, self.name, model=model, answer=answer,
             usage=Usage(input_tokens=int(data.get("prompt_eval_count", 0)),

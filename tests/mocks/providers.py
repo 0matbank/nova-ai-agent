@@ -80,6 +80,10 @@ class FakeOllama:
             self.unloaded.append(body["model"])
             self.loaded = [m for m in self.loaded if m != body["model"]]
             return httpx.Response(200, json={"done": True})
+        if path == "/api/generate":                  # empty prompt = load only (warm-up)
+            if body["model"] not in self.loaded:
+                self.loaded.append(body["model"])
+            return httpx.Response(200, json={"done": True})
         if path == "/api/chat":
             self.chats.append(body)
             if body["model"] not in self.installed:

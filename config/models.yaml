@@ -16,6 +16,8 @@ ollama_policy:
   idle_unload_seconds: 600         # heavy on-demand models (vision, code review)
   keep_default_loaded: true        # owner 2026-10-15: qwen3:8b stays in VRAM — no
                                    # ~50 s cold start before a quick answer
+  exclusive_vram: true             # owner 2026-10-15: never qwen3 + qwen3-vl together
+  heavy_idle_seconds: 60           # heavy model idle this long → default model back
   # Benchmark 2026-09-24 (scripts/benchmark_local_models.py): qwen3:8b scored
   # 7/10 on Bangla facts without thinking vs 10/10 with it (~3.8 s avg).
   # Fast paths (intent, simple) stay without thinking.

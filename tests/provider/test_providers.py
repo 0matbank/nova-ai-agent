@@ -190,6 +190,7 @@ def test_heavy_model_loaded_on_demand_only_one_at_a_time(cfg) -> None:  # type: 
     data = cfg.models.model_dump(mode="json")
     data["alias_sets"]["ollama_models"]["second_heavy"] = "big-b:20b"
     data["ollama_policy"]["on_demand_aliases"] = ["local_code_review", "second_heavy"]
+    data["ollama_policy"]["exclusive_vram"] = False        # heavy-vs-heavy rule only here
     models = ModelsConfig.model_validate(data)
     fake = FakeOllama(installed=["qwen3:8b", "deepseek-coder-v2:16b", "big-b:20b"])
     fake.loaded = ["big-b:20b", "qwen3:8b"]
@@ -259,3 +260,58 @@ def test_ollama_prompt_carries_handoff_and_heavy_models_unload(cfg) -> None:  # 
     assert "google stopped: TIMEOUT" in fake.chats[0]["messages"][-1]["content"]
     assert a.keep_alive("local_code_review") == "600s"         # heavy: unload when idle
     assert a.keep_alive("fast_general") == -1                  # default: stays loaded
+
+
+def _exclusive(cfg) -> ModelsConfig:  # type: ignore[no-untyped-def]
+    data = cfg.models.model_dump(mode="json")
+    data["ollama_policy"].update(exclusive_vram=True, heavy_idle_seconds=1,
+                                 keep_default_loaded=True)
+    return ModelsConfig.model_validate(data)
+
+
+def test_one_llm_in_vram_at_a_time(cfg) -> None:  # type: ignore[no-untyped-def]
+    """Owner 2026-10-15: VRAM hit 98% with qwen3 + qwen3-vl resident together."""
+    fake = FakeOllama(installed=["qwen3:8b", "qwen3-vl:8b"], reply='{"bbox_2d": null}')
+    fake.loaded = ["qwen3:8b"]                                    # default pinned
+    a = OllamaAdapter(_exclusive(cfg), client=fake.client())
+
+    async def go() -> None:
+        await a.complete(req("vision", images=(b"x",)))
+        assert fake.loaded == ["qwen3-vl:8b"]                     # swapped, not stacked
+        assert fake.unloaded == ["qwen3:8b"]
+        await asyncio.sleep(1.5)                                  # heavy idle → swap back
+        assert fake.loaded == ["qwen3:8b"] and "qwen3-vl:8b" in fake.unloaded
+        await a.complete(req("vision", images=(b"x",)))
+        fake.reply = "ok"
+        await a.complete(req("reasoning"))                        # default needed again
+        assert fake.loaded == ["qwen3:8b"]                        # idle heavy made way
+        await a.aclose()
+    run(go())
+
+
+def test_critical_pressure_unloads_idle_heavy_models(cfg) -> None:  # type: ignore[no-untyped-def]
+    """Plan §17H critical → unload_unused_ollama_models."""
+    fake = FakeOllama(installed=["qwen3:8b", "qwen3-vl:8b"])
+    fake.loaded = ["qwen3:8b", "qwen3-vl:8b"]
+    a = OllamaAdapter(_exclusive(cfg), client=fake.client())
+    assert run(a.relieve()) == ["qwen3-vl:8b"] and fake.loaded == ["qwen3:8b"]
+    from core.resources import ResourcePressure
+    called: list[str] = []
+
+    async def relief() -> None:
+        called.append("x")
+    p = ResourcePressure(cfg.resources, Path("."))
+    p.relievers.append(relief)
+    import core.resources as res
+
+    async def fake_status(_: Path) -> object:
+        class S:
+            ram_percent, gpus = 50.0, [type("G", (), {"mem_used_mb": 99.0,
+                                                      "mem_total_mb": 100.0})()]
+        return S()
+    orig = res.pc_status
+    res.pc_status = fake_status  # type: ignore[assignment]
+    try:
+        assert run(p.refresh()) == "critical" and called == ["x"]
+    finally:
+        res.pc_status = orig
