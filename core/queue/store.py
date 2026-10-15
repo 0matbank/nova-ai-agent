@@ -321,6 +321,16 @@ class TaskStore:
             s.add(Message(channel=channel, chat_id=chat_id, direction=direction,
                           text=text, external_id=external_id, task_id=task_id))
 
+    def link_message(self, channel: str, chat_id: str, external_id: str,
+                     task_id: int) -> None:
+        """Tie an already recorded incoming message to the task it created."""
+        with self._sessions.begin() as s:
+            row = s.scalars(select(Message).where(
+                Message.channel == channel, Message.chat_id == chat_id,
+                Message.external_id == external_id).order_by(Message.id.desc())).first()
+            if row is not None:
+                row.task_id = task_id
+
     def count_messages(self) -> int:
         with self._sessions() as s:
             return len(list(s.scalars(select(Message.id))))

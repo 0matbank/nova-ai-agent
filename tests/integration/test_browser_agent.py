@@ -213,6 +213,8 @@ def test_planner_giving_up_goes_to_the_owner_with_steps(tmp_path: Path) -> None:
     t = run(setup(tmp_path, Shop(), brain))
     assert t.state is TaskState.FAILED and t.error_code == "BLOCKED_NEEDS_USER"
     assert "login required" in t.error_message and "1. click e5" in t.error_message
+    # plan §16 (audit 2026-10-15): tell the owner how to log in once in the agent profile
+    assert "scripts/browser_login.py" in t.error_message
 
 
 def test_repeating_without_progress_stops(tmp_path: Path) -> None:

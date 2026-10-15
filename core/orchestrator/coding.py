@@ -59,6 +59,8 @@ TEXT = {
         "undo": "↩️ বাতিল করতে: git -C \"{folder}\" checkout -- .  (commit/push করিনি — push-এর "
                 "আগে সবসময় আপনার অনুমতি লাগবে)",
         "summary": "{name}-এ কোড বদলানো: \"{goal}\"",
+        "working": "💻 {name}: কোড বদলানোর কাজ চলছে — কয়েক মিনিট লাগতে পারে। থামাতে /cancel",
+        "follow_up": "🧪 Test এখনো ফেল — আরেকবার ঠিক করার চেষ্টা চলছে…",
         "switched": "🔁 {failed} মাঝপথে থেমে গিয়েছিল — {provider} আগের কাজ থেকেই বাকিটা শেষ করেছে।",
         "committed": "⚠️ {provider} নিজে থেকে commit করে ফেলেছে, যেটা নিষেধ ছিল। কিছু push হয়নি। "
                      "আগের অবস্থায় ফিরতে: git -C \"{folder}\" reset --soft {head}",
@@ -79,6 +81,8 @@ TEXT = {
         "undo": "↩️ To undo: git -C \"{folder}\" checkout -- .  (not committed or pushed — a push "
                 "always needs your approval)",
         "summary": "Code change in {name}: \"{goal}\"",
+        "working": "💻 {name}: changing the code — this can take a few minutes. /cancel stops it",
+        "follow_up": "🧪 Tests still fail — trying once more…",
         "switched": "🔁 {failed} stopped midway — {provider} finished it from where it left off.",
         "committed": "⚠️ {provider} made a commit on its own, which it must not do. Nothing was "
                      "pushed. To go back: git -C \"{folder}\" reset --soft {head}",
@@ -249,7 +253,8 @@ class CodingFlow:
                 f": {str(earlier.get('error', ''))[:300]}).\n"
                 + await _tree_state(folder)))
         handoff = _handoff(folder, switched, ctx, head)
-        result = await self.providers.complete(request, handoff=handoff)
+        await ctx.progress(t["working"].format(name=project.name))
+        result = await ctx.interruptible(self.providers.complete(request, handoff=handoff))
         if not result.ok:
             await _remember(ctx, folder, switched, result.error or "", head)
             raise RuntimeError(f"coding provider unavailable: {result.error}")
@@ -257,9 +262,11 @@ class CodingFlow:
         passed, test_out = await self._test(ctx, project, folder)
         if passed is False and await self._changed(folder):
             # one follow-up round with the real test output (plan §8.5: no restart from zero)
-            retry = await self.providers.complete(replace(request, previous_attempt=(
-                f"Your change was applied, but the tests still fail:\n{test_out[-3000:]}")),
-                handoff=handoff)
+            await ctx.progress(t["follow_up"])
+            retry = await ctx.interruptible(self.providers.complete(replace(
+                request, previous_attempt=(
+                    f"Your change was applied, but the tests still fail:\n{test_out[-3000:]}")),
+                handoff=handoff))
             if retry.ok:
                 agent_text = retry.answer or agent_text
                 passed, test_out = await self._test(ctx, project, folder)
@@ -278,7 +285,7 @@ class CodingFlow:
         if not project.test_command:
             return None, ""
         await ctx.require("test.run", f"{folder} :: {project.test_command}")
-        return await run_tests(folder, project.test_command)
+        return await ctx.interruptible(run_tests(folder, project.test_command))
 
     async def _changed(self, folder: Path) -> bool:
         _, out = await git(folder, "status", "--porcelain")

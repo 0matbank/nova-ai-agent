@@ -125,14 +125,25 @@ class UserRequestExecutor:
                                       f"🖥️ Task #{ctx.task.id}: {result.summary}",
                                       task_id=ctx.task.id,
                                       photo=base64.b64decode(result.data["preview_jpeg_b64"]))
+        answer = result.summary
+        if skill == "app-control" and reply_language(ctx.task.request_text) == "bn":
+            # owner rule: replies follow the owner's language
+            app = str(params.get("app", ""))
+            done = {"open": ("খোলা হয়েছে ✅", "খোলা গেল না ❌"),
+                    "close": ("বন্ধ হয়েছে ✅", "বন্ধ করা গেল না ❌")}.get(tool)
+            if done:
+                answer = f"{app}: {done[0] if result.ok else done[1]}\n({result.summary})"
         return {"kind": "skill", "skill": f"{skill}.{tool}", "ok": result.ok,
-                "answer": result.summary, "evidence": result.evidence}
+                "answer": answer, "evidence": result.evidence}
 
     async def _ask_ai(self, ctx: TaskContext) -> dict[str, Any]:
         """Questions, incl. current-information ones (owner 2026-10-15): quick ones
         stay local, the rest escalate automatically — see core/orchestrator/answer.py."""
+        # a retry tells the AI what went wrong last time (plan §49.2 "Known Errors")
+        known = ctx.task.error_message if ctx.task.retry_count else None
         package = for_request(goal="Answer the owner's request",
-                              instruction=ctx.task.request_text, risk="GREEN")
+                              instruction=ctx.task.request_text, risk="GREEN",
+                              known_errors=known)
         got = await answer(self.providers, ctx.task.id, ctx.task.request_text,
                            SYSTEM_PROMPT, package.render())
         result = got.result

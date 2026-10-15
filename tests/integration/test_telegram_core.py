@@ -303,7 +303,7 @@ def test_service_end_to_end(config_dir: Path, runtime_root: Path) -> None:
     assert fake.calls[0][0] == "getMe"
     assert [c["command"] for c in fake.commands] == [
         "status", "tasks", "task", "cancel", "pause", "resume", "screenshot", "pc", "skills",
-        "lockdown",
+        "logs", "lockdown",
         "help"]
     [reply] = fake.texts_to(OWNER)
     assert "✅ Database: ok (schema 003)" in reply
@@ -356,7 +356,7 @@ def test_messages_recorded_and_redacted(config_dir: Path, runtime_root: Path) ->
     from sqlalchemy import select
 
     from core.db.engine import make_engine, make_sessionmaker
-    from core.db.models import Message
+    from core.db.models import Message, Task
 
     ctx = bootstrap(config_dir=config_dir, root=runtime_root, console_logs=False)
     fake = FakeTelegram()
@@ -365,10 +365,15 @@ def test_messages_recorded_and_redacted(config_dir: Path, runtime_root: Path) ->
     engine = make_engine(ctx.config.path("database"))
     with make_sessionmaker(engine)() as s:
         rows = list(s.scalars(select(Message).order_by(Message.id)))
+        tasks = list(s.scalars(select(Task)))
     engine.dispose()
-    assert [r.direction for r in rows] == ["in", "out"]
+    assert [r.direction for r in rows[:2]] == ["in", "out"]
     assert TOKEN not in rows[0].text and "REDACTED" in rows[0].text
     assert "Task #1" in rows[1].text
+    # audit 2026-10-15: the task row kept the token in clear text; messages had no task
+    (task,) = tasks
+    assert TOKEN not in task.request_text and TOKEN not in task.title
+    assert rows[0].task_id == task.id and rows[1].task_id == task.id
 
 
 def test_outgoing_buttons_rendered(logs: Path, tmp_path: Path) -> None:

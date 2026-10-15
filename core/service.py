@@ -38,6 +38,7 @@ from core.log.setup import ROOT_LOGGER
 from core.notify.notifier import MessageType, Notifier
 from core.orchestrator.commands import CommandRouter, HealthSources
 from core.orchestrator.executor import UserRequestExecutor
+from core.orchestrator.log_commands import LogCommands
 from core.orchestrator.screen_commands import ScreenCommands
 from core.orchestrator.security_commands import SecurityCommands
 from core.orchestrator.skill_commands import SkillCommands
@@ -172,14 +173,22 @@ async def run_core_service(
         else:
             reply = await router.handle(msg)
         if reply is not None:
-            _record(store, msg.channel, msg.chat_id, "out", reply.text, None)
+            _record(store, msg.channel, msg.chat_id, "out", reply.text, None, reply.task_id)
+            if reply.task_id is not None and store is not None and msg.message_id:
+                with contextlib.suppress(Exception):
+                    store.link_message(msg.channel, msg.chat_id, str(msg.message_id),
+                                       reply.task_id)
         return reply
 
     channel = TelegramChannel(api, whitelist, handle)
     # Attach the alert handler first so a failed migration is alerted too.
     alert = TelegramAlertHandler(channel, asyncio.get_running_loop())
     logging.getLogger(ROOT_LOGGER).addHandler(alert)
-    notifier = Notifier(cfg.default.notification_throttle, channel.send)
+    async def send_and_record(chat_id: str, out: OutgoingMessage) -> None:
+        await channel.send(chat_id, out)
+        _record(store, "telegram", chat_id, "out", out.text, None, out.task_id)
+
+    notifier = Notifier(cfg.default.notification_throttle, send_and_record)
 
     store: TaskStore | None = None
     engine: TaskEngine | None = None
@@ -277,7 +286,9 @@ async def run_core_service(
 
     health = HealthSources()
     router = CommandRouter(cfg.root, health, cfg.default.agent.name, tasks, safe_reason,
-                           security, skill_cmds, ScreenCommands(desktop))
+                           security, skill_cmds, ScreenCommands(desktop),
+                           LogCommands(db_sessions, cfg.default.agent.timezone)
+                           if db_sessions is not None else None)
     health.probes.update(build_probes(ctx, channel))
     health.probes["Database"] = database_probe(store, revision, safe_reason)
     health.probes["Task engine"] = engine_probe(engine)
@@ -403,12 +414,12 @@ async def _expiry_sweeper(approvals: ApprovalManager, stop: asyncio.Event,
 
 
 def _record(store: TaskStore | None, channel: str, chat_id: str, direction: str,
-            text: str, external_id: str | None) -> None:
+            text: str, external_id: str | None, task_id: int | None = None) -> None:
     if store is None:
         return
     try:
         store.record_message(channel=channel, chat_id=chat_id, direction=direction,
-                             text=redact(text), external_id=external_id)
+                             text=redact(text), external_id=external_id, task_id=task_id)
     except Exception:
         _log.exception("could not record message", extra={"action": "db.message"})
 

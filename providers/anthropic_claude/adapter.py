@@ -84,6 +84,11 @@ class ClaudeAdapter(AlternativeModel, ProviderAdapter):
         data = stdin.encode("utf-8") if stdin is not None else None
         try:
             out, err = await asyncio.wait_for(proc.communicate(data), timeout)
+        except asyncio.CancelledError:
+            # /cancel from the owner: the coding agent must stop now, not finish its run
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            raise
         except TimeoutError:
             with contextlib.suppress(ProcessLookupError):
                 proc.kill()

@@ -15,7 +15,7 @@ import contextlib
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 from core.config.schema import TaskEngineSection
 from core.log import get_logger, log_context
@@ -27,6 +27,7 @@ from core.queue.store import StepStatus, StepView, TaskStore, TaskView
 from core.skills.api import PolicyDenied
 from core.skills.desktop import NEEDS_DESKTOP, DesktopUnavailable
 
+T = TypeVar("T")
 _log = get_logger("tasks")
 
 
@@ -135,6 +136,23 @@ class TaskContext:
             raise TaskCancelled()
         if pause:
             raise TaskPaused()
+
+    async def interruptible(self, aw: Awaitable[T], every: float = 2.0) -> T:
+        """Await a long operation (a coding agent run, tests) while honouring /cancel
+        and /pause within seconds — the operation is cancelled, not waited for
+        (audit 2026-10-15: /cancel only took effect after the whole step)."""
+        job: asyncio.Future[T] = asyncio.ensure_future(aw)
+        try:
+            while True:
+                done, _ = await asyncio.wait({job}, timeout=every)
+                if done:
+                    return job.result()
+                await self.checkpoint()          # raises TaskCancelled / TaskPaused
+        finally:
+            if not job.done():
+                job.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await job
 
     def remember(self, data: dict[str, Any]) -> None:
         """Save the running step's portable state (e.g. which provider failed and what

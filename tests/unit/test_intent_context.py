@@ -22,7 +22,7 @@ from tests.mocks.providers import FakeAdapter
     ("30 minute por download status bolo", "reminder", None),
     ("Click TV repo te player bug fix koro", "coding", None),
     ("chrome e giye website check koro", "browser", None),
-    ("notepad kholo", "pc_control", None),
+    ("notepad kholo", "pc_control", ("app-control", "open")),     # phone → PC (Phase 6)
     ("Downloads folder er file gula dekho", "files", None),
     ("facebook caption likhe dao", "social", None),
     ("এখন সবচেয়ে বাংলাদেশের গুরুত্বপূর্ণ নিউজ কোনটি", "research", None),
@@ -94,3 +94,25 @@ def test_context_package_is_small_and_ordered() -> None:
     with pytest.raises(ValueError):
         ContextPackage().add("Full Chat History", "everything")
     assert len(ContextPackage().add("Known Errors", "x" * 9000).sections["Known Errors"]) == 2000
+
+
+@pytest.mark.parametrize(("text", "skill"), [
+    ("notepad kholo", ("app-control", "open", {"app": "notepad"})),
+    ("chrome bondho koro", ("app-control", "close", {"app": "chrome"})),
+    ("ক্যালকুলেটর খোলো", ("app-control", "open", {"app": "calculator"})),
+    ("vs code open koro", ("app-control", "open", {"app": "vscode"})),
+    ("Close paint", ("app-control", "close", {"app": "paint"})),
+])
+def test_phone_app_open_close_is_deterministic(text: str, skill: tuple) -> None:
+    """Audit 2026-10-15: Phase 6 'phone → PC command' — known apps open/close by rule."""
+    from core.router.intent import classify_by_rules
+    hit = classify_by_rules(text)
+    assert hit is not None and hit.category == "pc_control" and hit.skill == skill
+
+
+@pytest.mark.parametrize("text", ["https://chrome.com kholo", "notepad e ki likhbo",
+                                  "unknownapp kholo"])
+def test_no_app_route_without_a_known_app_and_a_verb(text: str) -> None:
+    from core.router.intent import classify_by_rules
+    hit = classify_by_rules(text)
+    assert hit is None or hit.skill is None or hit.skill[0] != "app-control"

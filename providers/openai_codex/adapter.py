@@ -16,6 +16,7 @@ plan's usage is used — not OpenAI API billing.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -84,6 +85,11 @@ class CodexAdapter(AlternativeModel, ProviderAdapter):
             limit=64 * 1024 * 1024)
         try:
             out, err = await asyncio.wait_for(proc.communicate(), timeout)
+        except asyncio.CancelledError:
+            # /cancel from the owner: the coding agent must stop now, not finish its run
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            raise
         except TimeoutError:
             proc.kill()
             await proc.wait()

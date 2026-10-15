@@ -114,6 +114,11 @@ class AntigravityAdapter(AlternativeModel, ProviderAdapter):
             limit=64 * 1024 * 1024)
         try:
             return await asyncio.wait_for(self._talk(proc, stdin), timeout)
+        except asyncio.CancelledError:
+            # /cancel from the owner: the coding agent must stop now, not finish its run
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            raise
         except TimeoutError:
             with contextlib.suppress(ProcessLookupError):
                 proc.kill()

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from channels.base import IncomingMessage, OutgoingMessage
 from core.health import format_duration, format_pc_status, pc_status
+from core.orchestrator.log_commands import LogCommands
 from core.orchestrator.screen_commands import ScreenCommands
 from core.orchestrator.security_commands import SecurityCommands
 from core.orchestrator.skill_commands import SkillCommands
@@ -32,6 +33,7 @@ COMMAND_DESCRIPTIONS = {
     "/screenshot": "PC-র screen-এর ছবি",
     "/pc": "CPU / GPU / RAM / Disk",
     "/skills": "Skill ও tool-এর তালিকা (permission level সহ)",
+    "/logs": "সাম্প্রতিক কাজের log (audit): /logs বা /logs 30",
     "/lockdown": "Emergency: সব dangerous কাজ বন্ধ (off দিলে খোলে)",
     "/help": "সব command-এর তালিকা",
 }
@@ -59,7 +61,8 @@ class CommandRouter:
                  safe_mode_reason: str | None = None,
                  security: SecurityCommands | None = None,
                  skills: SkillCommands | None = None,
-                 screen: ScreenCommands | None = None) -> None:
+                 screen: ScreenCommands | None = None,
+                 logs: LogCommands | None = None) -> None:
         self.started_at = time.time()
         self.disk_path = disk_path
         self.health = health
@@ -82,6 +85,8 @@ class CommandRouter:
             self._handlers["/skills"] = skills.skills
         if screen is not None:
             self._handlers["/screenshot"] = screen.screenshot
+        if logs is not None:
+            self._handlers["/logs"] = logs.logs
 
     def _safe_mode(self) -> OutgoingMessage:
         return OutgoingMessage(SAFE_MODE_REPLY.format(reason=self.safe_mode_reason or "-"))

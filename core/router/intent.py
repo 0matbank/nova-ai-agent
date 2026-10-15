@@ -93,7 +93,42 @@ AI_PROMPT = (
 )
 
 
+# Phone → PC (Phase 6 pass "authorized phone → PC command works"; audit 2026-10-15):
+# opening / closing a KNOWN app is deterministic, so it goes straight to the
+# app-control skill (app.open / app.close are BLUE — still logged and gated).
+APP_NAMES = {
+    "notepad": "notepad", "নোটপ্যাড": "notepad", "calculator": "calculator", "calc": "calculator",
+    "ক্যালকুলেটর": "calculator", "paint": "paint", "mspaint": "paint", "পেইন্ট": "paint",
+    "chrome": "chrome", "google chrome": "chrome", "ক্রোম": "chrome", "edge": "edge",
+    "microsoft edge": "edge", "vs code": "vscode", "vscode": "vscode",
+    "visual studio code": "vscode", "file explorer": "explorer", "explorer": "explorer",
+}
+_OPEN = _rx(r"\b(open|kholo|khol|khulo|launch|start|chalu\s*koro|on\s*koro)\b",
+            r"(খোলো|খুলো|খোল|চালু\s*কর)")
+_CLOSE = _rx(r"\b(close|bondho|bondo|band|off\s*koro|quit|exit)\b", r"(বন্ধ)")
+_APP_RX = re.compile("|".join(rf"(?<![\w-]){re.escape(n)}(?![\w-])"
+                              for n in sorted(APP_NAMES, key=len, reverse=True)),
+                     re.IGNORECASE)
+
+
+def app_command(text: str) -> tuple[str, str, dict[str, Any]] | None:
+    """"notepad kholo" → app-control.open; "chrome bondho koro" → app-control.close."""
+    m = _APP_RX.search(text)
+    if m is None:
+        return None
+    app = APP_NAMES[m.group(0).lower()]
+    if _CLOSE.search(text):
+        return ("app-control", "close", {"app": app})
+    if _OPEN.search(text):
+        return ("app-control", "open", {"app": app})
+    return None
+
+
 def classify_by_rules(text: str) -> Intent | None:
+    if not URL_RX.search(text):
+        app = app_command(text)
+        if app is not None:
+            return Intent("pc_control", 0.95, "rule", app, matched=app[2]["app"])
     for category, rx, skill in RULES:
         m = rx.search(text)
         if m:

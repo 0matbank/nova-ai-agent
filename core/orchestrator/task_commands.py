@@ -7,6 +7,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from channels.base import IncomingMessage, OutgoingMessage
+from core.log import redact
 from core.queue.engine import TaskEngine
 from core.queue.states import TaskState
 from core.queue.store import CancelOutcome, StepStatus, TaskStore, TaskView
@@ -51,8 +52,9 @@ class TaskCommands:
         if self._lockdown():
             return OutgoingMessage("🚨 LOCKDOWN চালু — নতুন task নেওয়া হচ্ছে না।\n"
                                    "বন্ধ করতে: /lockdown off")
-        title = " ".join(msg.text.split())[:60]
-        task = self.store.create(title=title, request_text=msg.text, task_type=USER_REQUEST,
+        text = redact(msg.text)          # plan §21: a token typed by the owner is never kept
+        title = " ".join(text.split())[:60]
+        task = self.store.create(title=title, request_text=text, task_type=USER_REQUEST,
                                  channel=msg.channel, chat_id=msg.chat_id)
         self.engine.wake()
         lines = [f"📥 Task #{task.id} তৈরি হয়েছে — {task.state}"]

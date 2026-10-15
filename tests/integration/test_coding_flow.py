@@ -273,3 +273,42 @@ def test_all_providers_down_then_retry_continues_from_the_saved_state(tmp_path: 
 
 async def _health(adapter: Any) -> Any:
     return adapter.health
+
+
+class Slow(FakeAdapter):
+    """A coding agent that keeps working until it is cancelled."""
+
+    def __init__(self) -> None:
+        super().__init__("openai_codex", capabilities=frozenset({"coding"}))
+        self._set(HealthState.HEALTHY, "test")
+        self.cancelled = False
+
+    async def _complete(self, request: ProviderRequest) -> ProviderResult:
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        raise AssertionError("should have been cancelled")
+
+
+def test_cancel_stops_a_running_coding_agent_within_seconds(tmp_path: Path) -> None:
+    """Audit 2026-10-15: /cancel used to wait for the whole step (up to ~30 min)."""
+    slow = Slow()
+    s, _ = setup(tmp_path, slow)
+    tid = int(s.tasks.store.create(title=REQUEST, request_text=REQUEST,
+                                   task_type="user_request", channel="telegram",
+                                   chat_id="555").id)
+
+    async def go() -> None:
+        job = asyncio.create_task(s.tasks.engine.run_once())
+        for _ in range(100):
+            if any("কোড বদলানোর কাজ চলছে" in txt for _, txt in s.tasks.sent):
+                break
+            await asyncio.sleep(0.05)
+        s.tasks.store.request_cancel(tid)
+        await asyncio.wait_for(job, timeout=10)
+    asyncio.run(go())
+    t = s.tasks.store.get(tid)
+    assert t.state is TaskState.CANCELLED and slow.cancelled
+    assert any("থামাতে /cancel" in txt for _, txt in s.tasks.sent)       # progress shown

@@ -146,6 +146,7 @@ class BrowserAgent:
     async def _loop(self, ctx: TaskContext, run: Run) -> dict[str, Any]:
         rejected = 0
         for n in range(1, MAX_STEPS + 1):
+            await ctx.checkpoint()              # /cancel or /pause stops before the next step
             snap = await self._call(ctx, "snapshot", {"session_id": run.sid})
             if not snap.ok:
                 return {"kind": "browser", "ok": False, "answer": snap.summary}
@@ -366,8 +367,15 @@ def _short(url: str) -> str:
     return url if len(url) <= 120 else url[:100] + "…"
 
 
+_LOGIN = re.compile(r"log\s*-?\s*in|sign\s*-?\s*in|password|লগইন|সাইন\s*ইন", re.IGNORECASE)
+
+
 def _blocked(run: Run, key: str, **kw: Any) -> TaskBlocked:
-    return TaskBlocked(_msg(run.lang, key, **kw) + _trail(run))
+    text = _msg(run.lang, key, **kw)
+    if key == "gave_up" and _LOGIN.search(str(kw.get("reason", ""))):
+        # plan §16: the owner logs in once in the agent's own profile (audit 2026-10-15)
+        text += "\n\n" + _msg(run.lang, "login_hint", url=run.url or "<site>")
+    return TaskBlocked(text + _trail(run))
 
 
 def _trail(run: Run) -> str:
@@ -396,6 +404,9 @@ MESSAGES = {
         "progress": "ধাপ {n} চলছে — এখন: {title}",
         "steps": "🧭 যা যা করলাম:",
         "data_note": "(ওয়েবপেজ থেকে পড়া — শুধু তথ্য হিসেবে দেখালাম)",
+        "login_hint": "🔐 এই site-এ login লাগবে। PC-তে একবার নিজে login করে দিন (Nova password "
+                      "দেখে না বা রাখে না):\n   uv run python scripts/browser_login.py {url}\n"
+                      "তারপর কাজটা আবার পাঠান।",
     },
     "en": {
         "captcha": "{url} is showing a CAPTCHA. I don't solve those — here's a screenshot.",
@@ -406,6 +417,9 @@ MESSAGES = {
         "progress": "step {n} — now at: {title}",
         "steps": "🧭 What I did:",
         "data_note": "(Read from the web page — shown as information only)",
+        "login_hint": "🔐 This site needs a login. Log in once yourself on the PC (Nova never "
+                      "sees or keeps the password):\n   uv run python scripts/browser_login.py "
+                      "{url}\nThen send the task again.",
     },
 }
 

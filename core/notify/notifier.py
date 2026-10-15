@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -20,6 +21,9 @@ from core.config.schema import NotificationThrottle
 from core.log import get_logger
 
 _log = get_logger("core")
+# the task a notification belongs to (recorded with the message — plan §20 task chain)
+_TASK: contextvars.ContextVar[int | None] = contextvars.ContextVar("nova_notify_task",
+                                                                  default=None)
 
 LONG_TASK_BONUS_EVERY_SECONDS = 1800
 
@@ -66,6 +70,17 @@ class Notifier:
                      buttons: list[list[tuple[str, str]]] | None = None,
                      photo: bytes | None = None) -> bool:
         """Returns True if the message was sent now."""
+        token = _TASK.set(task_id)
+        try:
+            return await self._notify(chat_id, kind, text, task_id, error_key, severity,
+                                      buttons, photo)
+        finally:
+            _TASK.reset(token)
+
+    async def _notify(self, chat_id: str, kind: MessageType, text: str, task_id: int | None,
+                      error_key: str | None, severity: int,
+                      buttons: list[list[tuple[str, str]]] | None,
+                      photo: bytes | None) -> bool:
         if kind in self._exempt or kind is MessageType.INFO:
             final_task = (task_id if kind in (MessageType.TASK_COMPLETED,
                                               MessageType.TASK_FAILED_PERMANENTLY) else None)
@@ -122,7 +137,8 @@ class Notifier:
                        buttons: list[list[tuple[str, str]]] | None,
                        photo: bytes | None = None) -> bool:
         try:
-            await self._send(chat_id, OutgoingMessage(text, buttons or [], photo))
+            await self._send(chat_id, OutgoingMessage(text, buttons or [], photo,
+                                                      task_id=_TASK.get()))
         except Exception:
             _log.exception("notification delivery failed", extra={"action": "notify"})
             return False
