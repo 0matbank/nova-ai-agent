@@ -48,4 +48,9 @@
 - Idempotency ledger (`side_effects`): side-effecting skill actions run at most once per task; an unknown outcome stops for the owner.
 - Claude Code adapter built but disabled (subscription only — API-key variables are stripped). Gemini API = reasoning fallback (free tier).
 - Owner 2026-10-15 ("1 line answer took a minute"): quick questions → local qwen3 kept in GPU memory (warmed at start); numbers/dates → Gemini first; current info → Antigravity with Google search for that request only; complex → Antigravity; a not-sure local answer escalates silently. News/weather are answered instead of refused.
-- Audit of Phases 0–14 (2026-10-15): 22 confirmed gaps; fixed in follow-up commits (see git log).
+- Audit of Phases 0–14 (2026-10-15, adversarially verified): 22 confirmed gaps + 12 claims checked by hand afterwards. All fixed before Phase 15:
+  - security (3a77208): folder deletes RED + Recycle Bin, no move-then-delete laundering, Nova's own folder unwritable, more command sinks (Explorer / Task Manager / IDE terminals), browser form submits need approval, no passwords in approval rows, redacted CRITICAL alerts, Codex never sees API keys;
+  - robustness (0b1f5c3): dispatcher survives DB errors, backup failure → safe mode, one process per log file, failover state in the task checkpoint, one alert per sign-in problem, alternative model on 'model not found', vision click must change the page;
+  - phone-facing (9dcc9ca): tasks never keep typed secrets, messages tied to tasks, /cancel stops running coding/browser agents in seconds, coding progress, known errors on retry, /logs, app open/close from the phone, scripts/browser_login.py;
+  - provider policy (103ddbd): task budgets in providers.yaml, latency + RAM/VRAM pressure in routing, benchmark with tool-use JSON and memory, honest reply instead of a local guess for live info, screen questions answered by vision.
+- Still Phase 16 by plan: file / PowerShell / desktop-UI work from the phone (Windows Operator + File agents).
