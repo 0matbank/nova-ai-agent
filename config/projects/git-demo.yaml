@@ -1,0 +1,13 @@
+# Practice project for the Phase 15 phone test (owner choice 2026-10-15): a local
+# bare repo stands in for GitHub — no other GitHub repo is ever touched.
+# Created by Nova in the workspace folder.
+
+name: Git Demo
+local_folder: D:\Personal-Agent\workspace\git-demo
+repository: D:\Personal-Agent\workspace\git-demo-remote.git
+site_url: null
+build_command: null
+test_command: "python -m unittest -v"
+deploy_method: null
+knowledge_dir: null
+approval_required_for: [git.push, deploy]
