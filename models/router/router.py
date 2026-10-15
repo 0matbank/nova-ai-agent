@@ -78,6 +78,7 @@ class ProviderRouter:
         self.capabilities = CapabilityRegistry(config, adapters)
         self.history = history
         self.breaker = CircuitBreaker(config.circuit_breaker, history)
+        self._auth_alerted: set[str] = set()      # one Telegram alert per sign-in problem
 
     async def _fresh_health(self, adapter: ProviderAdapter, force: bool = False) -> HealthState:
         if force or time.time() - adapter.health.checked_at > HEALTH_TTL_SECONDS:
@@ -140,6 +141,7 @@ class ProviderRouter:
                                     result.usage.seconds)
             if result.ok or cat is None:
                 self.breaker.success(adapter.name)
+                self._auth_alerted.discard(adapter.name)      # signed in again
                 return result
             opened = self.breaker.failure(adapter.name, cat, result.retry_after_seconds,
                                           result.error or "")
@@ -148,14 +150,31 @@ class ProviderRouter:
                 return result                       # → next provider immediately
             if cat is ErrorCategory.AUTH:
                 adapter._set(HealthState.AUTH_REQUIRED, result.error or "auth required")
-                _log.critical(f"{adapter.name}: authentication required — provider disabled",
-                              extra={"provider": adapter.name, "action": "provider.auth",
-                                     "status": "auth_required"})
+                self._alert_auth(adapter.name, result.error or "auth required")
                 return result
             if not opened and cat in retries and used.get(cat, 0) < retries[cat]:
                 used[cat] = used.get(cat, 0) + 1
                 continue
             return result
+
+    def _alert_auth(self, name: str, detail: str) -> None:
+        """Plan §8.7: auth error → provider off + Telegram alert — once per problem,
+        not on every call or health round (audit 2026-10-15)."""
+        if name in self._auth_alerted:
+            return
+        self._auth_alerted.add(name)
+        _log.critical(f"{name}: sign-in needed — provider not used until it works again "
+                      f"({detail[:200]})",
+                      extra={"provider": name, "action": "provider.auth",
+                             "status": "auth_required"})
+
+    def note_health(self, name: str, state: HealthState, detail: str) -> None:
+        """Called after each background health round: a provider that turns
+        AUTH_REQUIRED is alerted even if no task tried it yet."""
+        if state is HealthState.AUTH_REQUIRED and self.capabilities.routable(name):
+            self._alert_auth(name, detail)
+        elif state is HealthState.HEALTHY:
+            self._auth_alerted.discard(name)
 
     def describe(self) -> list[str]:
         lines = []

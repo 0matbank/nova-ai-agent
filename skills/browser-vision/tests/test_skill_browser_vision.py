@@ -12,10 +12,14 @@ from tests.mocks.skills import make_skill_env
 SID = "d" * 32
 
 
-def site(element: Any) -> FakeBrowser:
+def site(element: Any, texts: list[str] | None = None) -> FakeBrowser:
+    """`texts`: page text before / after the click (default: the click changes it)."""
     page = {"ok": True, "session_id": SID, "url": "https://example.com/", "title": "Ex"}
+    seq = list(texts or ["paused", "playing"])
     return FakeBrowser({f"/v1/sessions/{SID}/describe_xy": {"ok": True, "element": element},
-                        f"/v1/sessions/{SID}/click_xy": page})
+                        f"/v1/sessions/{SID}/click_xy": page,
+                        f"/v1/sessions/{SID}/text": lambda _body: {
+                            **page, "text": seq.pop(0) if len(seq) > 1 else seq[0]}})
 
 
 def clicked(b: FakeBrowser) -> bool:
@@ -57,3 +61,13 @@ def test_point_outside_the_page_is_refused(tmp_path: Path) -> None:
     with pytest.raises(PolicyDenied):
         s.call("browser-vision", "click_xy", {"session_id": SID, "x": 5000, "y": 10})
     assert b.calls == []
+
+
+def test_a_vision_click_that_changes_nothing_fails(tmp_path: Path) -> None:
+    """SKILL.md: an unchanged page = the point was not the target (audit 2026-10-15)."""
+    b = site({"tag": "CANVAS", "text": "player"}, texts=["paused", "paused"])
+    s = make_skill_env(tmp_path, {"browser": b})
+    r = s.call("browser-vision", "click_xy", {"session_id": SID, "x": 1000, "y": 270,
+                                               "target": "green play button"})
+    assert clicked(b) and not r.ok and "nothing changed" in r.summary
+    assert r.evidence["page_changed"] is False

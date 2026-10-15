@@ -46,7 +46,7 @@ def load_worker_service(folder: str) -> ModuleType:
 @pytest.fixture
 def logs(tmp_path: Path) -> Iterator[Path]:
     d = tmp_path / "logs"
-    setup_logging(d, CATS, worker="test", console=False)
+    setup_logging(d, CATS, worker="core", console=False)   # in-process: one file per category
     yield d
     shutdown_logging()
 

@@ -110,8 +110,14 @@ def setup_logging(
         for h in list(logger.handlers):
             logger.removeHandler(h)
             h.close()
+        # One process per file: Windows cannot rename a log another process has open,
+        # so a shared file would stop rotating and then drop lines (audit 2026-10-15).
+        # The core service and each worker's own category keep <cat>.log; a process
+        # writing someone else's category (e.g. a worker's audit lines) gets
+        # <cat>.<worker>.log.
+        name = f"{cat}.log" if worker in ("core", cat) else f"{cat}.{worker}.log"
         fh = logging.handlers.RotatingFileHandler(
-            folder / f"{cat}.log", maxBytes=max_bytes, backupCount=backup_count,
+            folder / name, maxBytes=max_bytes, backupCount=backup_count,
             encoding="utf-8", delay=True,
         )
         fh.setFormatter(formatter)

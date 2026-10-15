@@ -177,3 +177,24 @@ def test_simple_tasks_still_never_go_to_the_cloud(cfg) -> None:  # type: ignore[
                google_antigravity=FakeAdapter("google_antigravity", ["cloud"]))
     out = run(r.complete(req("intent_classification")))
     assert not out.ok and out.provider == "none"          # no escalation to a cloud provider
+
+
+def test_sign_in_problem_alerts_once_until_it_works_again(cfg, caplog) -> None:  # type: ignore[no-untyped-def]
+    """Plan §8.7 auth → provider off + Telegram alert (CRITICAL). Audit 2026-10-15:
+    alert from health checks too, and only once per problem."""
+    import logging
+    codex = FakeAdapter("openai_codex", [ErrorCategory.AUTH, ErrorCategory.AUTH, "fine"])
+    r = router(cfg, openai_codex=codex, google_antigravity=FakeAdapter("google_antigravity"))
+    with caplog.at_level(logging.CRITICAL):
+        run(r.complete(req()))
+        codex.state = HealthState.HEALTHY
+        codex._set(HealthState.HEALTHY, "probe says ok")
+        run(r.complete(req()))                                    # fails again: no 2nd alert
+        r.note_health("openai_codex", HealthState.AUTH_REQUIRED, "not signed in")
+    alerts = [x for x in caplog.records if "sign-in needed" in x.getMessage()]
+    assert len(alerts) == 1
+    codex._set(HealthState.HEALTHY, "ok")
+    assert run(r.complete(req())).provider == "openai_codex"     # works → alert state reset
+    with caplog.at_level(logging.CRITICAL):
+        r.note_health("openai_codex", HealthState.AUTH_REQUIRED, "signed out again")
+    assert len([x for x in caplog.records if "sign-in needed" in x.getMessage()]) == 2

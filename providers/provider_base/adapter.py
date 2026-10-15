@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass
 
 from providers.provider_base.types import (
+    ErrorCategory,
     HealthState,
     ProviderError,
     ProviderRequest,
@@ -27,6 +28,11 @@ def retry_after(text: str) -> float | None:
         return None
     h, mi, s = (int(g) if g else 0 for g in m.groups())
     return float(h * 3600 + mi * 60 + s) or None
+
+
+MODEL_MISSING = re.compile(r"(model\b.{0,60}(not found|does not exist|not supported|unsupported|"
+                           r"not available|invalid|unknown))|unknown model|no such model",
+                           re.IGNORECASE)
 
 
 @dataclass
@@ -94,3 +100,26 @@ class NotImplementedAdapter(ProviderAdapter):
         from providers.provider_base.types import ErrorCategory
         raise ProviderError(ErrorCategory.MODEL_UNAVAILABLE,
                             f"{self.name}: adapter not built yet ({self.arrives})")
+
+
+class AlternativeModel:
+    """For CLI adapters with an optional configured model (plan §8.7 "Model
+    unavailable → same provider's configured alternative model, then next
+    provider"). Subclasses implement `_complete_once(request, model)`."""
+
+    model: str | None = None
+    backup_model: str | None = None
+
+    async def _complete_once(self, request: ProviderRequest, model: str | None
+                             ) -> ProviderResult:
+        raise NotImplementedError
+
+    async def _complete(self, request: ProviderRequest) -> ProviderResult:
+        try:
+            return await self._complete_once(request, self.model)
+        except ProviderError as e:
+            backup = self.backup_model
+            if e.category is not ErrorCategory.MODEL_UNAVAILABLE or not backup or \
+                    backup == self.model:
+                raise
+            return await self._complete_once(request, backup)

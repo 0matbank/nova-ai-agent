@@ -43,13 +43,30 @@ async def safety_check(p: P, env: ToolEnv) -> tuple[bool, str]:
     return True, f"{what} looks safe"
 
 
+async def _page_state(env: ToolEnv, sid: str) -> tuple[str, str] | None:
+    r = await browser_call(env, "POST", f"/v1/sessions/{sid}/text")
+    if isinstance(r, ToolResult):
+        return None
+    return str(r.get("url", "")), str(r.get("text", ""))
+
+
 async def run(p: P, env: ToolEnv) -> ToolResult:
+    before = await _page_state(env, p.session_id)
     r = await browser_call(env, "POST", f"/v1/sessions/{p.session_id}/click_xy",
                            {"x": p.x, "y": p.y})
     if isinstance(r, ToolResult):
         return r
-    return ToolResult(True, f"clicked ({p.x}, {p.y}) — {p.target or 'vision target'}", r,
-                      page_evidence(r), untrusted=True)
+    after = await _page_state(env, p.session_id)
+    # SKILL.md: a vision click that changed nothing counts as failed — the point was
+    # probably not the target (audit 2026-10-15: this was not checked)
+    changed = before is None or after is None or before != after
+    what = p.target or "vision target"
+    if not changed:
+        return ToolResult(False, f"clicked ({p.x}, {p.y}) — {what}, but nothing changed on "
+                                 "the page", r, {**page_evidence(r), "page_changed": False},
+                          untrusted=True)
+    return ToolResult(True, f"clicked ({p.x}, {p.y}) — {what}", r,
+                      {**page_evidence(r), "page_changed": True}, untrusted=True)
 
 
 TOOL = Tool(name="click_xy", params=P, run=run, action="browser.click_xy",

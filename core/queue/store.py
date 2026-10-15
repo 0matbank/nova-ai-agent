@@ -239,6 +239,13 @@ class TaskStore:
         _log.info(f"step {seq} done", extra={"task_id": task_id, "action": "task.checkpoint",
                                              "status": "ok"})
 
+    def save_partial(self, task_id: int, seq: int, data: dict[str, Any]) -> None:
+        """Portable state of an unfinished step (plan §9.2): kept across failures,
+        retries and restarts; replaced by the real checkpoint when the step is DONE."""
+        with self._sessions.begin() as s:
+            step = self._step(s, task_id, seq)
+            step.checkpoint = {"partial": data}
+
     def reset_step(self, task_id: int, seq: int) -> None:
         with self._sessions.begin() as s:
             step = self._step(s, task_id, seq)

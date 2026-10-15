@@ -18,6 +18,7 @@ the tests still fail.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import re
 import shlex
@@ -125,18 +126,39 @@ async def git_clean(folder: Path) -> tuple[bool, str]:
     return True, "clean git working tree — every change will be visible in git diff"
 
 
-def _handoff(folder: Path, switched: list[str]) -> Handoff:
+async def _tree_state(folder: Path) -> str:
+    _, stat = await git(folder, "diff", "--stat")
+    _, diff = await git(folder, "diff")
+    return ("No files have been changed yet." if not diff.strip() else
+            "Changes already made in the working tree — keep them and build on them:\n"
+            f"{stat.strip()}\n\n{diff[-6000:]}")
+
+
+async def _tree_fingerprint(folder: Path) -> str:
+    """HEAD + status + diff: proves the tree holds exactly what this task left."""
+    _, status = await git(folder, "status", "--porcelain")
+    _, diff = await git(folder, "diff")
+    rows = [ln for ln in status.splitlines() if "__pycache__" not in ln]
+    blob = "\n".join([await _head(folder), *rows, diff])
+    return hashlib.sha256(blob.encode("utf-8", "replace")).hexdigest()
+
+
+async def _remember(ctx: TaskContext, folder: Path, switched: list[str], error: str,
+                    head: str) -> None:
+    """Portable state in the task's checkpoint (plan §9.2): survives retry and restart."""
+    ctx.remember({"failed": list(dict.fromkeys(switched)), "error": error[:500],
+                  "head": head, "tree": await _tree_fingerprint(folder)})
+
+
+def _handoff(folder: Path, switched: list[str], ctx: TaskContext, head: str) -> Handoff:
     """Provider failover mid-task (plan §8.5): the next provider gets the failure
     summary plus the edits already in the working tree, and builds on them."""
     async def handoff(request: ProviderRequest, failed: str,
                       result: ProviderResult) -> ProviderRequest:
         switched.append(failed)
+        await _remember(ctx, folder, switched, result.error or "", head)
         request = await default_handoff(request, failed, result)
-        _, stat = await git(folder, "diff", "--stat")
-        _, diff = await git(folder, "diff")
-        state = ("No files have been changed yet." if not diff.strip() else
-                 "Changes already made in the working tree — keep them and build on them:\n"
-                 f"{stat.strip()}\n\n{diff[-6000:]}")
+        state = await _tree_state(folder)
         return replace(request, previous_attempt=f"{request.previous_attempt}\n\n{state}")
     return handoff
 
@@ -198,11 +220,20 @@ class CodingFlow:
             return {"kind": "coding", "ok": False, "needs_input": True,
                     "answer": t["no_folder"].format(name=project.name)}
 
+        # an earlier attempt of this same task may have stopped mid-way (provider down,
+        # restart): its edits are still in the tree — continue from them (plan §9.2)
+        earlier = ctx.recalled()
+
+        async def safe() -> tuple[bool, str]:
+            if earlier and earlier.get("tree") == await _tree_fingerprint(folder):
+                return True, "only this task's own unfinished changes from an earlier attempt"
+            return await git_clean(folder)
+
         await ctx.require("code.edit", str(folder),
                           summary=t["summary"].format(name=project.name, goal=goal[:200]),
                           details={"project": key, "request": goal[:300]},
-                          safety_check=lambda: git_clean(folder))
-        head = await _head(folder)
+                          safety_check=safe)
+        head = str(earlier["head"]) if earlier and earlier.get("head") else await _head(folder)
         language = "Bangla (বাংলা)" if lang == "bn" else "English"
         request = ProviderRequest(
             task_id=ctx.task.id, task_type="coding", workspace=str(folder),
@@ -211,10 +242,16 @@ class CodingFlow:
             system=CODING_SYSTEM.format(name=project.name, language=language,
                                         test=project.test_command or "if any"),
             limits=Limits(timeout_seconds=1200, max_output_tokens=4000))
-        switched: list[str] = []
-        handoff = _handoff(folder, switched)
+        switched: list[str] = list(earlier.get("failed", [])) if earlier else []
+        if earlier:
+            request = replace(request, previous_attempt=(
+                f"An earlier attempt of this task stopped ({', '.join(switched) or 'interrupted'}"
+                f": {str(earlier.get('error', ''))[:300]}).\n"
+                + await _tree_state(folder)))
+        handoff = _handoff(folder, switched, ctx, head)
         result = await self.providers.complete(request, handoff=handoff)
         if not result.ok:
+            await _remember(ctx, folder, switched, result.error or "", head)
             raise RuntimeError(f"coding provider unavailable: {result.error}")
         agent_text, provider = result.answer, result.provider
         passed, test_out = await self._test(ctx, project, folder)

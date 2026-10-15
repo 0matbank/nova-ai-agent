@@ -44,7 +44,7 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 
 async def main(title: str) -> None:
-    ctx = bootstrap(worker="core", console_logs=False)
+    ctx = bootstrap(worker="script", console_logs=False)
     cfg = ctx.config
     tmp = Path(tempfile.mkdtemp(prefix="nova-ui-drill-"))
     mig = check_and_migrate(tmp / "d.db", tmp / "bk")

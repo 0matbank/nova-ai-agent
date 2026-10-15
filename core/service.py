@@ -126,6 +126,24 @@ def database_probe(store: TaskStore | None, revision: str | None,
     return probe
 
 
+def engine_probe(engine: TaskEngine | None) -> Callable[[], tuple[bool, str]]:
+    """Is the task dispatcher alive? (audit 2026-10-15: it could die silently)"""
+    def probe() -> tuple[bool, str]:
+        if engine is None:
+            return False, "not running (safe mode)"
+        if engine.queue_error:
+            return False, f"cannot read the queue — {engine.queue_error}"
+        if engine.current_task_id is not None:
+            return True, f"working on task #{engine.current_task_id}"
+        if engine.heartbeat is None:
+            return True, "starting"
+        idle = time.time() - engine.heartbeat
+        limit = max(60.0, engine.settings.idle_poll_seconds * 5)
+        return (idle < limit), ("idle, ready" if idle < limit else
+                                f"no loop round for {int(idle)} s — stalled?")
+    return probe
+
+
 async def _announce_recovery(notifier: Notifier, recovered: list[TaskView]) -> None:
     by_chat: dict[str, list[TaskView]] = {}
     for t in recovered:
@@ -262,6 +280,7 @@ async def run_core_service(
                            security, skill_cmds, ScreenCommands(desktop))
     health.probes.update(build_probes(ctx, channel))
     health.probes["Database"] = database_probe(store, revision, safe_reason)
+    health.probes["Task engine"] = engine_probe(engine)
     health.probes["Skills"] = lambda: (
         (True, f"{len(registry.skills)} loaded") if registry is not None
         else (False, f"not loaded — {skills_error}"))
@@ -283,7 +302,7 @@ async def run_core_service(
     _log.info("core service started", extra={"action": "service.start", "status": "ok"})
     background: list[asyncio.Task[Any]] = [
         asyncio.create_task(monitor.run(stop)),
-        asyncio.create_task(_provider_health_loop(providers, stop)),
+        asyncio.create_task(_provider_health_loop(providers, stop, provider_router)),
         asyncio.create_task(transcriber.idle_loop(stop))]
     local = providers.adapters.get("ollama_local")
     if isinstance(local, OllamaAdapter) and local.policy.keep_default_loaded:
@@ -345,10 +364,14 @@ def provider_summary(router: ProviderRouter) -> tuple[bool, str]:
 
 
 async def _provider_health_loop(providers: ProviderRegistry, stop: asyncio.Event,
+                                router: ProviderRouter | None = None,
                                 every: float = 60.0) -> None:
     while not stop.is_set():
         try:
-            await providers.check_all()
+            results = await providers.check_all()
+            if router is not None:
+                for name, health in results.items():
+                    router.note_health(name, health.state, health.detail)
         except Exception:
             _log.exception("provider health check failed", extra={"action": "provider.health"})
         with contextlib.suppress(TimeoutError):

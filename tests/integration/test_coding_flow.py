@@ -240,3 +240,36 @@ def test_provider_dies_mid_task_and_the_next_one_continues(tmp_path: Path) -> No
     assert "+# started by codex" in prev                      # the diff so far was handed over
     assert "🔁 openai_codex" in t.result_summary and "Test পাস ✅" in t.result_summary
     assert len(git(repo, "log", "--oneline").splitlines()) == 1
+
+
+def test_all_providers_down_then_retry_continues_from_the_saved_state(tmp_path: Path) -> None:
+    """Plan §9.2 (audit 2026-10-15): the failover state is in the task's checkpoint,
+    so the retry continues from it — no fresh start, no approval for its own edits."""
+    crasher = Crasher()
+    google = Coder([finish])
+    google.name = "google_antigravity"
+    google._set(HealthState.UNAVAILABLE, "down for now")
+    google.check_health = (lambda: _health(google))  # type: ignore[method-assign]
+    s, repo = setup(tmp_path, google)
+    router = s.tasks.engine.executors["user_request"].providers  # type: ignore[attr-defined]
+    router.adapters["openai_codex"] = crasher
+    router.adapters["google_antigravity"] = google
+    tid = int(s.tasks.store.create(title=REQUEST, request_text=REQUEST,
+                                   task_type="user_request", channel="telegram",
+                                   chat_id="555").id)
+    asyncio.run(s.tasks.engine.run_once())
+    t = s.tasks.store.get(tid)
+    assert t.state is TaskState.RETRYING and google.requests == []
+    assert (repo / "stats.py").read_text(encoding="utf-8").startswith("# started by codex")
+    google._set(HealthState.HEALTHY, "back")                    # Google is back
+    t = run_existing(s, tid)
+    assert t.state is TaskState.COMPLETED, t.error_message
+    assert s.tasks.buttons == []                                # own edits: no approval asked
+    prev = google.requests[0].previous_attempt or ""
+    assert "earlier attempt" in prev and "openai_codex" in prev and "+# started by codex" in prev
+    body = (repo / "stats.py").read_text(encoding="utf-8")
+    assert body.startswith("# started by codex") and "if v else 0.0" in body
+
+
+async def _health(adapter: Any) -> Any:
+    return adapter.health

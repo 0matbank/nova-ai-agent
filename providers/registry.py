@@ -19,6 +19,11 @@ from providers.provider_base import Health, NotImplementedAdapter, ProviderAdapt
 PLANNED: dict[str, tuple[str, frozenset[str]]] = {}   # every configured provider is built
 
 
+def _backup(cfg: AppConfig, name: str) -> str | None:
+    """`default_backup` in the provider's models.yaml alias set (plan §8.7)."""
+    return cfg.models.alias_sets.get(name, {}).get("default_backup")
+
+
 class ProviderRegistry:
     def __init__(self, adapters: dict[str, ProviderAdapter]) -> None:
         self.adapters = adapters
@@ -32,18 +37,24 @@ class ProviderRegistry:
                 adapters[name] = OllamaAdapter(cfg.models)
                 continue
             if name == "openai_codex" and not disabled:
-                adapters[name] = CodexAdapter(cfg.models.alias_sets.get(name, {}).get("default"))
+                codex = CodexAdapter(cfg.models.alias_sets.get(name, {}).get("default"))
+                codex.backup_model = _backup(cfg, name)
+                adapters[name] = codex
                 continue
             if name == "google_antigravity" and not disabled:
-                adapters[name] = AntigravityAdapter(
+                agy = AntigravityAdapter(
                     cfg.models.alias_sets.get(name, {}).get("default"),
                     scratch_dir=cfg.path("workspace_dir") / ".antigravity-scratch")
+                agy.backup_model = _backup(cfg, name)
+                adapters[name] = agy
                 continue
             if name == "anthropic_claude":
                 # real adapter even while disabled: enabling Claude = a config change only
-                adapters[name] = ClaudeAdapter(
+                claude = ClaudeAdapter(
                     cfg.models.alias_sets.get(name, {}).get("default"),
                     scratch_dir=cfg.path("workspace_dir") / ".claude-scratch", disabled=disabled)
+                claude.backup_model = _backup(cfg, name)
+                adapters[name] = claude
                 continue
             if name == "gemini_api" and not disabled:
                 key = secrets.get("GEMINI_API_KEY") if secrets is not None else None

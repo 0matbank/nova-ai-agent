@@ -15,7 +15,11 @@ if args[:2] == ["login", "status"]:
 
 if args and args[0] == "exec":
     events = [{"type": "thread.started", "thread_id": "thread-123"}, {"type": "turn.started"}]
-    if mode == "limit":
+    model = args[args.index("-m") + 1] if "-m" in args else None
+    if mode == "badmodel" and model == "bad-model":
+        events.append({"type": "turn.failed", "error": {
+            "message": "The model `bad-model` does not exist or you do not have access to it."}})
+    elif mode == "limit":
         events.append({"type": "turn.failed", "error": {
             "message": "You've hit your usage limit. Try again in 2 hours 5 minutes."}})
     elif mode == "auth":

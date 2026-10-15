@@ -104,3 +104,14 @@ def test_api_keys_never_reach_the_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CODEX_API_KEY", "placeholder-not-a-key")
     env = chatgpt_env()
     assert "OPENAI_API_KEY" not in env and "CODEX_API_KEY" not in env and "PATH" in env
+
+
+def test_missing_model_tries_the_configured_alternative(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Plan §8.7: model unavailable → same provider's alternative model, then next."""
+    monkeypatch.setenv("FAKE_CODEX_MODE", "badmodel")
+    a = CodexAdapter(model="bad-model", codex_cmd=[sys.executable, FAKE])
+    r = asyncio.run(a.complete(req()))
+    assert not r.ok and r.error_category is ErrorCategory.MODEL_UNAVAILABLE   # no backup
+    a.backup_model = "good-model"
+    r = asyncio.run(a.complete(req()))
+    assert r.ok and r.model == "good-model"

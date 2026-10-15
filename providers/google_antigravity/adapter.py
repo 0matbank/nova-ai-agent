@@ -39,6 +39,7 @@ from typing import Any
 
 from providers.google_antigravity import settings as agy_settings
 from providers.provider_base import (
+    AlternativeModel,
     ErrorCategory,
     Health,
     HealthState,
@@ -49,7 +50,7 @@ from providers.provider_base import (
     ResultStatus,
     Usage,
 )
-from providers.provider_base.adapter import retry_after
+from providers.provider_base.adapter import MODEL_MISSING, retry_after
 
 DEFAULT_COOLDOWN = 1800
 _LIMIT = re.compile(r"quota|rate.?limit|resource.?exhausted|too many requests|\b429\b|"
@@ -86,7 +87,7 @@ def default_cli() -> str:
     return str(Path(local) / "agy" / "bin" / "agy.exe") if local else "agy"
 
 
-class AntigravityAdapter(ProviderAdapter):
+class AntigravityAdapter(AlternativeModel, ProviderAdapter):
     name = "google_antigravity"
     capabilities = frozenset({"coding", "review", "reasoning", "summarization", "planning",
                               "quick_answer", "fact_check", "current_info"})
@@ -179,7 +180,8 @@ class AntigravityAdapter(ProviderAdapter):
 
     # ------------------------------------------------------------- complete
 
-    def args_for(self, request: ProviderRequest) -> list[str]:
+    def args_for(self, request: ProviderRequest, model: str | None = None) -> list[str]:
+        model = model or self.model
         write = bool(request.workspace) and "code.edit" in request.allowed_tools
         # `--print=` (empty): the prompt comes on stdin; a bare --print eats the next flag
         args = ["--print=", "--input-format", "stream-json", "--output-format", "stream-json",
@@ -187,8 +189,8 @@ class AntigravityAdapter(ProviderAdapter):
                 "--disable-slash-commands"]
         if write:
             args += ["--mode", "accept-edits"]
-        if self.model:
-            args += ["--model", self.model]
+        if model:
+            args += ["--model", model]
         if request.task_type == "summarization":
             args += ["--effort", "low"]
         return args
@@ -201,13 +203,14 @@ class AntigravityAdapter(ProviderAdapter):
             return str(self.scratch_dir)
         return None
 
-    async def _complete(self, request: ProviderRequest) -> ProviderResult:
+    async def _complete_once(self, request: ProviderRequest, model: str | None
+                             ) -> ProviderResult:
         if not self.installed():
             raise ProviderError(ErrorCategory.MODEL_UNAVAILABLE, "Antigravity CLI not installed")
         t0 = time.perf_counter()
         message = _user_message(_prompt(request))
         # a little longer than the CLI's own --print-timeout, so its clean error wins
-        code, out, err = await self._run(self.args_for(request), self.cwd_for(request),
+        code, out, err = await self._run(self.args_for(request, model), self.cwd_for(request),
                                          request.limits.timeout_seconds + 30, stdin=message)
         parsed = parse_stream(out)
         status = str(parsed["status"]).upper()
@@ -228,6 +231,10 @@ class AntigravityAdapter(ProviderAdapter):
                 raise ProviderError(ErrorCategory.AUTH, f"agy sign-in needed: {failure[:200]}")
             if "timed out" in text.lower() or status in ("INTERRUPTED", "CANCELED"):
                 raise ProviderError(ErrorCategory.TIMEOUT, f"agy: {failure[:200]}")
+            if MODEL_MISSING.search(text):
+                raise ProviderError(ErrorCategory.MODEL_UNAVAILABLE,
+                                    f"agy: model {model or 'default'} unavailable: "
+                                    f"{failure[:200]}")
             raise ProviderError(ErrorCategory.SERVER_ERROR, f"agy failed: {failure[:300]}")
         hints = []
         if not parsed["answer"]:
@@ -236,7 +243,7 @@ class AntigravityAdapter(ProviderAdapter):
             hints.append("agy refused: " + ", ".join(parsed["denied"]))
         usage = parsed["usage"]
         return ProviderResult(
-            ResultStatus.OK, self.name, model=parsed["model"] or self.model or "agy-default",
+            ResultStatus.OK, self.name, model=parsed["model"] or model or "agy-default",
             answer=parsed["answer"], files_changed=tuple(parsed["files"]),
             commands=tuple(parsed["commands"]), tool_events=tuple(parsed["events"]),
             session_id=parsed["session_id"],

@@ -89,16 +89,27 @@ def upgrade(engine: Engine, revision: str = "head") -> None:
 
 
 def check_and_migrate(db_path: Path, backups_dir: Path) -> MigrationResult:
-    head = head_revision()
-    fresh = not db_path.exists()
-    engine = make_engine(db_path)
+    """Every failure here is a MigrationError, so the service enters safe mode and
+    alerts instead of crashing (audit 2026-10-15: a failed backup used to crash it)."""
+    try:
+        head = head_revision()
+        fresh = not db_path.exists()
+        engine = make_engine(db_path)
+    except Exception as e:
+        raise MigrationError(f"cannot open the database: {type(e).__name__}: {e}") from e
     try:
         before = current_revision(engine)
     except Exception as e:
         engine.dispose()
         raise MigrationError(f"cannot read schema version: {type(e).__name__}: {e}") from e
 
-    known = {s.revision for s in ScriptDirectory.from_config(alembic_config()).walk_revisions()}
+    try:
+        known = {s.revision
+                 for s in ScriptDirectory.from_config(alembic_config()).walk_revisions()}
+    except Exception as e:
+        engine.dispose()
+        raise MigrationError(f"cannot read the migration scripts: {type(e).__name__}: {e}"
+                             ) from e
     if before is not None and before not in known:
         engine.dispose()
         raise MigrationError(
@@ -110,7 +121,13 @@ def check_and_migrate(db_path: Path, backups_dir: Path) -> MigrationResult:
 
     backup = None
     if not fresh:
-        backup = backup_database(db_path, backups_dir, f"from-{before or 'none'}")
+        try:
+            backup = backup_database(db_path, backups_dir, f"from-{before or 'none'}")
+        except Exception as e:
+            engine.dispose()
+            # no migration ever runs without a backup (plan §21A)
+            raise MigrationError(f"backup before migration failed — not migrating: "
+                                 f"{type(e).__name__}: {e}") from e
         _log.info(f"database backed up before migration: {backup.name}",
                   extra={"action": "db.backup", "status": "ok"})
     try:

@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from providers.provider_base import (
+    AlternativeModel,
     ErrorCategory,
     Health,
     HealthState,
@@ -38,7 +39,7 @@ from providers.provider_base import (
     ResultStatus,
     Usage,
 )
-from providers.provider_base.adapter import retry_after
+from providers.provider_base.adapter import MODEL_MISSING, retry_after
 
 DEFAULT_COOLDOWN = 1800
 API_KEY_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK",
@@ -56,7 +57,7 @@ def subscription_env() -> dict[str, str]:
     return {k: v for k, v in os.environ.items() if k not in API_KEY_VARS}
 
 
-class ClaudeAdapter(ProviderAdapter):
+class ClaudeAdapter(AlternativeModel, ProviderAdapter):
     name = "anthropic_claude"
     capabilities = frozenset({"coding", "review", "reasoning", "summarization", "planning"})
 
@@ -115,7 +116,8 @@ class ClaudeAdapter(ProviderAdapter):
 
     # ------------------------------------------------------------- complete
 
-    def args_for(self, request: ProviderRequest) -> list[str]:
+    def args_for(self, request: ProviderRequest, model: str | None = None) -> list[str]:
+        model = model or self.model
         write = bool(request.workspace) and "code.edit" in request.allowed_tools
         args = ["-p", "--output-format", "json", "--max-turns", "40",
                 "--disallowedTools", DISALLOWED]
@@ -123,8 +125,8 @@ class ClaudeAdapter(ProviderAdapter):
             args += ["--permission-mode", "acceptEdits", "--allowedTools", EDIT_TOOLS]
         else:
             args += ["--permission-mode", "dontAsk", "--allowedTools", READ_TOOLS]
-        if self.model:
-            args += ["--model", self.model]
+        if model:
+            args += ["--model", model]
         return args
 
     def cwd_for(self, request: ProviderRequest) -> str | None:
@@ -135,13 +137,14 @@ class ClaudeAdapter(ProviderAdapter):
             return str(self.scratch_dir)
         return None
 
-    async def _complete(self, request: ProviderRequest) -> ProviderResult:
+    async def _complete_once(self, request: ProviderRequest, model: str | None
+                             ) -> ProviderResult:
         if self.disabled:
             raise ProviderError(ErrorCategory.MODEL_UNAVAILABLE, "Claude is disabled in config")
         if not self.installed():
             raise ProviderError(ErrorCategory.MODEL_UNAVAILABLE, "Claude Code CLI not installed")
         t0 = time.perf_counter()
-        code, out, err = await self._run(self.args_for(request), self.cwd_for(request),
+        code, out, err = await self._run(self.args_for(request, model), self.cwd_for(request),
                                          request.limits.timeout_seconds, stdin=_prompt(request))
         data = _last_json(out)
         is_error = bool(data.get("is_error")) or data.get("subtype") not in (None, "success")
@@ -160,6 +163,10 @@ class ClaudeAdapter(ProviderAdapter):
                                                               f"{failure[:200]}", retry_after=wait)
             if _AUTH.search(text):
                 raise ProviderError(ErrorCategory.AUTH, f"claude sign-in needed: {failure[:200]}")
+            if MODEL_MISSING.search(text):
+                raise ProviderError(ErrorCategory.MODEL_UNAVAILABLE,
+                                    f"claude: model {model or 'default'} unavailable: "
+                                    f"{failure[:200]}")
             raise ProviderError(ErrorCategory.SERVER_ERROR, f"claude failed: {failure[:300]}")
         usage = data.get("usage") or {}
         denied = data.get("permission_denials") or []
@@ -167,7 +174,7 @@ class ClaudeAdapter(ProviderAdapter):
         hints = (["empty answer"] if not answer else []) + (
             [f"claude refused {len(denied)} tool call(s)"] if denied else [])
         return ProviderResult(
-            ResultStatus.OK, self.name, model=self.model or "claude-default", answer=answer,
+            ResultStatus.OK, self.name, model=model or "claude-default", answer=answer,
             session_id=data.get("session_id"),
             usage=Usage(input_tokens=int(usage.get("input_tokens", 0) or 0),
                         output_tokens=int(usage.get("output_tokens", 0) or 0),

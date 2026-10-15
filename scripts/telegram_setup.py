@@ -24,7 +24,7 @@ from core.service import TOKEN_KEY, WHITELIST_KEY  # noqa: E402
 
 async def _run() -> int:
     try:
-        ctx = bootstrap(worker="core", console_logs=False)
+        ctx = bootstrap(worker="script", console_logs=False)
     except ConfigError as e:
         print(f"config invalid: {e}")
         return 2

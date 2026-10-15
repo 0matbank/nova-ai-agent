@@ -68,7 +68,7 @@ class DeleteDummy:
 
 
 async def _main() -> int:
-    ctx = bootstrap(worker="core", console_logs=False)
+    ctx = bootstrap(worker="script", console_logs=False)
     api, whitelist = telegram_settings(ctx)
     cfg = ctx.config
     work = cfg.path("workspace_dir") / f"approval-drill-{int(time.time())}"

@@ -94,3 +94,18 @@ def test_foreign_keys_enforced(tmp_path: Path) -> None:
         assert conn.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1
         assert conn.exec_driver_sql("PRAGMA journal_mode").scalar() == "wal"
     res.engine.dispose()
+
+
+def test_failed_backup_is_a_migration_error_not_a_crash(tmp_path: Path,
+                                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit 2026-10-15: a full disk / unwritable backups folder must lead to safe mode."""
+    db = tmp_path / "agent.db"
+    _legacy_db(db)
+
+    def boom(*_: object) -> Path:
+        raise OSError("disk full")
+    monkeypatch.setattr(migrate, "backup_database", boom)
+    with pytest.raises(MigrationError, match="backup before migration failed"):
+        check_and_migrate(db, tmp_path / "bk")
+    rows = sqlite3.connect(db).execute("SELECT v FROM marker").fetchall()
+    assert rows == [("keep-me",)]                                   # untouched

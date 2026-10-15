@@ -315,3 +315,33 @@ def test_submit_reports_missing_planner(task_env: TaskEnv) -> None:
     reply = asyncio.run(task_env.commands.submit(msg("Click TV test koro")))
     assert "Task #1" in reply.text and "Phase 8" in reply.text
     assert task_env.store.get(1).request_text == "Click TV test koro"
+
+
+def test_dispatcher_survives_a_queue_read_error(task_env: TaskEnv,
+                                                monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit 2026-10-15: one DB error while picking the next task used to end the loop
+    silently; now it alerts, backs off and keeps going."""
+    task_env.engine.register("demo", StepsExecutor())
+    t = new(task_env)
+    real = task_env.store.next_runnable
+    calls = {"n": 0}
+
+    def flaky(executors):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("database is locked")
+        return real(executors)
+    monkeypatch.setattr(task_env.store, "next_runnable", flaky)
+
+    async def go() -> None:
+        stop = asyncio.Event()
+        loop = asyncio.create_task(task_env.engine.run(stop))
+        for _ in range(400):
+            if task_env.store.get(t.id).state is TaskState.COMPLETED:
+                break
+            await asyncio.sleep(0.02)
+        stop.set()
+        await loop
+    asyncio.run(go())
+    assert task_env.store.get(t.id).state is TaskState.COMPLETED and calls["n"] >= 2
+    assert task_env.engine.queue_error is None and task_env.engine.heartbeat is not None

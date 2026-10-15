@@ -96,3 +96,19 @@ def test_unknown_context_field_rejected() -> None:
 ])
 def test_redactor_patterns(secret: str) -> None:
     assert secret not in Redactor()(f"before {secret} after")
+
+
+def test_each_process_writes_its_own_file(tmp_path: Path) -> None:
+    """Audit 2026-10-15: on Windows a log shared by several processes cannot rotate
+    (rename fails while another process has it open) and then loses lines."""
+    d = tmp_path / "logs"
+    setup_logging(d, CATS, worker="desktop", console=False, max_bytes=2048, backup_count=2)
+    other = (d / "audit" / "audit.log")
+    other.parent.mkdir(parents=True, exist_ok=True)
+    with open(other, "a", encoding="utf-8"):          # the core process keeps its file open
+        log = get_logger("audit")
+        for i in range(200):
+            log.info("line %d %s", i, "x" * 50)
+        shutdown_logging()
+        assert (d / "audit" / "audit.desktop.log.1").exists()   # rotation worked
+        assert other.stat().st_size == 0                         # never touched

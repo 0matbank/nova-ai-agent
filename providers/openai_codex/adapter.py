@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from providers.provider_base import (
+    AlternativeModel,
     ErrorCategory,
     Health,
     HealthState,
@@ -35,7 +36,7 @@ from providers.provider_base import (
     ResultStatus,
     Usage,
 )
-from providers.provider_base.adapter import retry_after
+from providers.provider_base.adapter import MODEL_MISSING, retry_after
 
 __all__ = ["CodexAdapter", "parse_events", "retry_after"]
 
@@ -62,7 +63,7 @@ def _node() -> str:
     return node
 
 
-class CodexAdapter(ProviderAdapter):
+class CodexAdapter(AlternativeModel, ProviderAdapter):
     name = "openai_codex"
     capabilities = frozenset({"coding", "review", "reasoning"})
 
@@ -117,7 +118,8 @@ class CodexAdapter(ProviderAdapter):
 
     # ------------------------------------------------------------- complete
 
-    def args_for(self, request: ProviderRequest) -> list[str]:
+    def args_for(self, request: ProviderRequest, model: str | None = None) -> list[str]:
+        model = model or self.model
         write = bool(request.workspace) and "code.edit" in request.allowed_tools
         args = ["exec", "--json", "--color", "never",
                 "--sandbox", "workspace-write" if write else "read-only",
@@ -127,15 +129,16 @@ class CodexAdapter(ProviderAdapter):
             args += ["-C", request.workspace]
         else:
             args += ["--skip-git-repo-check"]
-        if self.model:
-            args += ["-m", self.model]
+        if model:
+            args += ["-m", model]
         return [*args, "--", _prompt(request)]
 
-    async def _complete(self, request: ProviderRequest) -> ProviderResult:
+    async def _complete_once(self, request: ProviderRequest, model: str | None
+                             ) -> ProviderResult:
         if not self.installed():
             raise ProviderError(ErrorCategory.MODEL_UNAVAILABLE, "Codex CLI not installed")
         t0 = time.perf_counter()
-        code, out, err = await self._run(self.args_for(request), request.workspace,
+        code, out, err = await self._run(self.args_for(request, model), request.workspace,
                                          request.limits.timeout_seconds)
         parsed = parse_events(out)
         failure = parsed["error"] or ("" if code == 0 else (err.strip()[-600:] or
@@ -150,10 +153,14 @@ class CodexAdapter(ProviderAdapter):
                                     retry_after=wait)
             if _AUTH.search(text):
                 raise ProviderError(ErrorCategory.AUTH, f"codex sign-in needed: {failure[:200]}")
+            if MODEL_MISSING.search(text):
+                raise ProviderError(ErrorCategory.MODEL_UNAVAILABLE,
+                                    f"codex: model {model or 'default'} unavailable: "
+                                    f"{failure[:200]}")
             raise ProviderError(ErrorCategory.SERVER_ERROR, f"codex failed: {failure[:300]}")
         usage = parsed["usage"]
         return ProviderResult(
-            ResultStatus.OK, self.name, model=self.model or "codex-default",
+            ResultStatus.OK, self.name, model=model or "codex-default",
             answer=parsed["answer"], files_changed=tuple(parsed["files"]),
             commands=tuple(parsed["commands"]), tool_events=tuple(parsed["events"]),
             session_id=parsed["session_id"],

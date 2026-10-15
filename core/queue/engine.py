@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -79,6 +80,7 @@ class TaskContext:
         self.permissions = permissions
         self.approvals = approvals
         self.steps: tuple[StepView, ...] = task.steps
+        self.current_seq: int | None = None
 
     async def require(self, action: str, target: str = "", summary: str = "",
                       details: dict[str, Any] | None = None,
@@ -134,6 +136,20 @@ class TaskContext:
         if pause:
             raise TaskPaused()
 
+    def remember(self, data: dict[str, Any]) -> None:
+        """Save the running step's portable state (e.g. which provider failed and what
+        was already changed) so a retry, a restart or another provider continues
+        instead of starting over (plan §8.5, §9.2)."""
+        if self.current_seq is not None:
+            self.store.save_partial(self.task.id, self.current_seq, data)
+
+    def recalled(self) -> dict[str, Any] | None:
+        """The portable state an earlier attempt of the running step left behind."""
+        step = next((s for s in self.steps if s.seq == self.current_seq), None)
+        cp = step.checkpoint if step is not None else None
+        partial = cp.get("partial") if isinstance(cp, dict) else None
+        return partial if isinstance(partial, dict) else None
+
     async def run_step(self, seq: int, fn: StepFn) -> dict[str, Any] | None:
         """Run step `seq` unless already DONE; returns the step's checkpoint.
         `fn` receives the previous step's checkpoint data."""
@@ -145,6 +161,7 @@ class TaskContext:
             return step.checkpoint
         await self.checkpoint()
         prev = by_seq.get(seq - 1)
+        self.current_seq = seq
         self.store.start_step(self.task.id, seq)
         try:
             data = await fn(prev.checkpoint if prev else None)
@@ -180,6 +197,8 @@ class TaskEngine:
         self.executors: dict[str, Executor] = {}
         self._wake = asyncio.Event()
         self.current_task_id: int | None = None
+        self.heartbeat: float | None = None        # last loop round (for /status)
+        self.queue_error: str | None = None
 
     def register(self, task_type: str, executor: Executor) -> None:
         self.executors[task_type] = executor
@@ -188,8 +207,24 @@ class TaskEngine:
         self._wake.set()
 
     async def run(self, stop: asyncio.Event) -> None:
+        failures = 0
         while not stop.is_set():
-            ran = await self.run_once()
+            try:
+                ran = await self.run_once()
+            except Exception as e:
+                # e.g. "database is locked" or a disk error while picking the next task:
+                # the dispatcher must never die silently (audit 2026-10-15) — alert, retry.
+                failures += 1
+                self.queue_error = f"{type(e).__name__}: {e}"[:200]
+                if failures in (1, 10, 100):        # alert, but not on every retry
+                    _log.critical(f"task engine cannot read the queue ({failures}x) — "
+                                  f"retrying: {self.queue_error}",
+                                  extra={"action": "task.engine", "status": "error"})
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(stop.wait(), timeout=min(60.0, 2.0 * failures))
+                continue
+            failures, self.queue_error = 0, None
+            self.heartbeat = time.time()
             if ran:
                 continue
             self._wake.clear()

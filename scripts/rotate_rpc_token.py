@@ -19,7 +19,7 @@ from core.log import get_logger, shutdown_logging  # noqa: E402
 
 
 def main() -> int:
-    ctx = bootstrap(worker="core", console_logs=False)
+    ctx = bootstrap(worker="script", console_logs=False)
     store = TokenStore(ctx.config.path("secrets_dir"))
     store.ensure()
     store.rotate()

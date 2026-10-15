@@ -33,7 +33,7 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 
 async def main() -> int:
-    ctx = bootstrap(worker="core", console_logs=False)
+    ctx = bootstrap(worker="script", console_logs=False)
     w = ctx.config.workers
     tokens = TokenStore(ctx.config.path("secrets_dir"))
     v = w.protocol_version
