@@ -17,6 +17,7 @@
 | 12 | OpenAI Codex Adapter + Coding Flow | ✅ PASS (phone: demo project bug fix → Codex edit → Nova's own test run 4/4 ✅, approval path seen live on a dirty tree; live drill PASS, nothing committed; 514 tests) | `uv run python scripts/coding_drill.py`; phone: `codex demo project-er test fail korche, bug fix koro` |
 | 13 | Google Antigravity Adapter | ✅ PASS (phone: general question answered via Antigravity ~18 s; live drill: same coding task via Antigravity 49 s, 4/4 tests, nothing committed + Bangla reasoning; summary fallback Gemini→Antigravity seen live; browser agent drill 3/3; 533 tests) | `uv run python scripts/antigravity_setup.py`, then `uv run python scripts/coding_drill.py --only google_antigravity`; phone: any general question |
 | 14 | Multi-Provider Failover Engine | ✅ PASS (live drill: real Codex fixed part, simulated 503 → circuit open → real Antigravity finished from the diff, 4/4 tests, nothing committed; phone: /status + question via Antigravity (task 29), then fast-answer tiers on phone: local 3.8 s, Gemini 4.4 s, live info 30 s; 573 tests) | `uv run python scripts/failover_drill.py`; phone: `/status`, any question |
+| 15 | Git/GitHub + Full Coding Workflow | ✅ PASS (phone: 'git demo project-er test fail korche, bug fix koro' → Codex 17 s → report → git.push (RED) approval → owner approved → nova/task-38 on the remote, tests OK, master untouched; live drill PASS with real Codex; 626 tests) | `uv run python scripts/git_workflow_drill.py`; phone: `git demo project-er test fail korche, bug fix koro` |
 
 
 ### Notes — Phase 10
@@ -55,3 +56,8 @@
   - provider policy (103ddbd): task budgets in providers.yaml, latency + RAM/VRAM pressure in routing, benchmark with tool-use JSON and memory, honest reply instead of a local guess for live info, screen questions answered by vision.
 - Still Phase 16 by plan: file / PowerShell / desktop-UI work from the phone (Windows Operator + File agents).
 - Phone check of the audit fixes (2026-10-15): /status (Task engine line), /logs, "notepad kholo", "screen e ki dekhacche?" all PASS. It exposed VRAM 98% (qwen3 + qwen3-vl resident together) → Resource Manager now keeps one LLM in VRAM at a time (17081ff); live: 6.4 GB → 10.2 GB during vision (qwen3-vl only) → 6.4 GB 60 s later.
+
+### Notes — Phase 15
+- skills/git: status/diff (GREEN), pull = fast-forward on a clean tree (BLUE), commit on a `nova/...` branch with a secret scan (YELLOW), push of `nova/...` branches only, never forced, verified with `ls-remote` (RED — every push asks the owner). Registered projects only; git's own credential manager; no terminal prompts.
+- Coding flow (plan §35): pull → AI edit → build (if configured) → tests → commit on `nova/task-<id>` → report with the diff → push approval → push. Each phase is saved in the task checkpoint, so resuming after the approval never re-runs the AI. The owner's own uncommitted work is never swept into Nova's commit (then no commit/push, changes stay in the tree).
+- Owner choices 2026-10-15: every task on its own branch (merging stays with the owner); the test remote is a local bare repo (no other GitHub repo is touched). Practice project: `config/projects/git-demo.yaml`.
