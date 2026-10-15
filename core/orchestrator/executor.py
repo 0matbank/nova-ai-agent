@@ -99,7 +99,8 @@ class UserRequestExecutor:
                     and "browser" in self.skills.registry.skills):
                 return await BrowserFlow(self.skills, self.providers).run(ctx)
             if intent.category == "coding" and self.skills is not None:
-                return await CodingFlow(self.skills.env.config, self.providers).run(ctx)
+                return await CodingFlow(self.skills.env.config, self.providers,
+                                        self.skills).run(ctx)
             if intent.category in NOT_YET:
                 return {"kind": "not_yet", "answer": (
                     f"বুঝেছি — এটা '{intent.category}' ধরনের কাজ। এটা এখনো শেখানো হয়নি; "

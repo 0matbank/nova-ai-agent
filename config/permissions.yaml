@@ -13,6 +13,7 @@ approval:
 
 actions:
   file.read: GREEN
+  git.read: GREEN             # status / diff of a registered project
   search: GREEN
   screenshot: GREEN
   pc.status: GREEN
@@ -37,6 +38,7 @@ actions:
   browser.select: BLUE        # choosing a dropdown option (not submitting)
   test.run: BLUE
   download: BLUE
+  git.pull: BLUE              # fast-forward only, clean tree only
 
   file.overwrite: YELLOW      # safety check = backup made first
   file.organize: YELLOW       # safety check = no collisions, nothing protected
@@ -64,6 +66,7 @@ actions:
   file.delete_pathwide: RED
   file.move_pathwide: RED      # moving a whole folder from outside the workspace / a project
   git.push_production: RED
+  git.push: RED               # every push asks the owner (nova/... branches only)
   message.send_external: RED
   system.shutdown: RED
   system.restart: RED

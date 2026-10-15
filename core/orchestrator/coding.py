@@ -28,9 +28,11 @@ from pathlib import Path
 from typing import Any
 
 from core.config.schema import AppConfig, ProjectProfile
+from core.notify.notifier import MessageType
 from core.orchestrator.lang import reply_language
 from core.queue.engine import TaskBlocked, TaskContext
 from core.skills.api import PolicyDenied
+from core.skills.runner import SkillRunner
 from models.router import ProviderRouter
 from models.router.router import Handoff, default_handoff
 from providers.provider_base import Limits, ProviderRequest, ProviderResult
@@ -59,6 +61,20 @@ TEXT = {
         "undo": "↩️ বাতিল করতে: git -C \"{folder}\" checkout -- .  (commit/push করিনি — push-এর "
                 "আগে সবসময় আপনার অনুমতি লাগবে)",
         "summary": "{name}-এ কোড বদলানো: \"{goal}\"",
+        "owner_changes": "ℹ️ কাজ শুরুর সময় repo-তে আপনার নিজের কিছু uncommitted পরিবর্তন "
+                         "ছিল — সেগুলো যেন Nova-র commit-এ না ঢোকে, তাই commit/push করিনি। "
+                         "পরিবর্তন working tree-তেই আছে।",
+        "pull_failed": "⚠️ git pull হয়নি ({reason}) — local কপির ওপর কাজ করেছি; push আলাদা "
+                       "branch-এ যাবে, তাই main-এ কিছু বদলাবে না।",
+        "build_ok": "🏗️ Build ঠিক আছে ✅ ({cmd})",
+        "build_fail": "🏗️ Build ফেল ❌ ({cmd}):",
+        "on_branch": "📌 পরিবর্তন {branch} branch-এ commit করা ({commit}) — আপনার main/চলতি "
+                     "branch যেমন ছিল তেমনই আছে।\n   দেখতে: git -C \"{folder}\" checkout {branch}",
+        "no_remote": "ℹ️ এই project-এর কোনো remote নেই — commit PC-তেই রইল, push হয়নি।",
+        "push_ask": "⬆️ এটা remote-এ push করতে নিচের Approve চাপুন (merge আপনি নিজে করবেন)।",
+        "pushed": "🚀 Push হয়েছে: {remote} → {branch}। Main-এ merge আপনার সিদ্ধান্ত।",
+        "push_failed": "❌ Push হয়নি: {reason}",
+        "commit_failed": "❌ Commit হয়নি: {reason}",
         "working": "💻 {name}: কোড বদলানোর কাজ চলছে — কয়েক মিনিট লাগতে পারে। থামাতে /cancel",
         "follow_up": "🧪 Test এখনো ফেল — আরেকবার ঠিক করার চেষ্টা চলছে…",
         "switched": "🔁 {failed} মাঝপথে থেমে গিয়েছিল — {provider} আগের কাজ থেকেই বাকিটা শেষ করেছে।",
@@ -81,6 +97,20 @@ TEXT = {
         "undo": "↩️ To undo: git -C \"{folder}\" checkout -- .  (not committed or pushed — a push "
                 "always needs your approval)",
         "summary": "Code change in {name}: \"{goal}\"",
+        "owner_changes": "ℹ️ The repo had uncommitted work of yours when I started — so it "
+                         "cannot end up in Nova's commit, I did not commit or push. The "
+                         "changes are in the working tree.",
+        "pull_failed": "⚠️ git pull did not run ({reason}) — worked on the local copy; the "
+                       "push goes to its own branch, so main is not touched.",
+        "build_ok": "🏗️ Build OK ✅ ({cmd})",
+        "build_fail": "🏗️ Build failed ❌ ({cmd}):",
+        "on_branch": "📌 Committed on {branch} ({commit}) — your main/current branch is "
+                     "unchanged.\n   To look: git -C \"{folder}\" checkout {branch}",
+        "no_remote": "ℹ️ This project has no remote — the commit stays on this PC, not pushed.",
+        "push_ask": "⬆️ Tap Approve below to push it (merging stays with you).",
+        "pushed": "🚀 Pushed: {remote} → {branch}. Merging into main is your call.",
+        "push_failed": "❌ Push failed: {reason}",
+        "commit_failed": "❌ Commit failed: {reason}",
         "working": "💻 {name}: changing the code — this can take a few minutes. /cancel stops it",
         "follow_up": "🧪 Tests still fail — trying once more…",
         "switched": "🔁 {failed} stopped midway — {provider} finished it from where it left off.",
@@ -148,19 +178,21 @@ async def _tree_fingerprint(folder: Path) -> str:
 
 
 async def _remember(ctx: TaskContext, folder: Path, switched: list[str], error: str,
-                    head: str) -> None:
+                    head: str, owner_changes: bool) -> None:
     """Portable state in the task's checkpoint (plan §9.2): survives retry and restart."""
     ctx.remember({"failed": list(dict.fromkeys(switched)), "error": error[:500],
-                  "head": head, "tree": await _tree_fingerprint(folder)})
+                  "head": head, "tree": await _tree_fingerprint(folder),
+                  "owner_changes": owner_changes})
 
 
-def _handoff(folder: Path, switched: list[str], ctx: TaskContext, head: str) -> Handoff:
+def _handoff(folder: Path, switched: list[str], ctx: TaskContext, head: str,
+             owner_changes: bool) -> Handoff:
     """Provider failover mid-task (plan §8.5): the next provider gets the failure
     summary plus the edits already in the working tree, and builds on them."""
     async def handoff(request: ProviderRequest, failed: str,
                       result: ProviderResult) -> ProviderRequest:
         switched.append(failed)
-        await _remember(ctx, folder, switched, result.error or "", head)
+        await _remember(ctx, folder, switched, result.error or "", head, owner_changes)
         request = await default_handoff(request, failed, result)
         state = await _tree_state(folder)
         return replace(request, previous_attempt=f"{request.previous_attempt}\n\n{state}")
@@ -199,9 +231,15 @@ async def run_tests(folder: Path, command: str, timeout: float = 600) -> tuple[b
 
 
 class CodingFlow:
-    def __init__(self, cfg: AppConfig, providers: ProviderRouter) -> None:
+    """Plan §35 / Phase 15: pull → AI edit → build → test → commit on nova/task-<id>
+    → report with the diff → owner approves → push. Each finished phase is saved in
+    the task checkpoint, so resuming after an approval never re-runs the AI."""
+
+    def __init__(self, cfg: AppConfig, providers: ProviderRouter,
+                 skills: SkillRunner | None = None) -> None:
         self.cfg = cfg
         self.providers = providers
+        self.skills = skills
 
     async def run(self, ctx: TaskContext) -> dict[str, Any]:
         goal = ctx.task.request_text
@@ -227,6 +265,14 @@ class CodingFlow:
         # an earlier attempt of this same task may have stopped mid-way (provider down,
         # restart): its edits are still in the tree — continue from them (plan §9.2)
         earlier = ctx.recalled()
+        if earlier and earlier.get("phase") in ("verified", "committed"):
+            # resumed after an approval (commit with a secret warning / push): the AI
+            # work and the tests are done — go on from there
+            return await self._deliver(ctx, lang, key, project, folder, earlier)
+        # the owner's own uncommitted work must never end up in Nova's commit
+        owner_changes = bool(earlier.get("owner_changes")) if earlier else \
+            await self._changed(folder)
+        pull_note = "" if earlier else await self._pull(ctx, key, lang)
 
         async def safe() -> tuple[bool, str]:
             if earlier and earlier.get("tree") == await _tree_fingerprint(folder):
@@ -252,24 +298,32 @@ class CodingFlow:
                 f"An earlier attempt of this task stopped ({', '.join(switched) or 'interrupted'}"
                 f": {str(earlier.get('error', ''))[:300]}).\n"
                 + await _tree_state(folder)))
-        handoff = _handoff(folder, switched, ctx, head)
+        handoff = _handoff(folder, switched, ctx, head, owner_changes)
+        if not earlier:
+            # a restart mid-run must still know the starting point (plan §9.2)
+            await _remember(ctx, folder, switched, "", head, owner_changes)
         await ctx.progress(t["working"].format(name=project.name))
         result = await ctx.interruptible(self.providers.complete(request, handoff=handoff))
         if not result.ok:
-            await _remember(ctx, folder, switched, result.error or "", head)
+            await _remember(ctx, folder, switched, result.error or "", head, owner_changes)
             raise RuntimeError(f"coding provider unavailable: {result.error}")
         agent_text, provider = result.answer, result.provider
-        passed, test_out = await self._test(ctx, project, folder)
+        built, build_out = await self._build(ctx, project, folder)
+        passed, test_out = (False, build_out) if built is False else \
+            await self._test(ctx, project, folder)
         if passed is False and await self._changed(folder):
-            # one follow-up round with the real test output (plan §8.5: no restart from zero)
+            # one follow-up round with the real build/test output (plan §8.5: no restart)
             await ctx.progress(t["follow_up"])
             retry = await ctx.interruptible(self.providers.complete(replace(
                 request, previous_attempt=(
-                    f"Your change was applied, but the tests still fail:\n{test_out[-3000:]}")),
+                    f"Your change was applied, but the build/tests still fail:\n"
+                    f"{test_out[-3000:]}")),
                 handoff=handoff))
             if retry.ok:
                 agent_text = retry.answer or agent_text
-                passed, test_out = await self._test(ctx, project, folder)
+                built, build_out = await self._build(ctx, project, folder)
+                passed, test_out = (False, build_out) if built is False else \
+                    await self._test(ctx, project, folder)
         if head and await _head(folder) != head:
             # the rules forbid commits (commit = Phase 15, with the owner): stop and say how to undo
             raise TaskBlocked(t["committed"].format(provider=provider, folder=folder,
@@ -277,8 +331,89 @@ class CodingFlow:
         if switched:
             agent_text = t["switched"].format(failed=", ".join(dict.fromkeys(switched)),
                                               provider=provider) + "\n" + agent_text
-        return await self._report(lang, project, folder, provider, agent_text, passed,
-                                  test_out, result.session_id)
+        report = await self._report(lang, project, folder, provider, agent_text, passed,
+                                    test_out, result.session_id, build_out)
+        if pull_note:
+            report["answer"] = pull_note + "\n\n" + report["answer"]
+        if self.skills is None or not report["ok"] or "git" not in self.skills.registry.skills:
+            return report
+        state = {"phase": "verified", "report": report["answer"],
+                 "evidence": report["evidence"], "goal": goal[:300],
+                 "owner_changes": owner_changes}
+        ctx.remember(state)
+        return await self._deliver(ctx, lang, key, project, folder, state)
+
+    async def _pull(self, ctx: TaskContext, key: str, lang: str) -> str:
+        """§35 'Git pull' first: fast-forward only, and only on a clean tree. A pull that
+        cannot run (no network, diverged) is reported, not fatal — the work goes on a
+        separate branch anyway."""
+        if self.skills is None or "git" not in self.skills.registry.skills:
+            return ""
+        try:
+            r = await self.skills.invoke(ctx, "git", "pull", {"project": key})
+        except PolicyDenied:
+            return ""                        # owner's uncommitted work: leave it alone
+        if r.ok:
+            return ""
+        return TEXT[lang]["pull_failed"].format(reason=r.summary[-200:])
+
+    async def _build(self, ctx: TaskContext, project: ProjectProfile, folder: Path
+                     ) -> tuple[bool | None, str]:
+        """§35 'Build' before 'Test' — when the project has a build command."""
+        if not project.build_command:
+            return None, ""
+        await ctx.require("test.run", f"{folder} :: {project.build_command}")
+        ok, out = await ctx.interruptible(run_tests(folder, project.build_command))
+        return ok, ("" if ok else f"BUILD FAILED ({project.build_command}):\n") + out
+
+    async def _deliver(self, ctx: TaskContext, lang: str, key: str, project: ProjectProfile,
+                       folder: Path, state: dict[str, Any]) -> dict[str, Any]:
+        """Commit on nova/task-<id> (YELLOW, secret check) → report → push (RED: the
+        owner approves every push) — owner choice 2026-10-15: never straight to main."""
+        assert self.skills is not None
+        t = TEXT[lang]
+        branch = f"nova/task-{ctx.task.id}"
+        report = str(state.get("report", ""))
+        if state.get("owner_changes"):
+            # the repo had the owner's own uncommitted work: committing would sweep it in
+            return {"kind": "coding", "ok": True,
+                    "answer": f"{report}\n\n{t['owner_changes']}",
+                    "evidence": {**(state.get("evidence") or {}), "committed": False}}
+        if state.get("phase") == "verified":
+            goal = " ".join(str(state.get("goal", "")).split())
+            ev = state.get("evidence") or {}
+            message = (f"Nova: {goal[:68]}\n\nTask #{ctx.task.id} via {ev.get('provider')}; "
+                       f"tests passed: {ev.get('tests_passed')}.")
+            c = await self.skills.invoke(ctx, "git", "commit", {
+                "project": key, "message": message, "branch": branch})
+            if not c.ok:
+                raise TaskBlocked(report + "\n\n" + t["commit_failed"].format(reason=c.summary))
+            state = {**state, "phase": "committed", "commit": c.data.get("commit"),
+                     "branch": branch, "stat": c.data.get("stat", "")}
+            ctx.remember(state)
+        commit = str(state.get("commit", ""))[:8]
+        lines = [report.split("\n↩️")[0].rstrip(), "",
+                 t["on_branch"].format(branch=branch, commit=commit, folder=folder)]
+        evidence = {**(state.get("evidence") or {}), "branch": branch,
+                    "commit": state.get("commit"), "pushed": False}
+        from core.skills.gitops import remote_url
+        if await remote_url(folder) is None:
+            lines.append(t["no_remote"])
+            return {"kind": "coding", "ok": True, "answer": "\n".join(lines),
+                    "evidence": evidence}
+        if not state.get("asked"):
+            # the owner sees what changed before the Approve / Reject buttons arrive
+            ctx.remember({**state, "asked": True})
+            if ctx.notifier is not None:
+                await ctx.notifier.notify(ctx.task.chat_id, MessageType.INFO,
+                                          "\n".join([*lines, "", t["push_ask"]]),
+                                          task_id=ctx.task.id)
+        p = await self.skills.invoke(ctx, "git", "push", {"project": key, "branch": branch})
+        if not p.ok:
+            raise TaskBlocked("\n".join([*lines, "", t["push_failed"].format(reason=p.summary)]))
+        lines.append(t["pushed"].format(branch=branch, remote=p.data.get("remote", "origin")))
+        return {"kind": "coding", "ok": True, "answer": "\n".join(lines),
+                "evidence": {**evidence, "pushed": True}}
 
     async def _test(self, ctx: TaskContext, project: ProjectProfile, folder: Path
                     ) -> tuple[bool | None, str]:
@@ -293,7 +428,7 @@ class CodingFlow:
 
     async def _report(self, lang: str, project: ProjectProfile, folder: Path, provider: str,
                       agent_text: str, passed: bool | None, test_out: str,
-                      session: str | None) -> dict[str, Any]:
+                      session: str | None, build_out: str = "") -> dict[str, Any]:
         t = TEXT[lang]
         _, status = await git(folder, "status", "--porcelain")
         _, stat = await git(folder, "diff", "--stat")
@@ -309,7 +444,14 @@ class CodingFlow:
             summary = stat.strip().splitlines()[-1:] if stat.strip() else []
             lines += [f"  ({summary[0].strip()})"] if summary else []
         cmd = project.test_command or ""
-        if passed is None:
+        if build_out.startswith("BUILD FAILED"):
+            lines += ["", t["build_fail"].format(cmd=project.build_command),
+                      _test_tail(build_out, 12)]
+        elif project.build_command:
+            lines += ["", t["build_ok"].format(cmd=project.build_command)]
+        if build_out.startswith("BUILD FAILED"):
+            pass
+        elif passed is None:
             lines += ["", t["no_tests"]]
         elif passed:
             lines += ["", t["tests_ok"].format(cmd=cmd), _test_tail(test_out, 3)]

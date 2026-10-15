@@ -13,7 +13,7 @@ skills:
   powershell: { status: enabled }
   files: { status: enabled }
   search: { status: enabled }
-  git:            { status: planned }
+  git:            { status: enabled }     # Phase 15: status, diff, pull, commit, push
   github:         { status: planned }
   coding:         { status: planned }
   download: { status: enabled }

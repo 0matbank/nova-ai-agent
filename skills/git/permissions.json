@@ -1,0 +1,7 @@
+{
+  "status": ["git.read"],
+  "diff": ["git.read"],
+  "pull": ["git.pull"],
+  "commit": ["git.commit"],
+  "push": ["git.push"]
+}

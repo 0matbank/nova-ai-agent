@@ -1,0 +1,8 @@
+{
+  "name": "git",
+  "version": "1.0.0",
+  "description": "Git for registered projects: status, diff, fast-forward pull, commit on a nova/ branch, push with approval.",
+  "worker": "core",
+  "platforms": ["win32", "linux", "darwin"],
+  "tools": ["status", "diff", "pull", "commit", "push"]
+}

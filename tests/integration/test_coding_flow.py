@@ -232,7 +232,7 @@ def test_provider_dies_mid_task_and_the_next_one_continues(tmp_path: Path) -> No
     router.adapters["google_antigravity"] = google
     t = run(s)
     assert t.state is TaskState.COMPLETED, t.error_message
-    body = (repo / "stats.py").read_text(encoding="utf-8")
+    body = git(repo, "show", f"nova/task-{t.id}:stats.py")              # Phase 15: on its branch
     assert body.startswith("# started by codex") and "if v else 0.0" in body   # both edits
     (handed,) = google.requests
     prev = handed.previous_attempt or ""
@@ -267,7 +267,7 @@ def test_all_providers_down_then_retry_continues_from_the_saved_state(tmp_path: 
     assert s.tasks.buttons == []                                # own edits: no approval asked
     prev = google.requests[0].previous_attempt or ""
     assert "earlier attempt" in prev and "openai_codex" in prev and "+# started by codex" in prev
-    body = (repo / "stats.py").read_text(encoding="utf-8")
+    body = git(repo, "show", f"nova/task-{tid}:stats.py")               # Phase 15: on its branch
     assert body.startswith("# started by codex") and "if v else 0.0" in body
 
 
@@ -312,3 +312,49 @@ def test_cancel_stops_a_running_coding_agent_within_seconds(tmp_path: Path) -> N
     t = s.tasks.store.get(tid)
     assert t.state is TaskState.CANCELLED and slow.cancelled
     assert any("থামাতে /cancel" in txt for _, txt in s.tasks.sent)       # progress shown
+
+
+# ------------------------------------------- Phase 15: edit → test → diff → approval → push
+
+def add_remote(repo: Path, tmp_path: Path) -> Path:
+    remote = tmp_path / "remote.git"
+    subprocess.run([GIT, "init", "-q", "--bare", str(remote)], check=True)  # noqa: S603
+    git(repo, "remote", "add", "origin", str(remote))
+    branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    git(repo, "push", "-q", "-u", "origin", branch)
+    return remote
+
+
+def test_phase15_edit_test_diff_approval_push(tmp_path: Path) -> None:
+    """Plan Phase 15 pass: repo edit → test → diff → approval → push."""
+    coder = Coder([fix])
+    s, repo = setup(tmp_path, coder)
+    remote = add_remote(repo, tmp_path)
+    main = git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    t = run(s)
+    assert t.state is TaskState.WAITING_APPROVAL and len(s.tasks.buttons) == 1   # push = RED
+    report = next(txt for _, txt in s.tasks.sent if "nova/task-" in txt and "Approve" in txt)
+    assert "Test পাস ✅" in report and "• stats.py" in report and "1 file changed" in report
+    assert f"nova/task-{t.id}" not in git(remote, "branch")                      # not pushed yet
+    nonce = s.tasks.last_callback(True).split(":")[1]
+    s.tasks.approvals.decide(nonce, True, "555")
+    t = run_existing(s, t.id)
+    assert t.state is TaskState.COMPLETED, t.error_message
+    assert "🚀" in t.result_summary and f"nova/task-{t.id}" in t.result_summary
+    assert git(remote, "show", f"nova/task-{t.id}:stats.py") == FIXED              # pushed
+    assert git(remote, "show", f"{main}:stats.py") == BUGGY                        # main untouched
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip() == main          # checkout kept
+    assert len(coder.requests) == 1                     # the AI ran once, not again on resume
+
+
+def test_phase15_rejected_push_sends_nothing(tmp_path: Path) -> None:
+    coder = Coder([fix])
+    s, repo = setup(tmp_path, coder)
+    remote = add_remote(repo, tmp_path)
+    t = run(s)
+    nonce = s.tasks.last_callback(False).split(":")[1]
+    s.tasks.approvals.decide(nonce, False, "555")
+    t = run_existing(s, t.id)
+    assert t.state is not TaskState.COMPLETED
+    assert f"nova/task-{t.id}" not in git(remote, "branch")
+    assert f"nova/task-{t.id}" in git(repo, "branch")         # the commit stays on this PC
