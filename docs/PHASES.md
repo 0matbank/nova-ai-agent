@@ -16,6 +16,7 @@
 | 11 | Playwright MCP + Vision Fallback | ✅ PASS (phone: Wikipedia search → article → GDP, grounded, 3 steps; live drill: shop tab flow + canvas-only button via local vision + real Wikipedia, 11/12 then 3/3; vision click accuracy within ~10 px; 493 tests) | browser worker running, then `uv run python scripts/browser_agent_drill.py 3`; phone: `en.wikipedia.org-এ Bangladesh খুঁজে তারপর Economy section থেকে GDP কত বলো` |
 | 12 | OpenAI Codex Adapter + Coding Flow | ✅ PASS (phone: demo project bug fix → Codex edit → Nova's own test run 4/4 ✅, approval path seen live on a dirty tree; live drill PASS, nothing committed; 514 tests) | `uv run python scripts/coding_drill.py`; phone: `codex demo project-er test fail korche, bug fix koro` |
 | 13 | Google Antigravity Adapter | ✅ PASS (phone: general question answered via Antigravity ~18 s; live drill: same coding task via Antigravity 49 s, 4/4 tests, nothing committed + Bangla reasoning; summary fallback Gemini→Antigravity seen live; browser agent drill 3/3; 533 tests) | `uv run python scripts/antigravity_setup.py`, then `uv run python scripts/coding_drill.py --only google_antigravity`; phone: any general question |
+| 14 | Multi-Provider Failover Engine | ✅ PASS (live drill: real Codex fixed part, simulated 503 → circuit open → real Antigravity finished from the diff, 4/4 tests, nothing committed; phone: /status + question via Antigravity (task 29), then fast-answer tiers on phone: local 3.8 s, Gemini 4.4 s, live info 30 s; 573 tests) | `uv run python scripts/failover_drill.py`; phone: `/status`, any question |
 
 
 ### Notes — Phase 10
@@ -40,3 +41,11 @@
 - Safety rules live in agy's own settings (`scripts/antigravity_setup.py`, backup first): no web fetch/actuation, no history-changing git, nothing outside the workspace, never paid Google One credits. Health refuses to run the agent if they drift. agy's built-in Google search tool is not covered by permissions (queries go only to Google).
 - Windows: agy's terminal sandbox is a preview needing admin, so print mode refuses every terminal command; the agent edits with file tools and Nova runs the tests. Coding flow now sends the project's file list to every provider.
 - Routing: coding Codex → Antigravity → local; reasoning Antigravity first; summaries Gemini API → Antigravity → local; browser planner = new `planning` task type, local first with Antigravity backup (owner choice).
+
+### Notes — Phase 14
+- Circuit breaker: 3 transient failures in a row → 10/20/30 min cooldown; usage limit → the provider's retry-after; probe before reuse; state in `provider_state` (survives restart). Every call recorded in `provider_calls`; a mostly-failing provider ranks lower.
+- Handoff: the next provider gets the failure summary; the coding flow adds the current git diff, and the report says who took over.
+- Idempotency ledger (`side_effects`): side-effecting skill actions run at most once per task; an unknown outcome stops for the owner.
+- Claude Code adapter built but disabled (subscription only — API-key variables are stripped). Gemini API = reasoning fallback (free tier).
+- Owner 2026-10-15 ("1 line answer took a minute"): quick questions → local qwen3 kept in GPU memory (warmed at start); numbers/dates → Gemini first; current info → Antigravity with Google search for that request only; complex → Antigravity; a not-sure local answer escalates silently. News/weather are answered instead of refused.
+- Audit of Phases 0–14 (2026-10-15): 22 confirmed gaps; fixed in follow-up commits (see git log).
