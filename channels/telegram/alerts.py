@@ -1,5 +1,7 @@
 """Forward CRITICAL log records to Telegram (plan §17E: "Critical error
-Telegram-এ alert করবে"). Text is already redacted by the log formatter."""
+Telegram-এ alert করবে"). The text goes through the secret redactor here: this
+handler is attached without the JSON formatter, so nothing upstream redacts it
+(audit 2026-10-15)."""
 
 from __future__ import annotations
 
@@ -10,6 +12,7 @@ import logging
 
 from channels.base import OutgoingMessage
 from channels.telegram.channel import TelegramChannel
+from core.log import redact
 
 
 class TelegramAlertHandler(logging.Handler):
@@ -26,7 +29,7 @@ class TelegramAlertHandler(logging.Handler):
                 message = json.loads(rendered).get("message", rendered)
             except ValueError:
                 message = rendered
-            text = f"🚨 CRITICAL ALERT\n{message}"
+            text = f"🚨 CRITICAL ALERT\n{redact(str(message))}"
             fut = asyncio.run_coroutine_threadsafe(
                 self.channel.broadcast(OutgoingMessage(text)), self.loop
             )

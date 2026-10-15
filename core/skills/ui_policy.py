@@ -22,14 +22,21 @@ DANGER_WORDS = (
     "confirm", "sign out", "log out", "logout", "shut down", "shutdown", "restart",
     "মুছুন", "মুছে", "ডিলিট", "পাঠান", "পাঠাও", "পেমেন্ট", "কিনুন", "নিশ্চিত",
 )
+# On a web page these change the owner's account or settings (audit 2026-10-15). On the
+# desktop "Save" is harmless (it is "Don't save" that loses work), so they are web-only.
+WEB_DANGER_WORDS = (
+    "save", "update", "change", "apply", "deactivate", "unsubscribe", "cancel", "edit profile",
+    "সেভ", "সংরক্ষণ", "পরিবর্তন", "আপডেট", "বাতিল",
+)
 DANGER_KEYS = {"alt+f4", "ctrl+w", "ctrl+shift+w", "ctrl+f4", "delete", "del", "shift+delete",
                "shift+del", "ctrl+shift+delete", "ctrl+enter", "ctrl+shift+enter",
                "ctrl+d", "ctrl+shift+q", "win+l"}
 
 
-def dangerous_label(label: str) -> str | None:
+def dangerous_label(label: str, web: bool = False) -> str | None:
     low = label.lower()
-    for w in DANGER_WORDS:
+    words: tuple[str, ...] = DANGER_WORDS + (WEB_DANGER_WORDS if web else ())
+    for w in words:
         if re.search(rf"(^|\W){re.escape(w)}(\W|$)", low) or (not w.isascii() and w in low):
             return w
     return None

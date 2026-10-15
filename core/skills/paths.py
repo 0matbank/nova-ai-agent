@@ -30,6 +30,11 @@ class PathPolicy:
     def __init__(self, config: AppConfig, extra_forbidden: list[Path] | None = None) -> None:
         self.workspace = config.path("workspace_dir")
         self.backups = config.path("backups_dir")
+        self.app_dir = config.app_dir
+        # registered projects (config/projects): the owner's real work, even inside the
+        # workspace — deleting anything there always needs approval
+        self.projects = [Path(p.local_folder).resolve() for p in config.projects.values()
+                         if p.local_folder]
         self.forbidden = [config.path("secrets_dir"), config.path("sessions_dir"),
                           config.path("database"), *(extra_forbidden or [])]
         self.system = [Path(v) for v in (os.environ.get(k) for k in (
@@ -62,6 +67,10 @@ class PathPolicy:
                                "change it")
         if _within(path, self.backups):
             raise PolicyDenied("the backups folder is managed by the agent itself")
+        if _within(path, self.app_dir):
+            # incl. config/permissions.yaml: a permission change must never be a file write
+            raise PolicyDenied(f"{path} is part of Nova's own code/config — it is never "
+                               "changed by a skill (self-update with approval: Phase 23)")
 
     def check_delete(self, path: Path) -> None:
         self.check_write(path)
@@ -72,6 +81,9 @@ class PathPolicy:
 
     def in_workspace(self, path: Path) -> bool:
         return _within(path, self.workspace) and _norm(path) != _norm(self.workspace)
+
+    def in_project(self, path: Path) -> bool:
+        return any(_within(path, p) for p in self.projects)
 
     def mentions_forbidden(self, text: str) -> bool:
         """For shell commands: refuse any command text naming a protected path.

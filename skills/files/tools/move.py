@@ -25,6 +25,10 @@ def precheck(p: P, env: ToolEnv) -> None:
 
 
 def action(p: P, env: ToolEnv) -> str:
+    src = env.paths.resolve(p.source)
+    if src.is_dir() and (not env.paths.in_workspace(src) or env.paths.in_project(src)):
+        # moving a whole folder of the owner's is as consequential as deleting it there
+        return "file.move_pathwide"
     return "file.overwrite" if env.paths.resolve(p.destination).exists() else "file.move"
 
 

@@ -354,3 +354,15 @@ def test_audit_details_redacted(task_env: TaskEnv) -> None:
         [row] = s.scalars(select(AuditLog).where(AuditLog.action == "x"))
     assert token not in row.target and token not in str(row.details)
     assert "q" * 30 not in str(row.details)
+
+
+def test_password_typed_into_a_field_is_never_stored() -> None:
+    """Owner rule: Nova saves no passwords. The approval still binds to the exact text
+    (fingerprint), but the stored row only keeps a mask."""
+    from core.permissions.approvals import fingerprint, stored_details
+    d = {"session_id": "s1", "ref": "e6", "text": "hunter2-Pa55word", "submit": False}
+    kept = stored_details("browser.fill_secret", d)
+    assert kept["text"] == "***REDACTED***" and kept["ref"] == "e6"
+    assert fingerprint("browser.fill_secret", "t", d) != fingerprint(
+        "browser.fill_secret", "t", {**d, "text": "other"})            # still bound to it
+    assert stored_details("browser.fill", d)["text"] == "hunter2-Pa55word"   # not a secret

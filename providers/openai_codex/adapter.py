@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shutil
 import time
@@ -47,6 +48,15 @@ _AUTH = re.compile(r"not logged in|log ?in again|unauthori[sz]ed|\b401\b|token.*
                    r"refresh token", re.IGNORECASE)
 
 
+# ChatGPT plan only (owner rule): an API key in the environment would make the CLI bill
+# the OpenAI API instead — never pass one on (audit 2026-10-15).
+API_KEY_VARS = ("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "AZURE_OPENAI_API_KEY")
+
+
+def chatgpt_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k.upper() not in API_KEY_VARS}
+
+
 def _node() -> str:
     node = shutil.which("node") or r"C:\Program Files\nodejs\node.exe"
     return node
@@ -68,7 +78,7 @@ class CodexAdapter(ProviderAdapter):
     async def _run(self, args: list[str], cwd: str | None, timeout: float
                    ) -> tuple[int, str, str]:
         proc = await asyncio.create_subprocess_exec(
-            *self.cmd, *args, cwd=cwd, stdin=asyncio.subprocess.DEVNULL,
+            *self.cmd, *args, cwd=cwd, stdin=asyncio.subprocess.DEVNULL, env=chatgpt_env(),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             limit=64 * 1024 * 1024)
         try:

@@ -62,6 +62,7 @@ actions:
 
   file.delete_important: RED
   file.delete_pathwide: RED
+  file.move_pathwide: RED      # moving a whole folder from outside the workspace / a project
   git.push_production: RED
   message.send_external: RED
   system.shutdown: RED

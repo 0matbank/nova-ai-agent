@@ -95,3 +95,12 @@ def test_parse_real_event_shapes() -> None:
                                                ("please try again later", None)])
 def test_retry_after(text: str, seconds: float | None) -> None:
     assert retry_after(text) == seconds
+
+
+def test_api_keys_never_reach_the_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Owner rule: ChatGPT plan only — an API key would switch Codex to API billing."""
+    from providers.openai_codex.adapter import chatgpt_env
+    monkeypatch.setenv("OPENAI_API_KEY", "placeholder-not-a-key")
+    monkeypatch.setenv("CODEX_API_KEY", "placeholder-not-a-key")
+    env = chatgpt_env()
+    assert "OPENAI_API_KEY" not in env and "CODEX_API_KEY" not in env and "PATH" in env

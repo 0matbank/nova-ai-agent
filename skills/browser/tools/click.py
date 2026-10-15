@@ -1,5 +1,7 @@
-"""Click an element by snapshot ref. YELLOW: allowed only when the element's
-text has no danger word (buy/pay/send/delete/confirm… — plan §36)."""
+"""Click an element by snapshot ref. YELLOW: allowed automatically only when
+the element is identified, its text has no danger word (buy/pay/send/delete/
+save/change… — plan §36), and it does not submit a form other than a search
+(clicking a submit button is the same as browser.submit — audit 2026-10-15)."""
 
 from __future__ import annotations
 
@@ -17,11 +19,18 @@ async def safety_check(p: P, env: ToolEnv) -> tuple[bool, str]:
     r = await browser_call(env, "POST", f"/v1/sessions/{p.session_id}/describe", {"ref": p.ref})
     if isinstance(r, ToolResult):
         return False, r.summary
-    el = r.get("element") or {}
-    label = str(el.get("text", "")) if isinstance(el, dict) else str(el)
-    word = dangerous_label(label)
+    el = r.get("element")
+    if not isinstance(el, dict) or not str(el.get("text", "")).strip():
+        # an unnamed control (icon-only button, unknown element): fail closed
+        return False, "could not identify what this element does"
+    label = str(el.get("text", ""))
+    word = dangerous_label(label, web=True)
     if word:
         return False, f"element {label[:60]!r} looks consequential ({word!r})"
+    form = el.get("form")
+    submits = str(el.get("type") or "").lower() in ("submit", "image")
+    if submits and isinstance(form, dict) and not form.get("search"):
+        return False, f"element {label[:60]!r} submits a form (not a search box)"
     return True, f"element {label[:60]!r} looks safe"
 
 

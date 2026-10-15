@@ -28,7 +28,10 @@ DESCRIBE_JS = (
     "el => ({tag: el.tagName, type: el.type || null, role: el.getAttribute('role'),"
     " name: el.getAttribute('name'), placeholder: el.getAttribute('placeholder'),"
     " text: (el.innerText || el.getAttribute('aria-label') || el.value || el.title"
-    " || '').slice(0,200)})")
+    " || '').slice(0,200),"
+    " form: el.form ? {search: el.form.getAttribute('role') === 'search'"
+    " || !!el.form.querySelector('input[type=search],[role=searchbox],input[name=q]')}"
+    " : null})")
 # What sits at a point — the clickable ancestor if there is one (vision clicks).
 DESCRIBE_XY_JS = (
     "() => {{ const p = document.elementFromPoint({x}, {y}); if (!p) return null;"

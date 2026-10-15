@@ -104,7 +104,9 @@ def test_copy_move_rename(s: SkillEnv) -> None:
 def test_delete_in_workspace_is_blue(s: SkillEnv) -> None:
     s.call("files", "write", {"path": "tmp.txt", "content": "x"})
     r = s.call("files", "delete", {"path": "tmp.txt"})
-    assert r.ok and not (s.workspace / "tmp.txt").exists() and r.data["how"] == "deleted"
+    assert r.ok and not (s.workspace / "tmp.txt").exists()
+    assert r.data["how"] == "moved to Recycle Bin"                  # never permanent
+    assert (s.trash / "tmp.txt").exists()  # type: ignore[attr-defined]
 
 
 def test_delete_outside_workspace_needs_approval_and_is_recoverable(
@@ -171,3 +173,37 @@ def test_delete_is_audited(s: SkillEnv) -> None:
     with s.tasks.store._sessions() as sess:
         acts = [a.action for a in sess.scalars(select(AuditLog))]
     assert "file.delete_workspace" in acts
+
+
+# ------------------------------------------------ audit 2026-10-15 (finding #4, #7)
+
+def test_folder_delete_in_workspace_needs_approval(s: SkillEnv) -> None:
+    (s.workspace / "proj" / "src").mkdir(parents=True)
+    r, _ = s.call_with_approval("files", "delete", {"path": "proj"})   # RED: asks first
+    assert r is not None and r.ok and (s.trash / "proj").exists()  # type: ignore[attr-defined]
+
+
+def test_moving_a_user_folder_in_needs_approval_so_delete_cannot_launder_it(
+        s: SkillEnv, tmp_path: Path) -> None:
+    work = tmp_path / "Documents" / "Work"
+    work.mkdir(parents=True)
+    (work / "plan.docx").write_text("important", encoding="utf-8")
+    _, _ = s.call_with_approval("files", "move", {"source": str(work),
+                                                  "destination": "work-copy"}, approve=False)
+    assert work.exists() and not (s.workspace / "work-copy").exists()   # rejected: untouched
+
+
+def test_anything_in_a_registered_project_needs_approval(s: SkillEnv) -> None:
+    proj = s.workspace / "demo"
+    proj.mkdir()
+    (proj / "stats.py").write_text("x", encoding="utf-8")
+    s.runner.env.paths.projects.append(proj.resolve())
+    _, _ = s.call_with_approval("files", "delete", {"path": "demo/stats.py"}, approve=False)
+    assert (proj / "stats.py").exists()
+
+
+def test_novas_own_config_can_never_be_written(s: SkillEnv) -> None:
+    target = s.cfg.app_dir / "config" / "permissions.yaml"
+    with pytest.raises(PolicyDenied, match="Nova's own code/config"):
+        s.call("files", "write", {"path": str(target), "content": "powershell.run: GREEN",
+                                  "mode": "overwrite"})

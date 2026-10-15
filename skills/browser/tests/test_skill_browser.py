@@ -152,3 +152,27 @@ def test_real_browser_form_flow(tmp_path: Path) -> None:
         assert cli.sessions == {}
     finally:
         asyncio.run(cli.close_all())
+
+
+# ------------------------------------------------------- audit 2026-10-15 (finding #11)
+
+@pytest.mark.parametrize("element", [
+    {"tag": "BUTTON", "type": "submit", "text": "Next", "form": {"search": False}},   # a form
+    {"tag": "BUTTON", "text": "Save changes"},                                          # settings
+    {"tag": "BUTTON", "text": ""},                                                      # icon only
+    None,                                                                               # unknown
+])
+def test_form_submits_settings_and_unknown_elements_need_approval(
+        tmp_path: Path, element: dict | None) -> None:
+    b = fake(element)
+    s = make_skill_env(tmp_path, {"browser": b})
+    r, _ = s.call_with_approval("browser", "click", {"session_id": SID, "ref": "e5"},
+                                approve=False)
+    assert r is None and not any(p.endswith("/click") for p, _ in b.calls)
+
+
+def test_search_form_button_still_runs(tmp_path: Path) -> None:
+    b = fake({"tag": "BUTTON", "type": "submit", "text": "Search", "form": {"search": True}})
+    s = make_skill_env(tmp_path, {"browser": b})
+    r = s.call("browser", "click", {"session_id": SID, "ref": "e5"})
+    assert r.ok and s.tasks.buttons == []

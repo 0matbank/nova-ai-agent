@@ -36,7 +36,7 @@ async def safety_check(p: P, env: ToolEnv) -> tuple[bool, str]:
     if not isinstance(el, dict):
         return False, "nothing identifiable at that point"
     label = " ".join(str(el.get(k) or "") for k in ("text", "name", "role", "href"))
-    word = dangerous_label(label) or dangerous_label(p.target)
+    word = dangerous_label(label, web=True) or dangerous_label(p.target, web=True)
     what = f"{el.get('tag')} {str(el.get('text', ''))[:60]!r}"
     if word:
         return False, f"{what} looks consequential ({word!r})"

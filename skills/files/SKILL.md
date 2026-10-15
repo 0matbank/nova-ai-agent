@@ -10,8 +10,8 @@ Everyday file work on the PC (plan §34). Works while the PC is locked.
 | `write` | file.create (BLUE) / file.overwrite (YELLOW) | overwrite/append makes a backup first |
 | `mkdir` | file.create (BLUE) | |
 | `copy` | file.create (BLUE) / file.overwrite (YELLOW) | |
-| `move` | file.move (BLUE) / file.overwrite (YELLOW) | also used for rename |
-| `delete` | file.delete_workspace (BLUE) / file.delete_important (RED) / file.delete_pathwide (RED) | outside the workspace → Recycle Bin, never permanent |
+| `move` | file.move (BLUE) / file.overwrite (YELLOW) / file.move_pathwide (RED: a whole folder from outside the workspace or a project) | also used for rename |
+| `delete` | file.delete_workspace (BLUE, a file in the workspace) / file.delete_important (RED, other files or anything in a registered project) / file.delete_pathwide (RED, any folder) | always Recycle Bin, never permanent |
 | `organize` | search (GREEN, dry run) / file.organize (YELLOW) | group files into sub-folders by type; dry run by default |
 
 ## Hard limits (no approval can override)

@@ -5,7 +5,7 @@
   "write": ["file.create", "file.overwrite"],
   "mkdir": ["file.create"],
   "copy": ["file.create", "file.overwrite"],
-  "move": ["file.move", "file.overwrite"],
+  "move": ["file.move", "file.overwrite", "file.move_pathwide"],
   "delete": ["file.delete_workspace", "file.delete_important", "file.delete_pathwide"],
   "organize": ["search", "file.organize"]
 }

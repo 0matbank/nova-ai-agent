@@ -22,6 +22,14 @@ from desktop_screen import require_unlocked
 SHELL_PROCESSES = {"cmd.exe", "powershell.exe", "pwsh.exe", "windowsterminal.exe",
                    "openconsole.exe", "conhost.exe", "wsl.exe", "bash.exe", "mintty.exe",
                    "wt.exe"}
+# Windows whose text boxes run what is typed (audit 2026-10-15): Explorer's address bar
+# and the Start/taskbar search (explorer.exe), Task Manager's "Create new task".
+COMMAND_HOSTS = {"explorer.exe", "taskmgr.exe"}
+RUN_DIALOG_TITLES = {"run", "create new task"}
+# Editors with an integrated terminal: when the target control is not known, the focused
+# control may be that terminal — fail closed.
+IDE_PROCESSES = {"code.exe", "cursor.exe", "windsurf.exe", "antigravity ide.exe",
+                 "devenv.exe", "pycharm64.exe", "idea64.exe", "rider64.exe"}
 CONSOLE_CLASSES = {"consolewindowclass", "cascadia_hosting_window_class",
                    "pseudoconsolewindow", "mintty", "virtualconsoleclass"}
 # GUI framework windows hosted by a shell process (e.g. a WinForms form run
@@ -154,23 +162,33 @@ def resolve(window: str, name: str | None = None, automation_id: str | None = No
         if name or automation_id or control_type:
             control = _find_control(w, name, automation_id, control_type)
             out["control"] = _describe_control(control)
+        elif _focus_inside(auto, w):
+            # no control named: text/keys go to the focused control — judge that one
+            control = auto.GetFocusedControl()
         out["window"]["is_shell"] = is_shell_window(
             out["window"]["process"], w.ClassName, w.Name,
-            " ".join(filter(None, [control.Name, control.AutomationId])) if control else "")
+            " ".join(filter(None, [control.Name, control.AutomationId,
+                                   getattr(control, "ClassName", "")])) if control else "",
+            control_known=control is not None)
         return out
 
 
-def is_shell_window(process: str, klass: str, title: str, control_label: str = "") -> bool:
+def is_shell_window(process: str, klass: str, title: str, control_label: str = "",
+                    control_known: bool = True) -> bool:
     """Would text/keys sent here be executed as a command? Fail closed."""
     proc, cls = process.lower(), (klass or "").lower()
     if cls in CONSOLE_CLASSES:
         return True
     if proc in SHELL_PROCESSES and not cls.startswith(GUI_CLASS_PREFIXES):
         return True
-    if title.strip().lower() == "run" and cls == "#32770":        # Win+R dialog
+    if proc in COMMAND_HOSTS:                     # address bar / Start search / new task
+        return True
+    if title.strip().lower() in RUN_DIALOG_TITLES and cls == "#32770":   # Win+R, new task
         return True
     label = control_label.lower()
-    return "terminal" in label or "console" in label             # e.g. VS Code terminal
+    if "terminal" in label or "console" in label or "xterm" in label:   # e.g. VS Code terminal
+        return True
+    return proc in IDE_PROCESSES and not control_known
 
 
 def _focus_inside(auto: Any, w: Any) -> bool:
@@ -299,8 +317,17 @@ def type_text(window: str, text: str, name: str | None, automation_id: str | Non
     require_unlocked()
     with _uia() as auto:
         w = _find_window(auto, window)
-        c = _find_control(w, name, automation_id, control_type) if (
-            name or automation_id or control_type) else auto.GetFocusedControl()
+        if name or automation_id or control_type:
+            c = _find_control(w, name, automation_id, control_type)
+        else:
+            # no control named: use the focused one, but only if it belongs to THIS
+            # window — never write into another app's field (audit 2026-10-15)
+            _activate(w)
+            time.sleep(0.1)
+            if not _focus_inside(auto, w):
+                raise UIError("the target window does not have keyboard focus — name the "
+                              "control to type into")
+            c = auto.GetFocusedControl()
         before = _text_of(c)
         method = None
         if replace or not before:

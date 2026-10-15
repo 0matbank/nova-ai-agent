@@ -167,3 +167,21 @@ def test_focus_verified(ui) -> None:  # type: ignore[no-untyped-def]
     s, title = ui
     assert focus_retry(lambda: s.call("desktop-ui", "focus", {"window": title})).evidence[
         "foreground"]
+
+
+@pytest.mark.parametrize("process,klass,title,label,known,shell", [
+    # audit 2026-10-15: places that run what is typed
+    ("explorer.exe", "CabinetWClass", "Downloads", "Address", True, True),
+    ("explorer.exe", "Shell_TrayWnd", "", "", False, True),                 # Start/taskbar
+    ("Taskmgr.exe", "TaskManagerWindow", "Task Manager", "", True, True),
+    ("Taskmgr.exe", "#32770", "Create new task", "Open:", True, True),
+    ("Code.exe", "Chrome_WidgetWin_1", "x - VS Code", "", False, True),   # focus unknown
+    ("Code.exe", "Chrome_WidgetWin_1", "x - VS Code", "xterm-helper-textarea", True, True),
+    ("Code.exe", "Chrome_WidgetWin_1", "x - VS Code", "Editor", True, False),
+    ("notepad.exe", "Notepad", "Untitled - Notepad", "", False, False),
+])
+def test_command_sinks_found_by_audit(process: str, klass: str, title: str, label: str,
+                                      known: bool, shell: bool) -> None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "workers" / "desktop-worker"))
+    import desktop_ui
+    assert desktop_ui.is_shell_window(process, klass, title, label, control_known=known) is shell

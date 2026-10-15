@@ -57,3 +57,25 @@ def edit_yaml(config_dir: Path) -> Callable[[str, Callable[[dict[str, Any]], Non
         path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
 
     return _edit
+
+
+@pytest.fixture(autouse=True)
+def _never_the_real_recycle_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every delete goes to the Recycle Bin now: tests must never touch the owner's."""
+    import sys
+
+    import send2trash as s2t
+
+    bin_dir = tmp_path / "fake-recycle-bin"
+
+    def fake(p: Any) -> None:
+        bin_dir.mkdir(exist_ok=True)
+        dest, n = bin_dir / Path(p).name, 1
+        while dest.exists():                    # the real bin keeps same-named items too
+            dest, n = bin_dir / f"{Path(p).name}.{n}", n + 1
+        Path(p).rename(dest)
+
+    monkeypatch.setattr(s2t, "send2trash", fake)
+    mod = sys.modules.get("nova_skill_files_delete")
+    if mod is not None:
+        monkeypatch.setattr(mod, "send2trash", fake)

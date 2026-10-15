@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from core.config.schema import ApprovalSection, Level
 from core.db.models import Approval, utcnow
+from core.log import redact
 from core.notify.notifier import MessageType, Notifier
 from core.permissions.audit import AuditTrail
 from core.queue.states import TaskState
@@ -66,6 +67,25 @@ def fingerprint(action: str, target: str, details: dict[str, Any] | None) -> str
     blob = json.dumps({"a": action, "t": target, "d": details or {}}, sort_keys=True,
                       ensure_ascii=False, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()
+
+
+# Actions whose typed text is a secret: the approval binds to it through the fingerprint
+# (a hash), but the stored row only says that something was typed.
+SECRET_ACTIONS = frozenset({"browser.fill_secret"})
+SECRET_KEYS = frozenset({"text", "value", "password", "secret", "token"})
+
+
+def stored_details(action: str, details: dict[str, Any] | None) -> dict[str, Any]:
+    """What may be kept in the database: secret fields masked, everything redacted."""
+    out: dict[str, Any] = {}
+    for k, v in (details or {}).items():
+        if action in SECRET_ACTIONS and k.lower() in SECRET_KEYS:
+            out[k] = "***REDACTED***"
+        elif isinstance(v, str):
+            out[k] = redact(v)
+        else:
+            out[k] = v
+    return out
 
 
 def _view(a: Approval) -> ApprovalView:
@@ -123,7 +143,8 @@ class ApprovalManager:
             a = Approval(task_id=task_id, action=action, level=level, nonce=nonce,
                          status=ApprovalStatus.PENDING, expires_at=utcnow() + self._ttl,
                          details={"target": target, "summary": summary,
-                                  "fingerprint": fp, "details": details or {}})
+                                  "fingerprint": fp,
+                                  "details": stored_details(action, details)})
             s.add(a)
             s.flush()
             view = _view(a)

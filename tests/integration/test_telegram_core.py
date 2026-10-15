@@ -420,3 +420,28 @@ def fake_providers(ctx):  # type: ignore[no-untyped-def]
     from providers.registry import ProviderRegistry
     from tests.mocks.providers import FakeAdapter
     return ProviderRegistry({n: FakeAdapter(n) for n in ctx.config.providers.providers})
+
+
+def test_critical_alert_is_redacted(logs: Path, tmp_path: Path) -> None:
+    """Audit 2026-10-15: the alert handler has no JSON formatter, so it must redact."""
+    from core.log import add_known_secrets
+    fake = FakeTelegram()
+    ch = _channel(fake, tmp_path)
+    secret = "s3cret-value-for-alert-test-123456"
+    add_known_secrets([secret])
+
+    async def go() -> None:
+        handler = TelegramAlertHandler(ch, asyncio.get_running_loop())
+        root = logging.getLogger(ROOT_LOGGER)
+        root.addHandler(handler)
+        try:
+            get_logger("core").critical(f"provider failed: token={secret}")
+            for _ in range(100):
+                if fake.sent:
+                    break
+                await asyncio.sleep(0.01)
+        finally:
+            root.removeHandler(handler)
+    asyncio.run(go())
+    [alert] = fake.texts_to(OWNER)
+    assert secret not in alert and "provider failed" in alert
