@@ -32,6 +32,9 @@ class PcStatus:
     disk_total_gb: float
     boot_time: float
     gpus: list[GpuStatus]
+    # which drive disk_* describe — Nova's own (Phase 16 phone test: without the
+    # letter an agent reported D:'s free space as C:'s)
+    disk_drive: str = ""
 
 
 async def _gpu_status() -> list[GpuStatus]:
@@ -61,7 +64,8 @@ async def _gpu_status() -> list[GpuStatus]:
 async def pc_status(disk_path: Path) -> PcStatus:
     cpu = await asyncio.to_thread(psutil.cpu_percent, 0.5)
     mem = psutil.virtual_memory()
-    disk = psutil.disk_usage(str(disk_path.anchor or disk_path))
+    anchor = str(disk_path.anchor or disk_path)
+    disk = psutil.disk_usage(anchor)
     gb = 1024 ** 3
     return PcStatus(
         cpu_percent=cpu,
@@ -72,7 +76,27 @@ async def pc_status(disk_path: Path) -> PcStatus:
         disk_total_gb=disk.total / gb,
         boot_time=psutil.boot_time(),
         gpus=await _gpu_status(),
+        disk_drive=anchor.rstrip("\\/"),
     )
+
+
+def drive_usage() -> list[dict[str, object]]:
+    """Every drive with its size and free space (Phase 16: "D drive-e koto jayga")."""
+    out: list[dict[str, object]] = []
+    for part in psutil.disk_partitions(all=False):
+        try:
+            u = psutil.disk_usage(part.mountpoint)
+        except OSError:                     # empty card reader, locked BitLocker drive …
+            continue
+        out.append({"drive": part.mountpoint.rstrip("\\/") or part.mountpoint,
+                    "total_gb": round(u.total / 1024 ** 3, 1),
+                    "free_gb": round(u.free / 1024 ** 3, 1), "used_percent": u.percent})
+    return out
+
+
+def format_drives(drives: list[dict[str, object]]) -> str:
+    return ", ".join(f"{d['drive']} {d['free_gb']} GB free of {d['total_gb']} GB"
+                     for d in drives)
 
 
 def format_duration(seconds: float) -> str:
@@ -87,7 +111,8 @@ def format_pc_status(s: PcStatus) -> str:
     lines = [
         f"CPU: {s.cpu_percent:.0f}%",
         f"RAM: {s.ram_percent:.0f}% ({s.ram_used_gb:.1f}/{s.ram_total_gb:.1f} GB)",
-        f"Disk free: {s.disk_free_gb:.0f}/{s.disk_total_gb:.0f} GB",
+        f"Disk free: {s.disk_free_gb:.0f}/{s.disk_total_gb:.0f} GB"
+        + (f" ({s.disk_drive})" if s.disk_drive else ""),
     ]
     for g in s.gpus:
         lines.append(

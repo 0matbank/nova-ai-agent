@@ -14,12 +14,15 @@ answers 1–3 contain the expected facts.
 """
 
 import asyncio
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+
+import psutil
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -79,6 +82,14 @@ async def run(tmp: Path) -> int:
     s.tasks.engine.register("user_request",
                             UserRequestExecutor(IntentRouter(router), router, s.runner))
 
+    free_gb: dict[str, float] = {}
+    for part in psutil.disk_partitions(all=False):
+        try:
+            free_gb[part.mountpoint[0].upper()] = psutil.disk_usage(part.mountpoint).free / 2**30
+        except OSError:
+            continue
+    own = str(tmp.anchor)[0].upper()            # the drill's runtime root = "Nova's" drive
+    other = next((d for d, f in free_gb.items() if d not in (own, "C") and f > 1), None)
     cases = [
         (f"{box} folder e koyta pdf file ache? naam gulo bolo", "file_document", "operator",
          ["3", "bill", "cv", "plan"]),
@@ -87,6 +98,9 @@ async def run(tmp: Path) -> int:
          "windows_operator", "skill", ["MB"]),
         ("C drive e koto GB jayga free ache dekho to", "windows_operator",
          "operator", []),
+        # phone test 2026-10-16: a drive that is NOT Nova's own must not get Nova's numbers
+        *([(f"{other} drive e koto GB jayga free ache?", "windows_operator", "operator", [])]
+          if other else []),
         (f"{repo} folder e kono secret leak ache kina check koro", "security", "operator",
          ["settings.py"]),
         ("Drill Demo test koro", "project:drill-demo", "project_test", ["OK"]),
@@ -111,8 +125,15 @@ async def run(tmp: Path) -> int:
         answer = t.result_summary or t.error_message or ""
         plain = answer.translate(str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")).lower()
         hits = [f for f in facts if f.lower() not in plain]
-        if "drive" in text and not any(u in answer for u in ("GB", "জিবি", "গিগাবাইট")):
-            hits.append("free space in GB")
+        if "drive" in text:
+            if not any(u in answer for u in ("GB", "জিবি", "গিগাবাইট")):
+                hits.append("free space in GB")
+            want = free_gb[text[0].upper()]
+            got = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", plain)]
+            # C: moves by GBs within a minute (pagefile / model swap) — allow that
+            slack = 15.0 if text[0].upper() == "C" else 1.0
+            if not any(abs(g - want) <= slack for g in got):
+                hits.append(f"real free space {want:.1f} GB")
         if lead == "security":
             low = answer.lower()
             if not any(w in low for w in leak_words):

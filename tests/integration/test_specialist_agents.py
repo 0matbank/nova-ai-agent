@@ -111,6 +111,28 @@ def test_a_skill_outside_the_agents_list_is_refused_by_the_runner(tmp_path: Path
     assert "may not use powershell.run" in second
 
 
+def test_stuck_local_planner_escalates_to_the_cloud_planner(tmp_path: Path) -> None:
+    """Owner rule 2026-10-15: low confidence locally → Antigravity/Gemini, silently,
+    continuing from the steps already done (not repeating them)."""
+    box = tmp_path / "box"
+    box.mkdir()
+    (box / "a.pdf").write_text("x", encoding="utf-8")
+    s, ad = setup(tmp_path, local=[
+        call("files", "list_dir", path=str(box)),
+        json.dumps({"action": "fail", "reason": "not sure"}),
+    ])
+    agy = FakeAdapter("google_antigravity", [answer("ফোল্ডারে 1টা pdf আছে: a.pdf")])
+    ad["google_antigravity"] = agy                  # the router's own adapter table
+    tid = submit(s, f"{box} folder e koyta pdf ache?")
+    run_all(s)
+    t = s.tasks.store.get(tid)
+    assert t.state is TaskState.COMPLETED, t.error_message
+    assert t.result_summary == "ফোল্ডারে 1টা pdf আছে: a.pdf"
+    (req,) = agy.requests
+    assert req.task_type == "reasoning" and "a.pdf" in req.context   # earlier step kept
+    assert len(ad["ollama_local"].requests) == 2                     # list_dir not repeated
+
+
 def test_runner_holds_every_call_to_the_agents_skills(tmp_path: Path) -> None:
     import pytest
 

@@ -15,6 +15,9 @@ def s(tmp_path: Path) -> SkillEnv:
 def test_status(s: SkillEnv) -> None:
     r = s.call("windows", "status", {})
     assert r.ok and 0 < r.data["ram_percent"] <= 100 and "CPU:" in r.summary
+    # Phase 16 phone test: the disk line names its drive, and every drive is listed
+    assert f"GB ({r.data['disk_drive']})" in r.summary and r.data["disk_drive"]
+    assert r.data["drives"] and "Drives: " in r.summary
 
 
 def test_processes(s: SkillEnv) -> None:
