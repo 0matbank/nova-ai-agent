@@ -321,6 +321,15 @@ class TaskStore:
             s.add(Message(channel=channel, chat_id=chat_id, direction=direction,
                           text=text, external_id=external_id, task_id=task_id))
 
+    def seen_inbound(self, channel: str, chat_id: str, external_id: str) -> bool:
+        """Phase 25: a message Telegram delivers again (Nova crashed before it could
+        acknowledge it) was already handled — it must not create a second task."""
+        with self._sessions() as s:
+            hit = s.scalar(select(Message.id).where(
+                Message.channel == channel, Message.chat_id == chat_id,
+                Message.direction == "in", Message.external_id == external_id).limit(1))
+        return hit is not None
+
     def link_message(self, channel: str, chat_id: str, external_id: str,
                      task_id: int) -> None:
         """Tie an already recorded incoming message to the task it created."""

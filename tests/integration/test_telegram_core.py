@@ -453,3 +453,28 @@ def test_critical_alert_is_redacted(logs: Path, tmp_path: Path) -> None:
     asyncio.run(go())
     [alert] = fake.texts_to(OWNER)
     assert secret not in alert and "provider failed" in alert
+
+
+def test_a_message_redelivered_after_a_crash_is_not_done_twice(config_dir: Path,
+                                                                runtime_root: Path) -> None:
+    """Phase 25 duplicate-action prevention: Telegram only learns a message was handled
+    at the NEXT poll; if Nova dies in between, the same message comes again."""
+    from sqlalchemy import select
+
+    from core.db.engine import make_engine, make_sessionmaker
+    from core.db.models import Task
+
+    ctx = bootstrap(config_dir=config_dir, root=runtime_root, console_logs=False)
+    first = FakeTelegram()
+    first.push_message("PC er obostha ki")
+    _run_service(ctx, first, lambda: bool(first.sent))
+    ctx = bootstrap(config_dir=config_dir, root=runtime_root, console_logs=False)
+    again = FakeTelegram()                       # the same update, same message_id
+    again.push_message("PC er obostha ki")
+    _run_service(ctx, again, lambda: len(again.calls) > 3)
+    engine = make_engine(ctx.config.path("database"))
+    with make_sessionmaker(engine)() as s:
+        tasks = list(s.scalars(select(Task)))
+    engine.dispose()
+    assert len(tasks) == 1
+    assert not [t for t in again.texts_to(OWNER) if "Task #" in t]

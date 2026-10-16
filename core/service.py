@@ -208,6 +208,16 @@ async def run_core_service(
     cfg = ctx.config
 
     async def handle(msg: IncomingMessage) -> OutgoingMessage | None:
+        if store is not None and msg.message_id:
+            try:
+                seen = store.seen_inbound(msg.channel, msg.chat_id, str(msg.message_id))
+            except Exception:  # noqa: BLE001 - a DB hiccup must not drop the message
+                seen = False
+            if seen:
+                _log.warning(f"message {msg.message_id} delivered again — already handled, "
+                             "ignored", extra={"action": "message.duplicate",
+                                               "status": "ignored"})
+                return None
         _record(store, msg.channel, msg.chat_id, "in",
                 msg.text or ("<voice>" if msg.voice else ""), msg.message_id)
         reply: OutgoingMessage | None

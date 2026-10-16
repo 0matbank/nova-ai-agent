@@ -159,3 +159,15 @@ def test_a_busy_port_never_takes_core_down(tmp_path: Path) -> None:
     finally:
         blocker.close()
     assert not ok and "busy" in detail
+
+
+def test_the_page_reads_the_real_gpu_fields() -> None:
+    """Live finding: the page asked for vram_used_gb (does not exist) → 'VRAM ?/? GB'."""
+    import dataclasses
+
+    from core.health import GpuStatus
+    src = (APP / "dashboard" / "src" / "App.jsx").read_text(encoding="utf-8")
+    import re
+    used = set(re.findall(r"\bg\.([a-z_]+)", src))
+    fields = {f.name for f in dataclasses.fields(GpuStatus)}
+    assert used and used <= fields, used - fields

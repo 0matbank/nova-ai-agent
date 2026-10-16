@@ -126,8 +126,8 @@ function Overview({ go }) {
         <Meter label={`RAM ${pc.ram_used_gb.toFixed(1)}/${pc.ram_total_gb.toFixed(1)} GB`}
                pct={pc.ram_percent} />
         {pc.gpus.map((g, i) => (
-          <Meter key={i} label={`GPU ${g.name} · VRAM ${g.vram_used_gb?.toFixed?.(1) ?? "?"}/${g.vram_total_gb?.toFixed?.(1) ?? "?"} GB`}
-                 pct={g.util_percent ?? 0} />
+          <Meter key={i} label={`GPU ${g.name} · VRAM ${(g.mem_used_mb / 1024).toFixed(1)}/${(g.mem_total_mb / 1024).toFixed(1)} GB · ${g.temp_c}°C`}
+                 pct={g.mem_total_mb ? (g.mem_used_mb / g.mem_total_mb) * 100 : g.util_percent} />
         ))}
         {s.drives.map((d) => (
           <Meter key={d.drive} label={`${d.drive} ${d.free_gb} GB free of ${d.total_gb}`}
