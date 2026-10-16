@@ -1,5 +1,8 @@
 # WhatsApp — official Cloud API setup (Phase 21)
 
+> **Status: deferred by the owner (2026-10-16).** Optional integration, off by default
+> (`whatsapp.enabled: false`). Follow the steps below only if you decide to turn it on.
+
 Owner's choice (2026-10-16): Meta's official WhatsApp Business Cloud API, first with
 Meta's free **test number**. Your personal WhatsApp number is NOT moved or
 disconnected — it is only added as an allowed recipient.
