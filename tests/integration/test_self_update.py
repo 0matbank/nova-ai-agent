@@ -433,3 +433,14 @@ def test_supervised_means_the_supervisor_is_still_alive(monkeypatch) -> None:
     dead.wait()
     monkeypatch.setenv("NOVA_SUPERVISOR_PID", str(dead.pid))
     assert not supervised()                          # /update would strand Nova offline
+
+
+def test_a_stop_requested_during_startup_is_not_lost(tmp_path: Path) -> None:
+    import threading
+
+    from core.lifecycle import watch_stop_file
+    stop = tmp_path / "supervisor.stop"
+    stop.write_text("stop")                          # requested while still starting
+    seen = threading.Event()
+    watch_stop_file(seen.set, str(stop), every=0.05)
+    assert seen.wait(5) and not stop.exists()

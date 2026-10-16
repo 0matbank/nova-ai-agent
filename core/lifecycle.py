@@ -98,13 +98,17 @@ def head_commit(app_dir: Path) -> str:
 
 
 def watch_stop_file(on_stop: Callable[[], None], path: str | None = None,
-                    every: float = 0.5) -> threading.Thread | None:
-    """Call on_stop once when the stop file appears (it is removed first)."""
+                    every: float = 0.5, clear_stale: bool = False) -> threading.Thread | None:
+    """Call on_stop once when the stop file appears (it is removed first).
+    Whoever starts the process clears a stale file BEFORE starting it (Child.start, the
+    supervisor's own lock step): a stop requested while the process is still starting
+    must not be thrown away (live test: core ate it and was killed after 45 s)."""
     target = path or os.environ.get(ENV_STOP_FILE)
     if not target:
         return None
     stop_file = Path(target)
-    stop_file.unlink(missing_ok=True)                 # a stale request from last time
+    if clear_stale:
+        stop_file.unlink(missing_ok=True)             # a stale request from last time
 
     def loop() -> None:
         while True:

@@ -70,6 +70,7 @@ def main() -> int:
     if old is not None:
         print(f"another supervisor is running (pid {old})", file=sys.stderr)
         return 1
+    STOP.unlink(missing_ok=True)       # stale; from here on a stop request is kept
     LOCK.write_text(str(os.getpid()))
     python = venv_python(APP)
     sup = Supervisor(APP, load_settings(APP, python), python,
