@@ -30,6 +30,7 @@ PYWIN32 = ("win32", "win32com", "win32comext", "pythonwin", "pywin32_system32",
            "pywin32.pth", "pywin32.version.txt")
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 SCHTASKS = r"C:\Windows\System32\schtasks.exe"
+POWERSHELL = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
 
 
 def known_folders() -> dict[str, str]:
@@ -118,15 +119,18 @@ def check(cfg) -> bool:  # type: ignore[no-untyped-def]
         line(False, "install folder is WRITABLE by the normal user")
     except OSError:
         line(True, "install folder is read-only for the normal user")
-    # (/enable on an enabled task: harmless even if it were allowed)
-    try:
-        r = subprocess.run([SCHTASKS, "/change", "/tn", b.scheduled_task,  # noqa: S603
-                            "/enable"],
-                           capture_output=True, creationflags=NO_WINDOW, check=False,
-                           stdin=subprocess.DEVNULL, timeout=30)
-        line(r.returncode != 0, "the task cannot be changed without administrator rights")
-    except subprocess.TimeoutExpired:
-        line(True, "the task cannot be changed without administrator rights (prompted)")
+    # Re-register the UNCHANGED definition as the normal user: Windows must refuse, so
+    # nobody can point this highest-privilege task at another program. (Toggling
+    # enabled/disabled is allowed for the owner — that is no escalation.)
+    path, _, name = b.scheduled_task.rpartition("\\")
+    ps = (f"$t = Get-ScheduledTask -TaskPath '{path}\\' -TaskName '{name}'; "
+          "try { Set-ScheduledTask -InputObject $t -ErrorAction Stop | Out-Null; 'ALLOWED' } "
+          "catch { 'DENIED' }")
+    r = subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-Command", ps],  # noqa: S603
+                       capture_output=True, creationflags=NO_WINDOW, check=False,
+                       stdin=subprocess.DEVNULL, timeout=60)
+    line(r.stdout.decode("mbcs", "replace").strip() == "DENIED",
+         "the task's program cannot be changed without administrator rights")
     st = asyncio.run(client.ensure_running())
     line(st is not None, "broker answers on the pipe")
     if st is not None:

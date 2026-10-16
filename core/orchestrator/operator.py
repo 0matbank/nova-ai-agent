@@ -40,7 +40,10 @@ _log = get_logger("core")
 MAX_STEPS = 8
 # calls that change something — the verifier re-checks each one itself (plan §54)
 EFFECT_TOOLS = ("files.write", "files.mkdir", "files.copy", "files.move", "files.delete",
-                "app-control.open", "app-control.close")
+                "app-control.open", "app-control.close",
+                # Phase 22: admin work through the broker (its read-only ops are skipped)
+                "admin.service", "admin.firewall", "admin.package", "admin.power", "admin.task")
+READ_ONLY_OPS = ("query", "list", "cancel")
 # local planner stuck → the cloud planner (Antigravity → Gemini) gets these more steps
 ESCALATED_TASK_TYPE = "reasoning"
 ESCALATED_STEPS = 6
@@ -286,7 +289,8 @@ class OperatorAgent:
         step: dict[str, Any] = {
             "call": call, "ok": r.ok, "items": _items(r.data), "findings": findings[:20],
             "result": (r.summary + ("\n" + data if data else ""))[:RESULT_CHARS]}
-        if r.ok and (f"{skill}.{tool}" in EFFECT_TOOLS or "output" in (r.evidence or {})):
+        if r.ok and (f"{skill}.{tool}" in EFFECT_TOOLS or "output" in (r.evidence or {})) \
+                and not (skill == "admin" and params.get("op") in READ_ONLY_OPS):
             # Phase 18: what this call changed, for the verifier to check by itself
             step["effect"] = {"skill": skill, "tool": tool, "params": params,
                               "evidence": r.evidence}

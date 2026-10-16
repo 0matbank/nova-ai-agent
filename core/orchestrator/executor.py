@@ -239,7 +239,8 @@ class UserRequestExecutor:
             if done:
                 answer = f"{app}: {done[0] if result.ok else done[1]}\n({result.summary})"
         return {"kind": "skill", "skill": f"{skill}.{tool}", "ok": result.ok,
-                "answer": answer, "evidence": result.evidence, "app": params.get("app")}
+                "answer": answer, "evidence": result.evidence, "app": params.get("app"),
+                "params": dict(params)}
 
     async def _screen_question(self, ctx: TaskContext, lang: str) -> dict[str, Any]:
         """Plan §57 screen understanding: screenshot → vision AI answers the owner's
@@ -373,11 +374,17 @@ class UserRequestExecutor:
         proofs = [f"{len(calls)}টা tool-এর ফল থেকে উত্তর ✓" if bn
                   else f"answer grounded in {len(calls)} tool result(s) ✓"]
         bad = []
+        admin_bad = False
         for effect in ev.get("effects") or []:
             ok, proof = check_effect(effect, self._resolve)
             proofs.append(proof)
             if not ok:
                 bad.append(proof)
+                admin_bad |= effect.get("skill") == "admin"
+        if admin_bad:
+            # Phase 22: an admin change is never repeated on its own — the owner decides
+            return Verdict(False, "admin কাজের ফল PC-তে মেলেনি: " + "; ".join(bad),
+                           VerdictStatus.BLOCKED, tuple(proofs))
         if bad:
             # the agent said it was done, the PC says otherwise: do it again
             return Verdict(False, "যা বলা হয়েছে PC-তে তা মেলেনি: " + "; ".join(bad),
@@ -403,6 +410,16 @@ class UserRequestExecutor:
             return Verdict(ok, "" if ok else "process check মেলেনি",
                            VerdictStatus.PASS if ok else VerdictStatus.NEEDS_WORK, (proof,),
                            redo_from=None if ok else 2)
+        if skill.startswith("admin."):
+            # Phase 22: re-checked from Nova's own (non-elevated) session, not the broker's
+            # word; never redone automatically — another admin change needs a new approval
+            ok, proof = check_effect({"skill": "admin", "tool": skill.split(".", 1)[1],
+                                      "params": act.get("params") or {}, "evidence": ev},
+                                     self._resolve)
+            proofs = (proof, "broker: owner-এর approval নিজে যাচাই করেছে ✓") \
+                if ev.get("approval_id") else (proof,)
+            return Verdict(ok, "" if ok else "PC-তে ফল মেলেনি",
+                           VerdictStatus.PASS if ok else VerdictStatus.BLOCKED, proofs)
         return Verdict(True, "", VerdictStatus.PASS, (f"{skill} ✓",))
 
     async def _check_coding(self, ev: dict[str, Any]) -> Verdict:

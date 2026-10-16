@@ -25,4 +25,37 @@ async def run_on_broker(op: str, p: Params, target: str, env: ToolEnv) -> ToolRe
     evidence["broker_verified"] = True
     if result.get("approval_id") is not None:
         evidence["approval_id"] = result["approval_id"]
-    return ToolResult(True, str(result.get("summary", "done")), dict(evidence), evidence)
+    summary = bangla(op, params, evidence) or str(result.get("summary", "done"))
+    return ToolResult(True, summary, {**evidence, "broker_summary": result.get("summary")},
+                      evidence)
+
+
+def bangla(op: str, p: dict[str, Any], ev: dict[str, Any]) -> str:
+    """A clear owner-language line the planner can repeat as is (small models garble
+    'restart' etc. when they translate it themselves)."""
+    state = {"running": "চালু", "stopped": "বন্ধ"}.get(str(ev.get("state")), ev.get("state"))
+    if op == "service":
+        done = {"start": "চালু করা হয়েছে", "stop": "বন্ধ করা হয়েছে",
+                "restart": "রিস্টার্ট করা হয়েছে"}.get(p.get("op", ""))
+        return (f"✅ '{p['name']}' service {done} — এখন {state}" if done
+                else f"'{p['name']}' service এখন {state}")
+    if op == "firewall" and p.get("op") in ("add", "remove"):
+        if p["op"] == "remove":
+            return f"✅ Firewall rule 'Nova AI - {p['name']}' মুছে ফেলা হয়েছে"
+        what = "ব্লক" if p.get("rule_action") == "block" else "অনুমতি"
+        way = "incoming" if p.get("direction") == "in" else "outgoing"
+        return (f"✅ Firewall rule 'Nova AI - {p['name']}' যোগ হয়েছে — {way} "
+                f"{p.get('protocol')} port {p.get('port')} {what}")
+    if op == "power":
+        if p.get("op") == "cancel":
+            return ("✅ নির্ধারিত restart/shutdown বাতিল করা হয়েছে" if ev.get("cancelled")
+                    else "কোনো restart/shutdown নির্ধারিত ছিল না — কিছু বাতিল করার নেই")
+        what = "রিস্টার্ট" if p.get("op") == "restart" else "শাটডাউন"
+        mins = int(p.get("delay_seconds", 60)) // 60
+        return (f"✅ PC {mins} মিনিট পর {what} হবে। থামাতে লিখুন: restart cancel")
+    if op == "package":
+        return (f"✅ {p['id']} install হয়েছে" if ev.get("installed")
+                else f"✅ {p['id']} uninstall হয়েছে")
+    if op == "task":
+        return f"✅ {p['name']} সম্পন্ন (exit {ev.get('exit_code')})"
+    return ""

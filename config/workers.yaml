@@ -20,7 +20,7 @@ workers:
     # with `uv run python scripts/broker_install.py` (the owner clicks Yes on UAC).
     # The policy below is COPIED into the protected install — edits take effect
     # only after reinstalling.
-    enabled: false
+    enabled: true
     transport: named_pipe
     pipe_name: '\\.\pipe\personal-agent-broker'
     install_dir: 'C:\Program Files\Nova AI\broker'

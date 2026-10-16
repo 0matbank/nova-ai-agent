@@ -55,9 +55,67 @@ def check_effect(effect: dict[str, Any], resolve: Resolve) -> tuple[bool, str]:
         still = pids_alive(ev.get("still_running") or [])
         return not still, (f"{p.get('app')} বন্ধ ✓" if not still
                            else f"{p.get('app')} এখনো চলছে (pid {still}) ✗")
+    if tool.startswith("admin."):
+        return check_admin(tool, p, ev)
     out = ev.get("output")
     if out:
         # Phase 20 media / documents / archive / image: the new file is really there
         path = Path(str(out))
         return path.exists(), f"{path.name} {'আছে ✓' if path.exists() else 'নেই ✗'}"
     return True, f"{tool} (tool-confirmed)"
+
+
+# ------------------------------------------------------------ Phase 22: admin work
+# Checked from Nova's own normal (non-elevated) session — not the broker's word.
+
+def _system32() -> Path:
+    import os
+    return Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32"
+
+
+def _service_state(name: str) -> str | None:
+    try:
+        get = getattr(psutil, "win_service_get")      # Windows-only psutil API  # noqa: B009
+        return str(get(name).status())
+    except (AttributeError, psutil.Error, OSError):
+        return None
+
+
+def _rule_exists(name: str) -> bool | None:
+    import subprocess
+    try:
+        r = subprocess.run([str(_system32() / "netsh.exe"), "advfirewall", "firewall",  # noqa: S603
+                            "show", "rule", f"name={name}"], capture_output=True, timeout=30,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                           check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.returncode == 0 and name.encode() in r.stdout
+
+
+def check_admin(tool: str, p: dict[str, Any], ev: dict[str, Any]) -> tuple[bool, str]:
+    op = p.get("op")
+    if tool == "admin.service" and op in ("start", "stop", "restart"):
+        want = "stopped" if op == "stop" else "running"
+        state = _service_state(str(p.get("name")))
+        if state is None:
+            return True, f"{p.get('name')}: broker-confirmed ({ev.get('state')})"
+        return state == want, f"{p.get('name')} service {state} {'✓' if state == want else '✗'}"
+    if tool == "admin.firewall" and op in ("add", "remove"):
+        rule = f"Nova AI - {p.get('name')}"
+        exists = _rule_exists(rule)
+        if exists is None:
+            return True, f"'{rule}': broker-confirmed"
+        ok = exists == (op == "add")
+        return ok, f"firewall rule '{rule}' {'আছে' if exists else 'নেই'} {'✓' if ok else '✗'}"
+    if tool == "admin.package":
+        ok = ev.get("installed") is (op == "install")
+        return ok, f"{p.get('id')} {'installed' if ev.get('installed') else 'not installed'} " \
+                   f"(winget list) {'✓' if ok else '✗'}"
+    if tool == "admin.power" and op in ("restart", "shutdown"):
+        return bool(ev.get("scheduled")), (f"{op} {ev.get('delay_seconds')} s পরে scheduled "
+                                           "(cancel করা যায়) ✓")
+    if tool == "admin.task":
+        ok = ev.get("exit_code") == 0
+        return ok, f"{p.get('name')} exit {ev.get('exit_code')} {'✓' if ok else '✗'}"
+    return True, f"{tool} (read-only)"

@@ -8,6 +8,7 @@ tampered with, not allowlisted or during /lockdown is refused by the broker itse
 from __future__ import annotations
 
 import sqlite3
+import sys
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -20,6 +21,9 @@ from core.skills.api import PolicyDenied
 from tests.mocks.broker import FakeBackend, InProcessClient, make_broker
 from tests.mocks.skills import SkillEnv, make_skill_env
 
+# the admin skill exists on Windows only (the broker is Windows-only); its broker logic
+# is also covered platform-independently in tests/security/test_admin_broker.py
+pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows-only skill")
 
 @pytest.fixture
 def env(tmp_path: Path) -> Iterator[tuple[SkillEnv, FakeBackend, InProcessClient]]:
@@ -41,7 +45,8 @@ def test_status_is_green_and_shows_the_allowlist(env) -> None:  # type: ignore[n
 def test_approved_service_restart_runs_once_with_proof(env) -> None:  # type: ignore[no-untyped-def]
     s, be, _ = env
     q = s.call("admin", "service", {"name": "Spooler", "op": "query"})
-    assert q.ok and "running" in q.summary and s.tasks.buttons == []
+    assert q.ok and q.data["state"] == "running" and "চালু" in q.summary
+    assert s.tasks.buttons == []
     r, _ = s.call_with_approval("admin", "service", {"name": "Spooler", "op": "restart"})
     assert r is not None and r.ok
     assert be.controls == [("Spooler", "restart")]
@@ -56,8 +61,14 @@ def test_rejected_means_nothing_runs(env) -> None:  # type: ignore[no-untyped-de
     assert r is None and be.controls == []
 
 
-def test_service_outside_the_allowlist_is_refused_by_the_broker(env) -> None:  # type: ignore[no-untyped-def]
+def test_service_outside_the_allowlist_is_refused(env) -> None:  # type: ignore[no-untyped-def]
     s, be, _ = env
+    # Nova refuses before bothering the owner …
+    with pytest.raises(PolicyDenied, match="allowlist"):
+        s.call("admin", "service", {"name": "WinDefend", "op": "stop"})
+    assert s.tasks.buttons == []
+    # … and the broker refuses on its own even if core's list were wider than its own
+    s.runner.env.config.workers.workers.privileged_broker.services.append("WinDefend")
     r, _ = s.call_with_approval("admin", "service", {"name": "WinDefend", "op": "stop"})
     assert r is not None and not r.ok and "allowlist" in r.summary
     assert be.controls == []

@@ -161,6 +161,83 @@ def is_screen_question(text: str) -> bool:
     return bool(SCREEN_Q.search(text))
 
 
+# Phase 22: clear admin commands go straight to the admin skill (no AI planner — the
+# live drill showed a small planner turning "restart" into stop + start + restart).
+# Unclear ones ("7zip install koro") still go to the Windows Operator agent.
+SERVICE_ALIASES = {
+    "print spooler": "Spooler", "printer spooler": "Spooler", "spooler": "Spooler",
+    "windows time": "W32Time", "w32time": "W32Time", "bits": "BITS",
+    "windows update": "wuauserv", "wuauserv": "wuauserv",
+    "windows search": "WSearch", "wsearch": "WSearch",
+}
+_SVC_ALIAS = re.compile(r"\b(" + "|".join(re.escape(k) for k in sorted(
+    SERVICE_ALIASES, key=len, reverse=True)) + r")\b", re.IGNORECASE)
+_SVC_NAMED = re.compile(r"\b([A-Za-z][A-Za-z0-9_.-]{1,79})\s+service\b", re.IGNORECASE)
+_SVC_OP = [("restart", re.compile(r"\b(restart|reboot)\b|রিস্টার্ট", re.IGNORECASE)),
+           ("stop", re.compile(r"\b(stop|bondho|bondo|band|off)\b|বন্ধ", re.IGNORECASE)),
+           ("start", re.compile(r"\b(start|chalu|on)\b|চালু", re.IGNORECASE)),
+           ("query", re.compile(r"\b(status|obostha|cholche|running|check)\b|অবস্থা|চলছে",
+                                re.IGNORECASE))]
+_POWER = re.compile(r"\b(restart|reboot|shut\s*down|shutdown)\b|রিস্টার্ট|শাটডাউন",
+                    re.IGNORECASE)
+_PC = re.compile(r"\b(pc|computer|windows|laptop)\b|পিসি|কম্পিউটার", re.IGNORECASE)
+_CANCEL = re.compile(r"\b(cancel|thamao|batil|abort)\b|বাতিল|থামাও", re.IGNORECASE)
+_MINUTES = re.compile(r"(\d{1,2})\s*(min|minute|minit|মিনিট)", re.IGNORECASE)
+_PORT = re.compile(r"\b(\d{1,5}(?:-\d{1,5})?)\s*(no\.?\s*|number\s*)?(port|পোর্ট)|"
+                   r"(port|পোর্ট)\s*(\d{1,5}(?:-\d{1,5})?)\b", re.IGNORECASE)
+_FW = re.compile(r"\b(firewall|block|allow)\b|ফায়ারওয়াল", re.IGNORECASE)
+_FW_REMOVE = re.compile(r"\b(remove|delete|muche|sorao|sorie|tule|uthiye)\b|মুছে|সরাও",
+                        re.IGNORECASE)
+_FW_ALLOW = re.compile(r"\b(allow|khulo|khule|open|unblock)\b|খুলে|খোলো", re.IGNORECASE)
+ADMIN_TASKS = [
+    ("flush_dns", re.compile(r"\b(flush\s*dns|dns\s*(flush|cache\s*(clear|porishkar)))\b",
+                             re.IGNORECASE)),
+    ("time_resync", re.compile(r"\b(time|somoy|ghori)\s*(sync|resync|thik\s*koro)\b|"
+                               r"\btime\s*resync\b", re.IGNORECASE)),
+    ("defender_update", re.compile(r"\bdefender\b.*\bupdate\b|\bvirus\s*definition",
+                                   re.IGNORECASE)),
+    ("defender_quick_scan", re.compile(r"\b(defender\b.*\bscan|virus\s*scan|quick\s*scan)\b",
+                                       re.IGNORECASE)),
+]
+
+
+def admin_command(text: str) -> tuple[str, str, dict[str, Any]] | None:
+    """'print spooler restart koro' → admin.service; 'PC restart koro' → admin.power;
+    'restart cancel' → admin.power cancel; '9999 port block koro' → admin.firewall;
+    'dns flush koro' → admin.task. Parameters are filled by rules, never guessed."""
+    for name, rx in ADMIN_TASKS:
+        if rx.search(text):
+            return ("admin", "task", {"name": name})
+    if _POWER.search(text) and _CANCEL.search(text):
+        return ("admin", "power", {"op": "cancel"})
+    port = _PORT.search(text)
+    if port and _FW.search(text):
+        value = port.group(1) or port.group(5)
+        block = not _FW_ALLOW.search(text) or bool(re.search(r"\bblock\b|ব্লক", text, re.I))
+        proto = "UDP" if re.search(r"\budp\b", text, re.IGNORECASE) else "TCP"
+        out = bool(re.search(r"\b(out|outgoing|outbound|bahire)\b", text, re.IGNORECASE))
+        name = f"{'Block' if block else 'Allow'} {proto} {value} {'out' if out else 'in'}"
+        return ("admin", "firewall", {
+            "op": "remove" if _FW_REMOVE.search(text) else "add", "name": name,
+            "direction": "out" if out else "in", "rule_action": "block" if block else "allow",
+            "protocol": proto, "port": value})
+    alias = _SVC_ALIAS.search(text)
+    named = _SVC_NAMED.search(text)
+    service = SERVICE_ALIASES[alias.group(1).lower()] if alias else (
+        named.group(1) if named else None)
+    if service is not None:
+        op = next((o for o, rx in _SVC_OP if rx.search(text)), None)
+        if op is not None:
+            return ("admin", "service", {"name": service, "op": op})
+    if _POWER.search(text) and _PC.search(text) and not alias:
+        m = _MINUTES.search(text)
+        delay = min(max(int(m.group(1)) * 60, 60), 3600) if m else 60
+        op = "restart" if re.search(r"restart|reboot|রিস্টার্ট", text, re.IGNORECASE) \
+            else "shutdown"
+        return ("admin", "power", {"op": op, "delay_seconds": delay})
+    return None
+
+
 def is_creative(text: str) -> bool:
     """A creative edit of footage (Creative Director), not a single media operation:
     "ei video theke 30 second er reel banao", "trip.mp4 cinematic edit koro"."""
@@ -205,6 +282,9 @@ def classify_by_rules(text: str) -> Intent | None:
         app = app_command(text)
         if app is not None:
             return Intent("pc_control", 0.95, "rule", app, matched=app[2]["app"])
+        admin = admin_command(text)
+        if admin is not None:
+            return Intent("pc_control", 0.95, "rule", admin, matched=f"admin.{admin[1]}")
     for category, rx, skill in RULES:
         m = rx.search(text)
         if m:
