@@ -144,6 +144,18 @@ class VoiceSection(Strict):
     tts: TTSSection = TTSSection()
 
 
+class WhatsAppSection(Strict):
+    """Phase 21: secondary channel on the official WhatsApp Cloud API."""
+    enabled: bool = False
+    graph_version: str = "v21.0"
+    webhook_port: Annotated[int, Field(ge=1024, le=65535)] = 47803
+    # quick = Cloudflare quick tunnel (new address each start, re-registered with Meta);
+    # fixed = public_url points at this webhook already (own named tunnel)
+    tunnel: Literal["quick", "fixed"] = "quick"
+    public_url: str | None = None
+    cloudflared: str = "tools/cloudflared/cloudflared.exe"     # relative to the root
+
+
 class DefaultConfig(Strict):
     agent: AgentSection
     paths: PathsSection
@@ -152,6 +164,7 @@ class DefaultConfig(Strict):
     task_engine: TaskEngineSection
     voice: VoiceSection
     shutdown: ShutdownSection
+    whatsapp: WhatsAppSection = WhatsAppSection()
 
 
 # -------------------------------------------------------------- providers.yaml

@@ -87,3 +87,13 @@ voice:
 shutdown:
   graceful_timeout_seconds: 30
   worker_kill_after_seconds: 15
+
+# Phase 21 — WhatsApp on the official Cloud API (owner choice 2026-10-16). Off until
+# the owner's Meta app is set up (docs/WHATSAPP.md); secrets stay in secrets/.env.
+whatsapp:
+  enabled: false
+  graph_version: "v21.0"
+  webhook_port: 47803          # 127.0.0.1 only; Meta reaches it through the tunnel
+  tunnel: quick                # Cloudflare quick tunnel, re-registered with Meta each start
+  public_url: null
+  cloudflared: tools/cloudflared/cloudflared.exe

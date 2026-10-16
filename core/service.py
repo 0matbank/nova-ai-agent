@@ -26,6 +26,8 @@ from channels.telegram.alerts import TelegramAlertHandler
 from channels.telegram.api import TelegramAPI, TelegramAuthError, TelegramError
 from channels.telegram.auth import ChatWhitelist
 from channels.telegram.channel import TelegramChannel
+from channels.whatsapp.channel import PREFIX as WA_PREFIX
+from channels.whatsapp.channel import WhatsAppChannel
 from core.agents import Roster
 from core.bootstrap import EXIT_INVALID_CONFIG, EXIT_OK, AppContext, bootstrap
 from core.config import ConfigError
@@ -66,6 +68,7 @@ from core.voice.intake import CALLBACK_PREFIX as VOICE_PREFIX
 from core.voice.intake import VoiceIntake
 from core.voice.transcriber import Transcriber
 from core.voice.tts import GeminiTTS, Speaker, TTSBudget
+from core.whatsapp_service import start_whatsapp
 from models.router import ProviderRouter
 from models.router.circuit import ProviderHistory
 from providers.ollama_local import OllamaAdapter
@@ -175,7 +178,10 @@ async def run_core_service(
                 msg.text or ("<voice>" if msg.voice else ""), msg.message_id)
         reply: OutgoingMessage | None
         if msg.voice is not None:
-            reply = await voice.handle(msg, channel.api.download_file)
+            # Phase 21: a WhatsApp voice note is fetched from WhatsApp
+            download = (wa_channel.download if msg.channel == "whatsapp" and wa_channel
+                        else channel.api.download_file)
+            reply = await voice.handle(msg, download)
         else:
             reply = await router.handle(msg)
         if reply is not None:
@@ -190,7 +196,17 @@ async def run_core_service(
     # Attach the alert handler first so a failed migration is alerted too.
     alert = TelegramAlertHandler(channel, asyncio.get_running_loop())
     logging.getLogger(ROOT_LOGGER).addHandler(alert)
+    wa_channel: WhatsAppChannel | None = None
+
     async def send_and_record(chat_id: str, out: OutgoingMessage) -> None:
+        # Phase 21: a task that came in on WhatsApp is answered on WhatsApp
+        if chat_id.startswith(WA_PREFIX) and wa_channel is not None:
+            await wa_channel.send(chat_id, out)
+            _record(store, "whatsapp", chat_id, "out", out.text, None, out.task_id)
+            return
+        if chat_id.startswith(WA_PREFIX):            # WhatsApp is off: tell the owner here
+            await channel.broadcast(out)
+            return
         await channel.send(chat_id, out)
         _record(store, "telegram", chat_id, "out", out.text, None, out.task_id)
 
@@ -326,9 +342,18 @@ async def run_core_service(
         health.probes[f"{c.name.capitalize()} worker"] = monitor.probe(c.name)
     health.probes["Privileged broker"] = lambda: (True, "not built yet (Phase 22) — disabled")
     health.probes["AI providers"] = lambda: provider_summary(provider_router)
+    # Phase 21: WhatsApp (official Cloud API) — never blocks Telegram
+    wa_channel, wa_tasks = await start_whatsapp(cfg, ctx.secrets, handle, on_button,
+                                                channel.broadcast, stop)
+    if cfg.default.whatsapp.enabled:
+        health.probes["WhatsApp"] = lambda: (
+            (False, "not running — see the log") if wa_channel is None else
+            (True, "connected" + (" · webhook ok" if wa_channel.public_url else
+                                  " · webhook pending")) if wa_channel.connected or
+            wa_channel.public_url else (False, "webhook not registered yet"))
 
     _log.info("core service started", extra={"action": "service.start", "status": "ok"})
-    background: list[asyncio.Task[Any]] = [
+    background: list[asyncio.Task[Any]] = [*wa_tasks,
         asyncio.create_task(monitor.run(stop)),
         asyncio.create_task(_provider_health_loop(providers, stop, provider_router)),
         asyncio.create_task(transcriber.idle_loop(stop)),
