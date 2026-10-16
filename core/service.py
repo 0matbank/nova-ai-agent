@@ -197,12 +197,39 @@ async def _going_offline(channel: TelegramChannel, exiting: ExitRequest,
         _log.warning("going-offline notice not sent", extra={"action": "service.stop"})
 
 
+async def _get_me_when_online(api: TelegramAPI, stop: asyncio.Event) -> dict[str, Any] | None:
+    """Phase 25 PC-restart finding: right after Windows login the network is often not
+    up yet. A network error is not a bad token — wait for the network (backoff) instead
+    of exiting; only TelegramAuthError ends the start."""
+    delay, warned = 2.0, False
+    while not stop.is_set():
+        try:
+            me: dict[str, Any] = await api.get_me()
+            if warned:
+                _log.info("network is up — Telegram reachable",
+                          extra={"action": "telegram.getMe", "status": "ok"})
+            return me
+        except TelegramAuthError:
+            raise
+        except TelegramError as e:
+            if not warned:
+                _log.warning(f"Telegram not reachable yet ({e}) — waiting for the network",
+                             extra={"action": "telegram.getMe", "status": "waiting"})
+                warned = True
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(stop.wait(), timeout=delay)
+            delay = min(delay * 2, 30.0)
+    return None
+
+
 async def run_core_service(
     ctx: AppContext, stop: asyncio.Event, api: TelegramAPI, whitelist: ChatWhitelist,
     provider_registry: ProviderRegistry | None = None,
     exit_request: ExitRequest | None = None,
 ) -> None:
-    me = await api.get_me()   # fails fast on a bad token
+    me = await _get_me_when_online(api, stop)   # a bad token still fails at once
+    if me is None:                               # stopped while waiting for the network
+        return
     _log.info(f"telegram bot @{me.get('username')} authenticated",
               extra={"action": "telegram.getMe", "status": "ok"})
     cfg = ctx.config
@@ -590,9 +617,10 @@ def main() -> int:
         except TelegramAuthError:
             return EXIT_TELEGRAM_AUTH
         except TelegramError as e:
+            # not a sign-in problem: an ordinary failure, restarted quickly
             _log.error(f"telegram startup failed: {e}", extra={"action": "service.start",
                                                               "status": "error"})
-            return EXIT_TELEGRAM_AUTH
+            return 1
         return exiting.code
 
     try:

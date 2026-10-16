@@ -478,3 +478,36 @@ def test_a_message_redelivered_after_a_crash_is_not_done_twice(config_dir: Path,
     engine.dispose()
     assert len(tasks) == 1
     assert not [t for t in again.texts_to(OWNER) if "Task #" in t]
+
+
+def test_start_waits_for_the_network_after_a_pc_restart() -> None:
+    """Phase 25 PC-restart finding: getMe hit ConnectError right after login and core
+    exited as if the token were bad (supervisor: 5 min backoff)."""
+    from channels.telegram.api import TelegramAuthError, TelegramTransientError
+    from core.service import _get_me_when_online
+
+    class Api:
+        def __init__(self, failures: list[Exception]) -> None:
+            self.failures, self.calls = failures, 0
+
+        async def get_me(self) -> dict:
+            self.calls += 1
+            if self.failures:
+                raise self.failures.pop(0)
+            return {"username": "nova"}
+
+    import core.service as svc
+    real_wait = asyncio.wait_for
+
+    async def fast_wait(aw, timeout):  # type: ignore[no-untyped-def]
+        return await real_wait(aw, timeout=0.01)
+    svc.asyncio.wait_for = fast_wait  # type: ignore[assignment]
+    try:
+        api = Api([TelegramTransientError("ConnectError"), TelegramTransientError("dns")])
+        me = asyncio.run(_get_me_when_online(api, asyncio.Event()))  # type: ignore[arg-type]
+        assert me == {"username": "nova"} and api.calls == 3
+        bad = Api([TelegramAuthError("401")])
+        with pytest.raises(TelegramAuthError):
+            asyncio.run(_get_me_when_online(bad, asyncio.Event()))  # type: ignore[arg-type]
+    finally:
+        svc.asyncio.wait_for = real_wait  # type: ignore[assignment]
