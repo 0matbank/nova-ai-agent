@@ -23,6 +23,10 @@ from core.supervisor.supervisor import (  # noqa: E402
 
 
 def main() -> int:
+    # -I ignores PYTHONIOENCODING: never let a console code page kill the supervisor
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser()
     ap.add_argument("--quiet", action="store_true", help="log only to the log file")
     args = ap.parse_args()

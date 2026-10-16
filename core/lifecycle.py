@@ -25,13 +25,41 @@ EXIT_UPDATE = 76
 ENV_SUPERVISED = "NOVA_SUPERVISED"
 ENV_STOP_FILE = "NOVA_STOP_FILE"
 ENV_HEALTH_FILE = "NOVA_HEALTH_FILE"
+ENV_SUPERVISOR_PID = "NOVA_SUPERVISOR_PID"
 UPDATE_REQUEST = "update-request.json"
 UPDATE_RESULT = "update-result.json"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
+def pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":                 # (os.kill(pid, 0) would send Ctrl+C on Windows)
+        import ctypes
+        kernel32 = getattr(ctypes, "windll").kernel32  # noqa: B009 - Windows-only attribute
+        handle = kernel32.OpenProcess(0x1000, False, pid)   # QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+            return bool(ok) and code.value == 259                # STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
 def supervised() -> bool:
-    return os.environ.get(ENV_SUPERVISED) == "1"
+    """Started by the supervisor AND that supervisor is still running (a dead one
+    could not bring Nova back after /update or /restart-agent)."""
+    if os.environ.get(ENV_SUPERVISED) != "1":
+        return False
+    pid = os.environ.get(ENV_SUPERVISOR_PID)
+    return pid is None or (pid.isdigit() and pid_alive(int(pid)))
 
 
 def run_dir(data_dir: Path) -> Path:

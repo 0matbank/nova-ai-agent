@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -23,7 +24,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from core.lifecycle import EXIT_RESTART, EXIT_UPDATE, read_json, run_dir
+from core.lifecycle import ENV_SUPERVISOR_PID, EXIT_RESTART, EXIT_UPDATE, read_json, run_dir
 from core.supervisor.process import Child
 from core.supervisor.updater import Hooks, Plan, apply_update, read_request
 
@@ -105,15 +106,23 @@ class Supervisor:
                                        health=health))
         self.alerted: set[str] = set()
         self.ctrl_handler: object = None
+        # children check that their supervisor still runs before /update or /restart
+        self.child_env = {ENV_SUPERVISOR_PID: str(os.getpid())}
 
     # ------------------------------------------------------------ helpers
 
     def log(self, text: str) -> None:
+        """Never raises: a console that cannot print '→' once killed the supervisor
+        right after a successful update (live test 2026-10-16)."""
         line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {text}"
-        with self._log_file.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        try:
+            with self._log_file.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except OSError:
+            pass
         if self._external_log is not None:
-            self._external_log(line)
+            with contextlib.suppress(Exception):      # the file log above is the record
+                self._external_log(line)
 
     def child(self, name: str) -> Child:
         return next(c for c in self.children if c.name == name)
@@ -136,7 +145,7 @@ class Supervisor:
     def start_all(self) -> None:
         for c in self.children:
             if not c.running:
-                c.start()
+                c.start(self.child_env)
                 self.log(f"started {c.name} (pid {c.proc.pid if c.proc else '?'})")
 
     def stop_all(self) -> None:
@@ -218,23 +227,31 @@ class Supervisor:
 
     # ------------------------------------------------------------ main loop
 
+    def tick(self) -> None:
+        for c in list(self.children):
+            if c.proc is None:
+                if time.time() >= c.next_start and not self.stopping.is_set():
+                    c.start(self.child_env)
+                    self.log(f"restarted {c.name} (pid {c.proc.pid if c.proc else '?'})")
+                continue
+            code = c.poll()
+            if code is None:
+                continue
+            if c.name == "core":
+                self.on_core_exit(code)
+            else:
+                self.crashed(c, code)
+
     def run(self) -> int:
         self.log(f"supervisor started (pid {os.getpid()}, python {self.python})")
         self.start_all()
         while not self.stopping.is_set():
-            for c in list(self.children):
-                if c.proc is None:
-                    if time.time() >= c.next_start and not self.stopping.is_set():
-                        c.start()
-                        self.log(f"restarted {c.name} (pid {c.proc.pid if c.proc else '?'})")
-                    continue
-                code = c.poll()
-                if code is None:
-                    continue
-                if c.name == "core":
-                    self.on_core_exit(code)
-                else:
-                    self.crashed(c, code)
+            try:
+                self.tick()
+            except Exception:  # noqa: BLE001 - the supervisor must outlive any one event
+                import traceback
+                self.log("supervisor error (continuing):\n" + traceback.format_exc())
+                self.stopping.wait(5.0)
             self.stopping.wait(1.0)
         self.stop_all()
         self.log("supervisor stopped")

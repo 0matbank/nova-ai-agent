@@ -393,3 +393,43 @@ def test_crashing_child_backs_off_and_alerts_once(tmp_path: Path, monkeypatch) -
     assert delays == [2, 5, 15, 60] and len(alerts) == 1
     sup.crashed(core, 2)                                         # bad config: slow down
     assert core.next_start - time.time() > 250
+
+
+# ---------------------------------- live-test regression (2026-10-16): the supervisor
+# died printing "→" to a cp1252 console right after a successful update
+
+def test_supervisor_survives_logging_and_event_errors(tmp_path: Path, monkeypatch) -> None:
+    from core.supervisor.supervisor import Supervisor
+
+    def cp1252_console(line: str) -> None:
+        line.encode("cp1252")                       # raises on "→"
+    settings = {"data_dir": str(tmp_path / "data"), "logs_dir": str(tmp_path / "logs"),
+                "secrets_dir": str(tmp_path / "s"), "desktop": False, "browser": False}
+    sup = Supervisor(tmp_path, settings, Path(sys.executable), log=cp1252_console)
+    sup.log("update OK: 0bf77642 → 80b1df79")      # must not raise
+    assert "→" in (tmp_path / "logs" / "supervisor" / "supervisor.log").read_text("utf-8")
+    monkeypatch.setattr(sup, "start_all", lambda: None)
+    monkeypatch.setattr(sup, "stop_all", lambda: None)
+    ticks = []
+
+    def tick() -> None:
+        ticks.append(1)
+        if len(ticks) == 1:
+            raise RuntimeError("one bad event")
+        sup.stopping.set()
+    monkeypatch.setattr(sup, "tick", tick)
+    monkeypatch.setattr(sup.stopping, "wait", lambda t=None: sup.stopping.is_set())
+    assert sup.run() == 0 and len(ticks) == 2       # kept going after the error
+    assert "one bad event" in (tmp_path / "logs" / "supervisor" / "supervisor.log").read_text(
+        "utf-8")
+
+
+def test_supervised_means_the_supervisor_is_still_alive(monkeypatch) -> None:
+    from core.lifecycle import supervised
+    monkeypatch.setenv("NOVA_SUPERVISED", "1")
+    monkeypatch.setenv("NOVA_SUPERVISOR_PID", str(os.getpid()))
+    assert supervised()
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])  # noqa: S603
+    dead.wait()
+    monkeypatch.setenv("NOVA_SUPERVISOR_PID", str(dead.pid))
+    assert not supervised()                          # /update would strand Nova offline
