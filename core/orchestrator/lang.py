@@ -28,7 +28,9 @@ BANGLISH = {
 
 # "C:\Users\me\Downloads", "D:/work/x.txt", "\\server\share": folder names say
 # nothing about the owner's language (Phase 16: file requests carry paths)
-PATH_RX = _PATH = re.compile(r"(?:[a-zA-Z]:|\\\\|~)[\\/][^\s\"']*|(?:[\w.-]+[\\/]){2,}[\w.-]*")
+# POSIX absolute paths too ("/tmp/x/a.mp4") — tests and a future Linux worker
+PATH_RX = _PATH = re.compile(r"(?:[a-zA-Z]:|\\\\|~)[\\/][^\s\"']*|(?<![\w.])/(?:[\w.-]+/)+[\w.-]+"
+                             r"|(?:[\w.-]+[\\/]){2,}[\w.-]*")
 
 
 def reply_language(text: str) -> str:
