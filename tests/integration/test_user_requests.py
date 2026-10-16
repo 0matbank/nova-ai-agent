@@ -101,10 +101,10 @@ def test_screenshot_request_sends_photo(tmp_path: Path) -> None:
 
 def test_not_yet_capability_is_honest(tmp_path: Path) -> None:
     s, local = setup(tmp_path)
-    tid = submit(s, "kal sokal 9 tay amake remind koro")
+    tid = submit(s, "amar facebook page e ekta reel post koro")
     run_all(s)
     t = s.tasks.store.get(tid)
-    assert t.state is TaskState.COMPLETED and "Phase 19" in t.result_summary
+    assert t.state is TaskState.COMPLETED and "V2" in t.result_summary
     assert local.requests == []
 
 

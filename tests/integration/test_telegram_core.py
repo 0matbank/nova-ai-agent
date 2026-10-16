@@ -304,9 +304,9 @@ def test_service_end_to_end(config_dir: Path, runtime_root: Path) -> None:
     assert [c["command"] for c in fake.commands] == [
         "status", "tasks", "task", "cancel", "pause", "resume", "screenshot", "pc", "skills",
         "agents", "logs", "lockdown",
-        "help", "memory"]
+        "help", "memory", "schedules"]
     [reply] = fake.texts_to(OWNER)
-    assert "✅ Database: ok (schema 004)" in reply
+    assert "✅ Database: ok (schema 005)" in reply
     assert "✅ Telegram: connected" in reply and "✅ Config: valid" in reply
     assert fake.texts_to(STRANGER) == []
     core_log = (runtime_root / "logs/core/core.log").read_text("utf-8")

@@ -13,6 +13,7 @@ from channels.base import IncomingMessage, OutgoingMessage
 from core.health import format_duration, format_pc_status, pc_status
 from core.orchestrator.agent_commands import AgentCommands
 from core.orchestrator.log_commands import LogCommands
+from core.orchestrator.schedule_commands import ScheduleCommands
 from core.orchestrator.screen_commands import ScreenCommands
 from core.orchestrator.security_commands import SecurityCommands
 from core.orchestrator.skill_commands import SkillCommands
@@ -23,6 +24,7 @@ ALL_COMMANDS = (
     "/status", "/tasks", "/task", "/cancel", "/pause", "/resume", "/screenshot",
     "/pc", "/skills", "/agents", "/logs", "/restart-agent", "/update", "/lockdown", "/help",
     "/memory",                      # Phase 17 addition: what Nova keeps about each project
+    "/schedules",                   # Phase 19 addition: scheduled jobs (plan §39)
 )
 
 COMMAND_DESCRIPTIONS = {
@@ -38,6 +40,7 @@ COMMAND_DESCRIPTIONS = {
     "/logs": "সাম্প্রতিক কাজের log (audit): /logs বা /logs 30",
     "/agents": "Specialist ও project agent-দের তালিকা",
     "/memory": "Project memory: /memory <project> (মুছতে: forget <id>)",
+    "/schedules": "Schedule-এর তালিকা (বাতিল: /schedules cancel <id>)",
     "/lockdown": "Emergency: সব dangerous কাজ বন্ধ (off দিলে খোলে)",
     "/help": "সব command-এর তালিকা",
 }
@@ -67,7 +70,8 @@ class CommandRouter:
                  skills: SkillCommands | None = None,
                  screen: ScreenCommands | None = None,
                  logs: LogCommands | None = None,
-                 agents: AgentCommands | None = None) -> None:
+                 agents: AgentCommands | None = None,
+                 schedules: ScheduleCommands | None = None) -> None:
         self.started_at = time.time()
         self.disk_path = disk_path
         self.health = health
@@ -95,6 +99,8 @@ class CommandRouter:
         if agents is not None:
             self._handlers["/agents"] = agents.agents
             self._handlers["/memory"] = agents.memory_cmd
+        if schedules is not None:
+            self._handlers["/schedules"] = schedules.schedules
 
     def _safe_mode(self) -> OutgoingMessage:
         return OutgoingMessage(SAFE_MODE_REPLY.format(reason=self.safe_mode_reason or "-"))

@@ -31,8 +31,10 @@ from core.orchestrator.coding import CodingFlow, git
 from core.orchestrator.context import for_request
 from core.orchestrator.lang import reply_language
 from core.orchestrator.operator import OperatorAgent
+from core.orchestrator.schedule_route import schedule_request
 from core.queue.engine import TaskContext, Verdict, VerdictStatus
 from core.router.intent import Intent, IntentRouter, is_screen_question
+from core.scheduler import ScheduleStore
 from core.skills.runner import SkillRunner
 from core.verifier import check_effect
 from models.router import ProviderRouter
@@ -60,7 +62,6 @@ NOT_YET = {
     "browser": "Phase 11 (Playwright MCP — জটিল/multi-step browsing)",
     "pc_control": "Phase 16 (Windows Operator agent)",
     "files": "Phase 16 (File & Document agent)",
-    "reminder": "Phase 19 (Scheduler)",
     "document": "Phase 20 (Document skills)",
     "social": "V2 (Social/Growth modules)",
     "communication": "V2 (Email/WhatsApp integrations)",
@@ -74,11 +75,13 @@ class ActionFailed(RuntimeError):
 class UserRequestExecutor:
     def __init__(self, intents: IntentRouter, providers: ProviderRouter,
                  skills: SkillRunner | None, roster: Roster | None = None,
-                 memory: ProjectMemory | None = None) -> None:
+                 memory: ProjectMemory | None = None,
+                 schedules: ScheduleStore | None = None) -> None:
         self.intents = intents
         self.providers = providers
         self.skills = skills
         self.memory = memory            # Phase 17: project memory (None = not kept)
+        self.schedules = schedules      # Phase 19: scheduler (None = not available)
         # Phase 16: specialist + project agents (from the config the skills run with)
         self.roster = roster if roster is not None or skills is None else \
             Roster.load(skills.env.config)
@@ -194,6 +197,13 @@ class UserRequestExecutor:
         if a.route in ("git", "project_test", "project_info",
                        "project_remember") and a.project is None:
             return project_agent.which_project(self.roster, lang)
+        if a.route == "schedule":
+            if self.schedules is None:
+                return {"kind": "not_yet", "answer": (
+                    "⏰ Scheduler এখন চালু নেই (database চালু হয়নি), তাই schedule রাখতে পারলাম "
+                    "না।" if lang == "bn" else
+                    "⏰ The scheduler is not running (no database), so I could not save it.")}
+            return schedule_request(ctx, self.schedules, cfg.default.agent.timezone, lang)
         if a.route == "project_remember":
             if self.memory is None:
                 return None
@@ -298,6 +308,14 @@ class UserRequestExecutor:
             return Verdict(True, "asked the owner", VerdictStatus.LIMITED)
         if kind == "operator":
             return self._check_operator(ev, bn)
+        if kind == "schedule" and self.schedules is not None:
+            # Phase 19: the job is really in the DB (so it survives a restart)
+            job = self.schedules.get(int(ev.get("schedule_id", 0)))
+            ok = job is not None and job.enabled
+            return Verdict(ok, "" if ok else "schedule DB-তে পাওয়া যায়নি",
+                           VerdictStatus.PASS if ok else VerdictStatus.NEEDS_WORK,
+                           (f"schedule #{ev.get('schedule_id')} DB-তে আছে ✓",) if ok else (),
+                           redo_from=None if ok else 2)
         if kind == "project":
             if "memory_id" in ev:
                 return Verdict(bool(act.get("ok")), "", VerdictStatus.PASS, (

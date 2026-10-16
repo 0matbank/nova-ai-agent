@@ -166,6 +166,30 @@ class AgentRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
 
+class Schedule(Base):
+    """Plan §39 (Phase 19): a job that runs later, again and again, or when a condition
+    holds. Lives in the DB, so it survives a restart."""
+    __tablename__ = "schedules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(20))             # once|delayed|recurring|condition
+    action: Mapped[str] = mapped_column(String(20))           # task | remind
+    what: Mapped[str] = mapped_column(Text)                   # task text / reminder text
+    rule: Mapped[dict[str, Any] | None] = mapped_column(JSON)       # recurrence
+    condition: Mapped[dict[str, Any] | None] = mapped_column(JSON)  # condition jobs
+    next_run_at: Mapped[datetime | None] = mapped_column(UTCDateTime, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    channel: Mapped[str] = mapped_column(String(20))
+    chat_id: Mapped[str] = mapped_column(String(64))
+    source: Mapped[str | None] = mapped_column(String(100), index=True)  # owner | config:<n>
+    request_text: Mapped[str | None] = mapped_column(Text)    # what the owner wrote
+    run_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_run_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    last_task_id: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
 class Approval(Base):
     __tablename__ = "approvals"
 

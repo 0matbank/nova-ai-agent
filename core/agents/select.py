@@ -65,7 +65,7 @@ _LEADS: dict[str, tuple[str, str]] = {
     "browser": ("browser", "browser"),
     "coding": ("developer", "coding"),
     "document": ("file_document", "not_yet"),
-    "reminder": ("automation", "not_yet"),
+    "reminder": ("automation", "schedule"),          # Phase 19
     "social": ("master_orchestrator", "not_yet"),
     "communication": ("master_orchestrator", "not_yet"),
     "project": ("master_orchestrator", "project_info"),
@@ -78,7 +78,7 @@ class Assignment:
     agents: tuple[str, ...]           # active agents (lead first), incl. verifier
     route: str                        # answer | skill | operator | coding | git | browser |
                                       # project_test | project_info (an answer with the
-                                      # project's context) | project_remember | not_yet
+                                      # project's context) | project_remember | schedule | not_yet
     project: str | None
     provider_task_type: str | None
     skills: tuple[str, ...]           # allowlist: "skill" or "skill.tool"
@@ -158,7 +158,8 @@ def assign(intent: Intent, text: str, cfg: AppConfig, roster: Roster) -> Assignm
         # "notepad kholo", "pc status": a fixed skill call, no AI needed (§45, §49.1)
         route = "skill"
         reason += f"; deterministic {intent.skill[0]}.{intent.skill[1]}"
-    if route in ("skill", "project_test", "git", "not_yet", "project_remember"):
+    if route in ("skill", "project_test", "git", "not_yet", "project_remember",
+                 "schedule"):
         ptype = None
     if category == "screenshot" and intent.skill is None:
         ptype = "vision"                             # a question about the screen (§57)

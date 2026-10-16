@@ -42,6 +42,7 @@ from core.orchestrator.agent_commands import AgentCommands
 from core.orchestrator.commands import CommandRouter, HealthSources
 from core.orchestrator.executor import UserRequestExecutor
 from core.orchestrator.log_commands import LogCommands
+from core.orchestrator.schedule_commands import ScheduleCommands
 from core.orchestrator.screen_commands import ScreenCommands
 from core.orchestrator.security_commands import SecurityCommands
 from core.orchestrator.skill_commands import SkillCommands
@@ -54,6 +55,7 @@ from core.queue.engine import TaskEngine
 from core.queue.store import TaskStore, TaskView
 from core.resources import ResourcePressure
 from core.router.intent import IntentRouter
+from core.scheduler import Scheduler, ScheduleStore
 from core.skills.api import ToolEnv
 from core.skills.ledger import SideEffectLedger
 from core.skills.paths import PathPolicy
@@ -248,6 +250,8 @@ async def run_core_service(
     # Phase 16 roster + Phase 17 project memory (in the agent DB, survives restarts)
     roster = Roster.load(cfg)
     project_memory = ProjectMemory(db_sessions) if db_sessions is not None else None
+    # Phase 19 scheduler: jobs in the DB, so they survive a restart (plan §39)
+    schedule_store = ScheduleStore(db_sessions) if db_sessions is not None else None
     if engine is not None and security is not None and approvals is not None:
         # plan §9.1: side effects go through the idempotency ledger
         skill_runner = (SkillRunner(registry, ToolEnv(cfg, PathPolicy(cfg), tool_workers),
@@ -255,7 +259,7 @@ async def run_core_service(
                         if registry is not None and db_sessions is not None else None)
         engine.register("user_request", UserRequestExecutor(
             IntentRouter(provider_router), provider_router, skill_runner, roster,
-            project_memory))
+            project_memory, schedule_store))
 
     # Voice (plan §7): transcript → the same path as typed text.
     wcfg = cfg.models.whisper
@@ -299,7 +303,9 @@ async def run_core_service(
                            LogCommands(db_sessions, cfg.default.agent.timezone)
                            if db_sessions is not None else None,
                            AgentCommands(cfg, roster, project_memory,
-                                         cfg.default.agent.timezone))
+                                         cfg.default.agent.timezone),
+                           ScheduleCommands(schedule_store, cfg.default.agent.timezone)
+                           if schedule_store is not None else None)
     health.probes.update(build_probes(ctx, channel))
     health.probes["Database"] = database_probe(store, revision, safe_reason)
     health.probes["Task engine"] = engine_probe(engine)
@@ -341,6 +347,12 @@ async def run_core_service(
         background.append(asyncio.create_task(watcher.run(stop)))
     if approvals is not None:
         background.append(asyncio.create_task(_expiry_sweeper(approvals, stop)))
+    if schedule_store is not None and store is not None and engine is not None:
+        scheduler = Scheduler(schedule_store, store, notifier, cfg.default.agent.timezone,
+                              wake=engine.wake)
+        owner = sorted(channel.whitelist.chat_ids)
+        scheduler.sync_static(cfg.schedules.schedules, owner[0] if owner else None)
+        background.append(asyncio.create_task(scheduler.run(stop)))
     try:
         await channel.run(stop)
     finally:

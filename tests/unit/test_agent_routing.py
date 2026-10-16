@@ -48,7 +48,12 @@ CASES = [
     ("aajker news ki", "research", "answer", None, "current_info"),
     ("m3u8 playlist er code e bug fix koro", "developer", "coding", "stream-doctor", "coding"),
     ("prothomalo.com kholo", "browser", "browser", None, "planning"),
-    ("kal sokal 8 tay remind koro", "automation", "not_yet", None, None),
+    ("kal sokal 8 tay remind koro", "automation", "schedule", None, None),
+    # Phase 19: the time wins over the action words
+    ("protidin raat 11 tay pc status bolo", "automation", "schedule", None, None),
+    # …but a question that mentions a time is still a question (the answer tier then
+    # decides whether it needs live information)
+    ("ajke 5 tay ki match ache?", "master_orchestrator", "answer", None, "quick_answer"),
     ("git demo project ta ki?", "master_orchestrator", "project_info", "git-demo",
      "quick_answer"),
     ("বাংলাদেশের রাজধানী কী?", "master_orchestrator", "answer", None, "quick_answer"),

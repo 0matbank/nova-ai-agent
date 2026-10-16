@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.scheduler.parse import looks_scheduled
 from core.skills.urls import URL_RX
 from providers.provider_base import Limits, ProviderRequest
 
@@ -143,6 +144,10 @@ def is_screen_question(text: str) -> bool:
 
 
 def classify_by_rules(text: str) -> Intent | None:
+    if looks_scheduled(text):
+        # Phase 19: "protidin raat 11 tay pc status bolo" is a job for later, not a
+        # status request now — the time wins over the action words
+        return Intent("reminder", 0.95, "rule", None, matched="schedule")
     if is_screen_question(text) and not URL_RX.search(text):
         # plan §57: a question ABOUT the screen → screenshot + vision answer
         return Intent("screenshot", 0.9, "rule", None, matched="screen question")
