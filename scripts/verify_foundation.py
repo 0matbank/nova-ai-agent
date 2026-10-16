@@ -20,7 +20,9 @@ REPO_DIRS = [
     "core/orchestrator", "core/router", "core/planner", "core/executor",
     "core/verifier", "core/permissions", "core/queue",
     "channels/telegram", "channels/whatsapp", "channels/local",
-    "agents/master", "agents/developer", "agents/windows", "agents/browser",
+    # Phase 16: agent folders carry the roster names from config/agents.yaml
+    "agents/master_orchestrator", "agents/developer", "agents/windows_operator",
+    "agents/browser",
     "agents/research", "agents/devops", "agents/media", "agents/security",
     "agents/verifier", "agents/projects",
     "skills", "models/router",

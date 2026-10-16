@@ -273,6 +273,10 @@ class AgentEntry(Strict):
     enabled: bool
     kind: Literal["reasoning"]
     task_types: list[str]
+    # the kind of AI work — the provider router picks the provider (plan §8.8, §8.11)
+    provider_task_type: str | None = None
+    # the only skills this agent may call: "skill" or "skill.tool" (plan §11)
+    skills: list[str] = []
 
 
 class AgentsConfig(Strict):
@@ -462,6 +466,11 @@ class ProjectProfile(Strict):
     deploy_method: str | None = None
     knowledge_dir: str | None = None
     approval_required_for: list[str] = []
+    # Phase 16 project specialist: other names the owner uses for it, domain words
+    # that point to it even without its name, and the role that does its code work
+    aliases: list[str] = []
+    keywords: list[str] = []
+    specialist_role: str = "developer"
 
 
 # ------------------------------------------------------------------ aggregate
@@ -479,6 +488,25 @@ class AppConfig(Strict):
     resources: ResourcesConfig
     schedules: SchedulesConfig
     projects: dict[str, ProjectProfile]
+
+    @model_validator(mode="after")
+    def _agents_route_to_known_things(self) -> AppConfig:
+        known_types = set(self.providers.task_budgets)
+        for p in self.providers.providers.values():
+            known_types |= set(p.priority)
+        for name, a in self.agents.agents.items():
+            if a.provider_task_type is not None and a.provider_task_type not in known_types:
+                raise ValueError(f"agent '{name}': unknown provider_task_type "
+                                 f"{a.provider_task_type!r}")
+            for s in a.skills:
+                if s.split(".")[0] not in self.skills.skills:
+                    raise ValueError(f"agent '{name}': unknown skill {s!r}")
+        for key, proj in self.projects.items():
+            role = self.agents.agents.get(proj.specialist_role)
+            if role is None or "coding" not in role.task_types:
+                raise ValueError(f"project '{key}': specialist_role "
+                                 f"{proj.specialist_role!r} is not a coding agent")
+        return self
 
     def path(self, name: str) -> Path:
         """Absolute runtime path for a `paths.*` entry, e.g. path('logs_dir')."""

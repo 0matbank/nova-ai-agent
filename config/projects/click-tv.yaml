@@ -10,3 +10,7 @@ test_command: null
 deploy_method: null
 knowledge_dir: project-knowledge/click-tv
 approval_required_for: [git.push_production, deploy]
+# Phase 16 project specialist (agents/projects/click-tv/AGENT.md)
+aliases: [clicktv, click tv app, ক্লিক টিভি]
+keywords: []
+specialist_role: frontend_ui

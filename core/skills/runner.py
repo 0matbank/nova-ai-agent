@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from core.log import get_logger, redact
 from core.permissions.audit import AuditTrail
 from core.queue.engine import TaskBlocked, TaskContext
-from core.skills.api import ToolEnv, ToolResult
+from core.skills.api import PolicyDenied, ToolEnv, ToolResult
 from core.skills.ledger import DONE, PENDING, SideEffectLedger, effect_key, is_side_effect
 from core.skills.registry import SkillError, SkillRegistry
 
@@ -44,6 +44,11 @@ class SkillRunner:
 
     async def invoke(self, ctx: TaskContext, skill: str, tool: str,
                      params: dict[str, Any]) -> ToolResult:
+        allowed = getattr(ctx, "allowed_skills", None)
+        if allowed is not None and skill not in allowed and f"{skill}.{tool}" not in allowed:
+            # plan §11 / Phase 16: an agent works only with the skills it was given
+            who = getattr(ctx, "agent", "") or "current"
+            raise PolicyDenied(f"the {who} agent may not use {skill}.{tool}")
         sk, t = self.registry.get(skill, tool)
         try:
             p = t.params.model_validate(params)

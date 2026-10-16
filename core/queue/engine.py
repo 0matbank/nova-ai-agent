@@ -82,6 +82,10 @@ class TaskContext:
         self.approvals = approvals
         self.steps: tuple[StepView, ...] = task.steps
         self.current_seq: int | None = None
+        # Phase 16: the agent doing this task and the only skills it may use
+        # ("skill" or "skill.tool"); None = no agent restriction (system tasks)
+        self.agent = ""
+        self.allowed_skills: frozenset[str] | None = None
 
     async def require(self, action: str, target: str = "", summary: str = "",
                       details: dict[str, Any] | None = None,

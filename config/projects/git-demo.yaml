@@ -11,3 +11,6 @@ test_command: "python -m unittest -v"
 deploy_method: null
 knowledge_dir: null
 approval_required_for: [git.push, deploy]
+aliases: [gitdemo, গিট ডেমো]
+keywords: []
+specialist_role: developer

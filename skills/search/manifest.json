@@ -1,8 +1,8 @@
 {
   "name": "search",
   "version": "1.0.0",
-  "description": "Find files by name/pattern, recently changed files, and duplicate files (plan §34).",
+  "description": "Find files by name/pattern, recently changed files, duplicate files (plan §34), and leaked secrets (Phase 16 Security agent).",
   "worker": "core",
   "platforms": ["win32", "linux", "darwin"],
-  "tools": ["find", "recent", "duplicates"]
+  "tools": ["find", "recent", "duplicates", "secrets"]
 }

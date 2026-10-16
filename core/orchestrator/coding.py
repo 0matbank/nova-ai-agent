@@ -20,13 +20,15 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
-import re
 import shlex
 import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from core.agents.roster import Roster
+from core.agents.roster import find_project as roster_find_project
+from core.agents.select import Assignment
 from core.config.schema import AppConfig, ProjectProfile
 from core.notify.notifier import MessageType
 from core.orchestrator.lang import reply_language
@@ -121,12 +123,8 @@ TEXT = {
 
 
 def find_project(cfg: AppConfig, text: str) -> tuple[str, ProjectProfile] | None:
-    low = text.lower()
-    for key, p in cfg.projects.items():
-        names = {key, key.replace("-", " "), p.name.lower(), p.name.lower().replace(" ", "")}
-        if any(re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", low) for n in names if n):
-            return key, p
-    return None
+    """By name or alias only — a domain keyword is not enough to edit a project."""
+    return roster_find_project(cfg, text, keywords=False)
 
 
 def forbidden_roots(cfg: AppConfig) -> list[Path]:
@@ -236,16 +234,37 @@ class CodingFlow:
     the task checkpoint, so resuming after an approval never re-runs the AI."""
 
     def __init__(self, cfg: AppConfig, providers: ProviderRouter,
-                 skills: SkillRunner | None = None) -> None:
+                 skills: SkillRunner | None = None, assignment: Assignment | None = None,
+                 roster: Roster | None = None) -> None:
         self.cfg = cfg
         self.providers = providers
         self.skills = skills
+        self.assignment = assignment            # Phase 16: which specialist does the work
+        self.roster = roster
+
+    def _system(self, key: str, project: ProjectProfile, language: str) -> str:
+        """Role prompt of the chosen specialist + the coding rules + only this
+        project's specialist context (plan §49.2, §51, §59)."""
+        parts = []
+        a, r = self.assignment, self.roster
+        if a is not None and r is not None and a.lead in r.agents:
+            parts.append(r.agents[a.lead].prompt)
+        parts.append(CODING_SYSTEM.format(name=project.name, language=language,
+                                          test=project.test_command or "if any"))
+        if r is not None and key in r.projects:
+            parts.append("Project specialist context (" + r.projects[key].title + "):\n"
+                         + r.projects[key].rules(self.cfg.root))
+        return "\n\n".join(p for p in parts if p)
 
     async def run(self, ctx: TaskContext) -> dict[str, Any]:
         goal = ctx.task.request_text
         lang = reply_language(goal)
         t = TEXT[lang]
-        found = find_project(self.cfg, goal)
+        a = self.assignment
+        found = ((a.project, self.cfg.projects[a.project])
+                 if a is not None and a.project is not None
+                 and a.project in self.cfg.projects
+                 else find_project(self.cfg, goal))
         if found is None:
             names = ", ".join(p.name for p in self.cfg.projects.values()) or "—"
             return {"kind": "coding", "ok": False, "needs_input": True,
@@ -289,8 +308,7 @@ class CodingFlow:
             task_id=ctx.task.id, task_type="coding", workspace=str(folder),
             allowed_tools=("code.edit",), risk_level="YELLOW", user_request=goal,
             context=await _file_list(folder),
-            system=CODING_SYSTEM.format(name=project.name, language=language,
-                                        test=project.test_command or "if any"),
+            system=self._system(key, project, language),
             limits=Limits(timeout_seconds=1200, max_output_tokens=4000))
         switched: list[str] = list(earlier.get("failed", [])) if earlier else []
         if earlier:

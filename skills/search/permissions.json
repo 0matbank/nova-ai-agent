@@ -1,5 +1,6 @@
 {
   "find": ["search"],
   "recent": ["search"],
-  "duplicates": ["search"]
+  "duplicates": ["search"],
+  "secrets": ["search"]
 }

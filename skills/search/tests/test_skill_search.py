@@ -47,6 +47,23 @@ def test_duplicates(s: SkillEnv) -> None:
     assert "reclaimable" in r.summary
 
 
+def test_secrets_finds_leaks_without_showing_them(s: SkillEnv) -> None:
+    proj = s.workspace / "proj"
+    proj.mkdir()
+    key = "AIza" + "Q" * 35
+    (proj / "settings.py").write_text(f'DEBUG = True\nAPI_KEY = "{key}"\n', encoding="utf-8")
+    (proj / ".env").write_text("X=1\n", encoding="utf-8")
+    (proj / ".env.example").write_text("X=\n", encoding="utf-8")
+    (proj / "clean.py").write_text("print('hi')\n", encoding="utf-8")
+    r = s.call("search", "secrets", {"root": str(proj)})
+    assert r.ok and s.tasks.buttons == []                       # read-only, GREEN
+    found = {(Path(str(h["file"])).name, h["line"]) for h in r.data["findings"]}
+    assert found == {("settings.py", 2), (".env", None)}
+    assert key not in str(r.data) and key not in r.summary      # never the value itself
+    clean = s.call("search", "secrets", {"root": str(s.workspace / "docs")})
+    assert clean.data["findings"] == [] and "no secrets found" in clean.summary
+
+
 def test_scan_root_in_secrets_refused(s: SkillEnv) -> None:
     from core.skills.api import PolicyDenied
     with pytest.raises(PolicyDenied):

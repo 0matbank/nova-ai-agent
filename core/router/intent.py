@@ -78,6 +78,11 @@ RULES: list[tuple[str, re.Pattern[str], tuple[str, str, dict[str, Any]] | None]]
                        r"chrome|paint|vs\s*code|calculator|explorer)\b",
                        r"\b(notepad|chrome|paint|calculator)\b.*\b(kholo|khol|open|bondho|close)\b",
                        r"(খোলো|বন্ধ\s*কর)"), None),
+    # Phase 16: PC work for the Windows Operator agent (its tools, its approvals)
+    ("pc_control", _rx(r"\b(powershell|command\s*prompt|cmd|terminal|services?|"
+                       r"installed\s*(apps?|programs?|software)|ip\s*address|wi-?fi|"
+                       r"[a-z]\s*drive|disk\s*space|windows\s*version|startup\s*apps?)\b",
+                       r"পাওয়ারশেল", r"ড্রাইভ"), None),
     ("document", _rx(r"\b(pdf|docx?|excel|xlsx|spreadsheet|document)\b", r"ডকুমেন্ট"), None),
     ("social", _rx(r"\b(facebook|fb|tiktok|instagram|youtube|caption|reel|post\s*koro)\b"),
      None),

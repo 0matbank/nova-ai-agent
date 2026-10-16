@@ -10,3 +10,8 @@ test_command: null
 deploy_method: null
 knowledge_dir: project-knowledge/stream-doctor
 approval_required_for: [git.push_production, deploy]
+# Phase 16 project specialist (agents/projects/stream-doctor/AGENT.md); the
+# keywords are this project's own domain (plan §52.2)
+aliases: [streamdoctor, স্ট্রিম ডক্টর]
+keywords: [m3u, m3u8, playlist, referer]
+specialist_role: developer

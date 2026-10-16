@@ -20,8 +20,13 @@ BANGLISH = {
 }
 
 
+# "C:\Users\me\Downloads", "D:/work/x.txt", "\\server\share": folder names say
+# nothing about the owner's language (Phase 16: file requests carry paths)
+PATH_RX = _PATH = re.compile(r"(?:[a-zA-Z]:|\\\\|~)[\\/][^\s\"']*|(?:[\w.-]+[\\/]){2,}[\w.-]*")
+
+
 def reply_language(text: str) -> str:
-    plain = URL_RX.sub(" ", text)
+    plain = _PATH.sub(" ", URL_RX.sub(" ", text))
     if _BN.search(plain):
         return "bn"
     words = re.findall(r"[a-z]+", plain.lower())

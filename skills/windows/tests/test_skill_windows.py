@@ -27,3 +27,7 @@ def test_processes(s: SkillEnv) -> None:
 def test_system_info(s: SkillEnv) -> None:
     r = s.call("windows", "system_info", {})
     assert r.ok and r.data["cpu_count"] >= 1 and s.tasks.buttons == []
+    # Phase 16: every drive with its size and free space, also in the summary
+    drives = r.data["drives"]
+    assert drives and all(0 <= d["free_gb"] <= d["total_gb"] for d in drives)
+    assert f"{drives[0]['free_gb']} GB free" in r.summary

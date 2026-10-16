@@ -1,10 +1,14 @@
 """Executor for free-text requests (task_type "user_request").
 
-Phase 8 scope: understand the request (Intent Router), then
+Understand the request (Intent Router), pick the specialist(s) for it (Phase 16,
+core/agents: lead + project specialist + verifier, the kind of AI work, the only
+skills allowed), then
   - deterministic intents → the matching skill, no AI (plan §45, §49.1)
+  - PC / file / security work → the tool-using specialist loop (operator.py)
+  - coding → the coding workflow with the specialist's role + project context
+  - project test / git look → no AI (project_agent.py)
   - questions / general requests → provider-independent AI via the router
-  - everything else → an honest "not built yet" answer (specialist agents,
-    browser, coding etc. arrive in their own phases)
+  - everything else → an honest "not built yet" answer
 Verification is proof-based (plan §54): a skill result's own evidence, or a
 non-empty answer actually returned by a provider.
 """
@@ -14,17 +18,23 @@ from __future__ import annotations
 import base64
 from typing import Any
 
+from core.agents import Assignment, Roster, assign
+from core.log import get_logger
 from core.notify.notifier import MessageType
+from core.orchestrator import project_agent
 from core.orchestrator.answer import answer
 from core.orchestrator.browse import BrowserFlow
 from core.orchestrator.coding import CodingFlow
 from core.orchestrator.context import for_request
 from core.orchestrator.lang import reply_language
+from core.orchestrator.operator import OperatorAgent
 from core.queue.engine import TaskContext, Verdict
 from core.router.intent import Intent, IntentRouter, is_screen_question
 from core.skills.runner import SkillRunner
 from models.router import ProviderRouter
 from providers.provider_base import ProviderRequest
+
+_log = get_logger("core")
 
 SYSTEM_PROMPT = (
     "You are Nova AI, a personal assistant running on the owner's Windows PC. "
@@ -48,7 +58,6 @@ NOT_YET = {
     "files": "Phase 16 (File & Document agent)",
     "reminder": "Phase 19 (Scheduler)",
     "document": "Phase 20 (Document skills)",
-    "project": "Phase 16–17 (project agents + memory)",
     "social": "V2 (Social/Growth modules)",
     "communication": "V2 (Email/WhatsApp integrations)",
 }
@@ -60,10 +69,13 @@ class ActionFailed(RuntimeError):
 
 class UserRequestExecutor:
     def __init__(self, intents: IntentRouter, providers: ProviderRouter,
-                 skills: SkillRunner | None) -> None:
+                 skills: SkillRunner | None, roster: Roster | None = None) -> None:
         self.intents = intents
         self.providers = providers
         self.skills = skills
+        # Phase 16: specialist + project agents (from the config the skills run with)
+        self.roster = roster if roster is not None or skills is None else \
+            Roster.load(skills.env.config)
 
     async def plan(self, ctx: TaskContext) -> list[str]:
         return ["request বোঝা (intent)", "কাজ করা", "ফলাফল যাচাই"]
@@ -71,14 +83,28 @@ class UserRequestExecutor:
     async def run(self, ctx: TaskContext) -> str:
         async def understand(prev: dict[str, Any] | None) -> dict[str, Any]:
             intent = await self.intents.classify(ctx.task.request_text, ctx.task.id)
-            return {"category": intent.category, "source": intent.source,
-                    "confidence": intent.confidence,
-                    "skill": list(intent.skill) if intent.skill else None}
+            out: dict[str, Any] = {"category": intent.category, "source": intent.source,
+                                   "confidence": intent.confidence,
+                                   "skill": list(intent.skill) if intent.skill else None}
+            if self.roster is not None and self.skills is not None:
+                # plan §10 steps 5–7: the specialist(s), the kind of AI work, the skills
+                a = assign(intent, ctx.task.request_text, self.skills.env.config, self.roster)
+                out["assignment"] = a.to_json()
+                _log.info(f"routed to {a.label(self.roster)} ({a.route}; {a.reason})",
+                          extra={"task_id": ctx.task.id, "action": "agent.route",
+                                 "status": a.lead})
+            return out
 
         cp = await ctx.run_step(1, understand) or {}
         skill_cp = cp.get("skill")
         skill = (str(skill_cp[0]), str(skill_cp[1]), dict(skill_cp[2])) if skill_cp else None
         intent = Intent(cp["category"], cp["confidence"], cp["source"], skill)
+        assignment = (Assignment.from_json(cp["assignment"])
+                      if self.roster is not None and cp.get("assignment") else None)
+        if assignment is not None and self.roster is not None:
+            # every skill call of this task is held to the chosen agent's skills (§11)
+            ctx.agent = self.roster.title(assignment.lead)
+            ctx.allowed_skills = frozenset(assignment.skills)
 
         lang = reply_language(ctx.task.request_text)
 
@@ -87,6 +113,10 @@ class UserRequestExecutor:
                     and self.skills is not None
                     and "screenshot" in self.skills.registry.skills):
                 return await self._screen_question(ctx, lang)
+            if assignment is not None and assignment.route not in ("skill", "answer"):
+                routed = await self._specialist(ctx, assignment, intent, lang)
+                if routed is not None:
+                    return routed
             if intent.skill is not None:
                 if self.skills is not None and intent.skill[0] in self.skills.registry.skills:
                     return await self._run_skill(ctx, intent)
@@ -104,13 +134,14 @@ class UserRequestExecutor:
             if intent.category in NOT_YET:
                 return {"kind": "not_yet", "answer": (
                     f"বুঝেছি — এটা '{intent.category}' ধরনের কাজ। এটা এখনো শেখানো হয়নি; "
-                    f"আসবে {NOT_YET[intent.category]}।\nএখন পারি: প্রশ্নের উত্তর (local AI), "
-                    "PC status, screenshot, process list, website খোলা/পড়া/সাইটের ভেতরে search।"
+                    f"আসবে {NOT_YET[intent.category]}।\nএখন পারি: প্রশ্নের উত্তর, PC status/"
+                    "screenshot/app খোলা-বন্ধ, PC-র ফাইল খোঁজা/দেখা, website-এর কাজ, project-এ "
+                    "কোড বদলানো/test/git।"
                     if lang == "bn" else
                     f"Understood — this is a '{intent.category}' task. I can't do it yet; it "
                     f"arrives in {NOT_YET[intent.category]}.\nWhat I can do now: answer "
-                    "questions (local AI), PC status, screenshot, process list, open/read a "
-                    "website and search inside it.")}
+                    "questions, PC status/screenshot/open-close apps, find and look at files, "
+                    "website tasks, code changes/tests/git in a project.")}
             return await self._ask_ai(ctx)
 
         async def act_or_fail(prev: dict[str, Any] | None) -> dict[str, Any]:
@@ -129,6 +160,27 @@ class UserRequestExecutor:
 
         await ctx.run_step(3, check)
         return str(out.get("answer", ""))
+
+    async def _specialist(self, ctx: TaskContext, a: Assignment, intent: Intent,
+                          lang: str) -> dict[str, Any] | None:
+        """Phase 16 routes; None = the generic path below handles it (browser, answer)."""
+        assert self.roster is not None and self.skills is not None
+        cfg = self.skills.env.config
+        rules = project_agent.project_rules(cfg.root, self.roster, a)
+        if a.route == "operator":
+            return await OperatorAgent(self.skills, self.providers, self.roster).run(
+                ctx, a, lang, rules)
+        if a.route == "coding":
+            return await CodingFlow(cfg, self.providers, self.skills, a, self.roster).run(ctx)
+        if a.route in ("git", "project_test", "project_info") and a.project is None:
+            return project_agent.which_project(self.roster, lang)
+        if a.route == "git":
+            return await project_agent.git_look(ctx, self.skills, self.roster, a, lang)
+        if a.route == "project_test":
+            return await project_agent.run_project_tests(ctx, self.roster, a, lang)
+        if a.route == "project_info":
+            return await self._ask_ai(ctx, project_rules=rules)
+        return None
 
     async def _run_skill(self, ctx: TaskContext, intent: Intent) -> dict[str, Any]:
         assert intent.skill is not None and self.skills is not None
@@ -173,14 +225,16 @@ class UserRequestExecutor:
         return {"kind": "ai", "provider": result.provider, "model": result.model,
                 "answer": result.answer, "ok": True, "evidence": shot.evidence}
 
-    async def _ask_ai(self, ctx: TaskContext) -> dict[str, Any]:
+    async def _ask_ai(self, ctx: TaskContext, project_rules: str = "") -> dict[str, Any]:
         """Questions, incl. current-information ones (owner 2026-10-15): quick ones
-        stay local, the rest escalate automatically — see core/orchestrator/answer.py."""
+        stay local, the rest escalate automatically — see core/orchestrator/answer.py.
+        A question about a project gets that project specialist's context (§51)."""
         # a retry tells the AI what went wrong last time (plan §49.2 "Known Errors")
         known = ctx.task.error_message if ctx.task.retry_count else None
         package = for_request(goal="Answer the owner's request",
                               instruction=ctx.task.request_text, risk="GREEN",
                               known_errors=known)
+        package.add("Project Rules", project_rules)
         got = await answer(self.providers, ctx.task.id, ctx.task.request_text,
                            SYSTEM_PROMPT, package.render())
         result = got.result
@@ -191,12 +245,38 @@ class UserRequestExecutor:
                 "answer": result.answer, "ok": True}
 
     async def verify(self, ctx: TaskContext, result: str) -> Verdict:
+        verdict = self._check(ctx, result)
+        step1 = next((s for s in ctx.steps if s.seq == 1), None)
+        routed = ((step1.checkpoint if step1 is not None else None) or {}).get("assignment")
+        if routed and self.roster is not None:
+            # which specialist(s) did it — one short line, no provider noise
+            label = Assignment.from_json(routed).label(self.roster)
+            return Verdict(verdict.passed, f"{verdict.detail} · 🧭 {label}")
+        return verdict
+
+    def _check(self, ctx: TaskContext, result: str) -> Verdict:
         step2 = next((s for s in ctx.steps if s.seq == 2), None)
         act = (step2.checkpoint if step2 is not None else None) or {}
         if not result.strip():
             return Verdict(False, "empty result")
         kind = act.get("kind")
         bn = reply_language(ctx.task.request_text) == "bn"
+        if kind == "operator":
+            ev = act.get("evidence") or {}
+            calls = ev.get("calls") or []
+            if not calls:
+                # e.g. a refused step: the agent said what it could not do (no facts claimed;
+                # numbers are checked against tool results before an answer is accepted)
+                return Verdict(bool(act.get("ok")),
+                               "PASS WITH KNOWN LIMITATIONS — no tool result behind the answer")
+            return Verdict(bool(act.get("ok")), f"{len(calls)}টা tool-এর ফল থেকে উত্তর ✓"
+                           if bn else f"answer grounded in {len(calls)} tool result(s) ✓")
+        if kind == "project":
+            if act.get("needs_input"):
+                return Verdict(True, "PASS WITH KNOWN LIMITATIONS — asked the owner")
+            ev = act.get("evidence") or {}
+            return Verdict(True, f"tests run by Nova: {ev.get('command')} → "
+                                 f"{'passed' if ev.get('tests_passed') else 'FAILED (reported)'}")
         if kind == "skill":
             if act.get("skill") == "download.fetch" and act.get("ok"):
                 ev = act.get("evidence") or {}
