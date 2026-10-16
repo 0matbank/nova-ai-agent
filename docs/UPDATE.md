@@ -15,8 +15,13 @@ min), and handles `/restart-agent` and `/update`. It uses only Python's standard
 library (`-S`), so during an update `uv sync` can replace the venv's packages while
 it keeps running. Logs: `logs/supervisor/` (one `*.out.log` per child).
 
-Stopping it (Ctrl+C, closing its window, Windows logoff/shutdown) stops core first —
-core says "going offline" and saves its state — then the workers.
+Stopping it (`uv run python -I -S workers/supervisor/run.py --stop`, Ctrl+C, closing
+its window, Windows logoff/shutdown) stops core first — core says "going offline" and
+saves its state — then the workers.
+
+**Autostart (plan §32, owner-approved 2026-10-16):** `uv run python scripts/autostart.py
+--install` registers the normal-user task `\Nova AI\Nova` (no admin rights): 30 s after
+login it starts the supervisor hidden (`pythonw -I -S`). `--status`, `--remove`.
 
 ## Graceful shutdown (§32A)
 
