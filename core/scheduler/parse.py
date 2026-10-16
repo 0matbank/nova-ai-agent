@@ -63,8 +63,9 @@ _OFFSETS = {"aj": 0, "aaj": 0, "ajke": 0, "aajke": 0, "today": 0, "আজ": 0, "
             "porsu": 2, "পরশু": 2}
 TASK_DONE = re.compile(r"(?:task|kaj|কাজ)\s*#?\s*(\d+)\s*(?:ta\s*)?(?:shesh|sesh|done|finish\w*|"
                        r"complete\w*|শেষ)\s*(?:hole|holei|hoile|হলে|হলেই)?", re.IGNORECASE)
-FILE_COND = re.compile(r"([A-Za-z]:\\[^\s\"']+)\s*(?:file\s*)?(?:ashle|ele|asle|aile|thakle|"
-                       r"আসলে|এলে|থাকলে|exists?|appears?)", re.IGNORECASE)
+FILE_COND = re.compile(r"([A-Za-z]:\\[^\s\"']+|/[^\s\"']+)\s*(?:file\s*)?"
+                       r"(?:ashle|ele|asle|aile|thakle|আসলে|এলে|থাকলে|exists?|appears?)",
+                       re.IGNORECASE)
 REMIND = re.compile(r"\bremind\w*(?:\s+me)?\b|mone\s*kori(?:ye|e|a)?\s*(?:dio|diyo|diben|dao)?|"
                     r"মনে\s*করি(?:য়|য)ে\s*\S*|\b(?:amake|amay|আমাকে)\s*(?:bolo|bolben|janao|"
                     r"janaben|jaaniyo|janiyo|জানাও|বলো|জানাবে)\b|\balarm\b", re.IGNORECASE)
