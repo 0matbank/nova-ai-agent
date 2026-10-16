@@ -315,3 +315,40 @@ def test_critical_pressure_unloads_idle_heavy_models(cfg) -> None:  # type: igno
         assert run(p.refresh()) == "critical" and called == ["x"]
     finally:
         res.pc_status = orig
+
+
+def test_ram_hovering_at_the_line_alerts_once(cfg, monkeypatch, caplog) -> None:  # type: ignore[no-untyped-def]
+    """Owner 2026-10-16: RAM 92↔94 % sent a critical alert every minute. Now it stays
+    critical until clearly lower, and the phone hears it once per cooldown, naming
+    the biggest memory users."""
+    import logging
+
+    import core.resources as res
+    ram = {"v": 94.0}
+
+    async def fake_status(_: Path) -> object:
+        class S:
+            ram_percent, gpus = ram["v"], []
+        return S()
+    monkeypatch.setattr(res, "pc_status", fake_status)
+    monkeypatch.setattr(res, "top_memory", lambda n=3: "chrome.exe 1.8 GB")
+    p = res.ResourcePressure(cfg.resources, Path("."))
+    crit = cfg.resources.ram_percent.critical
+    with caplog.at_level(logging.INFO, logger="nova.core"):
+        for v in (crit + 1, crit - 1, crit + 1, crit - 2, crit + 2):   # hovering
+            ram["v"] = v
+            assert run(p.refresh()) == "critical"
+        ram["v"] = crit - res.HYSTERESIS_POINTS - 1                    # clearly better
+        assert run(p.refresh()) == "high"
+        ram["v"] = crit + 1                                            # back within cooldown
+        assert run(p.refresh()) == "critical"
+    alerts = [r for r in caplog.records if r.levelno == logging.CRITICAL]
+    assert len(alerts) == 1 and "chrome.exe 1.8 GB" in alerts[0].getMessage()
+    assert any(r.levelno == logging.WARNING and "critical" in r.getMessage()
+               for r in caplog.records)                                # logged, phone quiet
+
+
+def test_top_memory_names_real_processes() -> None:
+    from core.resources import top_memory
+    text = top_memory(2)
+    assert text.count(" GB") == 2
