@@ -129,6 +129,15 @@ class TelegramAPI:
             files={"photo": (filename, photo, "image/jpeg")})
         return result
 
+    async def send_video(self, chat_id: str, video: bytes, filename: str,
+                         caption: str = "") -> dict[str, Any]:
+        """An MP4 the phone can play inline (Bot API limit 50 MB)."""
+        result: dict[str, Any] = await self._post(
+            "sendVideo", 300.0, data={"chat_id": chat_id, "caption": caption[:1024],
+                                      "supports_streaming": "true"},
+            files={"video": (filename, video, "video/mp4")})
+        return result
+
     async def send_voice(self, chat_id: str, voice: bytes, caption: str = "") -> dict[str, Any]:
         result: dict[str, Any] = await self._post(
             "sendVoice", 60.0, data={"chat_id": chat_id, "caption": caption[:1024]},

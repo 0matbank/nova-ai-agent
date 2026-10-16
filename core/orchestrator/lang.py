@@ -20,6 +20,9 @@ BANGLISH = {
     # Phase 17 ("git demo te mone rakho: sobsomoy …")
     "te", "mone", "rakho", "rakhbe", "rekho", "sobsomoy", "kokhono", "kokhonoi", "kintu",
     "jodi", "tahole", "ekhon", "age", "pore", "obostha", "hoyechilo", "korechilo", "kaj",
+    # Phase 20 phone test ("… e ajker kajer checklist likho")
+    "likho", "lekho", "ajker", "aajker", "kajer", "banao", "baniye", "baad", "kalo", "majhe",
+    "duita", "jora", "lagao", "lagiye",
 }
 
 

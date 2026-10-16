@@ -22,6 +22,8 @@ _PTS = re.compile(r"pts_time:([\d.]+)")
 _SIL_START = re.compile(r"silence_start: ([\d.]+)")
 _SIL_END = re.compile(r"silence_end: ([\d.]+)")
 _BLACK = re.compile(r"black_start:([\d.]+) black_end:([\d.]+)")
+_FREEZE_START = re.compile(r"freeze_start: ([\d.]+)")
+_FREEZE_END = re.compile(r"freeze_end: ([\d.]+)")
 _MEAN = re.compile(r"mean_volume: (-?[\d.]+|-inf) dB")
 _MAX = re.compile(r"max_volume: (-?[\d.]+|-inf) dB")
 
@@ -37,6 +39,7 @@ class FootageReport:
     scenes: list[float] = field(default_factory=list)
     silences: list[tuple[float, float]] = field(default_factory=list)
     black: list[tuple[float, float]] = field(default_factory=list)
+    frozen: list[tuple[float, float]] = field(default_factory=list)   # no motion ≥ 1 s
     mean_db: float | None = None
     max_db: float | None = None
 
@@ -55,6 +58,9 @@ class FootageReport:
             parts.append("silent " + ", ".join(f"{a:.1f}–{b:.1f}s" for a, b in self.silences[:15]))
         if self.black:
             parts.append("black " + ", ".join(f"{a:.1f}–{b:.1f}s" for a, b in self.black[:15]))
+        if self.frozen:
+            parts.append("no motion " + ", ".join(f"{a:.1f}–{b:.1f}s"
+                                                  for a, b in self.frozen[:15]))
         if self.mean_db is not None:
             parts.append(f"loudness mean {self.mean_db} dB, max {self.max_db} dB")
         return "; ".join(parts)
@@ -87,15 +93,19 @@ async def analyze(path: Path, scene_threshold: float = 0.35) -> FootageReport:
         v = info["video"]
         rep.width, rep.height, rep.fps = v["width"], v["height"], v.get("fps")
         out = await _stderr(["-i", str(path), "-an", "-vf",
-                             f"select='gt(scene,{scene_threshold})',showinfo,"
-                             "blackdetect=d=0.4:pix_th=0.10", "-f", "null", "-"])
+                             f"select='gt(scene,{scene_threshold})',showinfo",
+                             "-f", "null", "-"])
         rep.scenes = [round(float(t), 2) for t in _PTS.findall(out)]
+        # every frame: black stretches + frozen stretches (owner 2026-10-16: a reel that
+        # looked like a still picture must be measurable, not just "frames exist")
+        out = await _stderr(["-i", str(path), "-an", "-vf",
+                             "freezedetect=n=0.003:d=1,blackdetect=d=0.4:pix_th=0.10",
+                             "-f", "null", "-"])
         rep.black = [(round(float(a), 2), round(float(b), 2)) for a, b in _BLACK.findall(out)]
-        if not rep.black:                    # blackdetect after select sees only scene frames
-            out = await _stderr(["-i", str(path), "-an", "-vf",
-                                 "blackdetect=d=0.4:pix_th=0.10", "-f", "null", "-"])
-            rep.black = [(round(float(a), 2), round(float(b), 2))
-                         for a, b in _BLACK.findall(out)]
+        starts = [float(x) for x in _FREEZE_START.findall(out)]
+        ends = [float(x) for x in _FREEZE_END.findall(out)]
+        rep.frozen = [(round(a, 2), round(ends[i] if i < len(ends) else rep.duration, 2))
+                      for i, a in enumerate(starts)]
     if rep.has_audio:
         out = await _stderr(["-i", str(path), "-vn", "-af",
                              "silencedetect=n=-35dB:d=0.6,volumedetect", "-f", "null", "-"])

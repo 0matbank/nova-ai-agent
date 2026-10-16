@@ -64,6 +64,15 @@ async def check_render(path: Path, plan: EditPlan, size: tuple[int, int],
     add("no unplanned black", not stray or src_black,
         "none" if not stray else ", ".join(f"{a:.1f}–{b:.1f}s" for a, b in stray)
         + (" (also in the source)" if src_black else ""))
+    # motion (owner 2026-10-16: "video cholaii nah, stop picture"): the result may be
+    # still only where the source already was, or inside planned fades / dips
+    expected = sum(max(0.0, min(b, c.end) - max(a, c.start))
+                   for c in plan.clips for a, b in sources[c.source].frozen)
+    expected += sum(hi - lo for lo, hi in _allowed_dark(plan))
+    frozen = sum(b - a for a, b in rep.frozen)
+    add("video moves", frozen <= expected + 1.0,
+        f"still for {frozen:.1f}s of {rep.duration:.1f}s"
+        + (f" (source/fades allow {expected:.1f}s)" if frozen > expected + 1.0 else ""))
     expect_audio = plan.audio.music is not None or (
         not plan.audio.mute_original and any(r.has_audio for r in sources))
     if expect_audio:

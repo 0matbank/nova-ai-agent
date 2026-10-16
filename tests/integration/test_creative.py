@@ -142,12 +142,32 @@ def test_render_and_qc_measure_the_real_result(tmp_path: Path) -> None:
     q = asyncio.run(check_render(r.output, plan, r.size, [rep]))
     assert q.ok, q.lines()
     names = [n for n, _, _ in q.checks]
-    assert names == ["length", "size", "no unplanned black", "audio present", "no clipping"]
+    assert names == ["length", "size", "no unplanned black", "video moves", "audio present",
+                     "no clipping"]
     # QC is not a rubber stamp: a wrong frame size / length is caught
     wrong = asyncio.run(check_render(r.output, plan, (1920, 1080), [rep]))
     assert not wrong.ok and any(n == "size" and not ok for n, ok, _ in wrong.checks)
     longer = plan.model_copy(update={"clips": [*plan.clips, plan.clips[0]]})
     assert not asyncio.run(check_render(r.output, longer, r.size, [rep])).ok
+
+
+def test_qc_catches_a_result_that_looks_like_a_still_picture(tmp_path: Path) -> None:
+    """Owner 2026-10-16: "video cholaii nah, stop picture" — a moving source rendered
+    into a still must fail QC, even though the file, length and size are right."""
+    clip = make_clip(tmp_path / "a.mp4")
+    rep = asyncio.run(analyze(clip))
+    assert not rep.frozen                                     # testsrc moves
+    plan = EditPlan.model_validate({"sources": [str(clip)],
+                                    "clips": [{"source": 0, "start": 0, "end": 4}]})
+    still = tmp_path / "still.mp4"
+    subprocess.run([ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-ss", "1", "-i",  # noqa: S603
+                    str(clip), "-frames:v", "1", str(tmp_path / "f.png")], check=True)
+    subprocess.run([ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-loop", "1", "-i",  # noqa: S603
+                    str(tmp_path / "f.png"), "-i", str(clip), "-map", "0:v", "-map", "1:a",
+                    "-t", "4", "-r", "25", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", str(still)], check=True)
+    q = asyncio.run(check_render(still, plan, (1280, 720), [rep]))
+    assert not q.ok and any(n == "video moves" and not ok for n, ok, _ in q.checks), q.lines()
 
 
 def test_background_music_is_mixed_under_a_muted_clip(tmp_path: Path) -> None:
@@ -209,7 +229,7 @@ def test_creative_request_end_to_end(tmp_path: Path) -> None:
     assert out.is_file() and out.with_suffix(".otio").is_file()
     done = next(m for _, m in s.tasks.sent if f"TASK #{tid} COMPLETE" in m)
     assert "✅ PASS" in done and "QC length" in done and "🧭 Creative Director" in done
-    assert any("preview" in m for _, m in s.tasks.sent)
+    assert any("[video:trip_nova_edit.mp4]" in m for _, m in s.tasks.sent)  # on the phone
 
 
 @pytest.mark.parametrize(("text", "category"), [

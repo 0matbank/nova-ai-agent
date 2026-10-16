@@ -199,6 +199,18 @@ class TelegramChannel:
             await self.send(chat_id, reply)
 
     async def send(self, chat_id: str, message: OutgoingMessage) -> None:
+        if message.video is not None:
+            name, data = message.video
+            caption, rest = message.text[:1024], message.text[1024:]
+            try:
+                await self.api.send_video(chat_id, data, name, caption)
+            except TelegramError as e:
+                _log.error(f"video send failed: {e}", extra={"action": "telegram.send_video",
+                                                             "status": "error"})
+                rest = f"(ভিডিও পাঠানো যায়নি: {e})\n{message.text}"
+            if not rest and not message.buttons:
+                return
+            message = OutgoingMessage(rest or "⬆️", message.buttons)
         if message.voice is not None:
             try:
                 await self.api.send_voice(chat_id, message.voice)

@@ -43,6 +43,9 @@ class OutgoingMessage:
     voice: bytes | None = None
     # Set when this reply created a task (lets voice mode speak the final answer).
     task_id: int | None = None
+    # Optional MP4 video (Phase 20: a finished edit to watch on the phone); `text` is
+    # its caption. (file name, bytes)
+    video: tuple[str, bytes] | None = None
 
 
 @dataclass(frozen=True)

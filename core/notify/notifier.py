@@ -68,25 +68,27 @@ class Notifier:
                      task_id: int | None = None, error_key: str | None = None,
                      severity: int = 0,
                      buttons: list[list[tuple[str, str]]] | None = None,
-                     photo: bytes | None = None) -> bool:
+                     photo: bytes | None = None,
+                     video: tuple[str, bytes] | None = None) -> bool:
         """Returns True if the message was sent now."""
         token = _TASK.set(task_id)
         try:
             return await self._notify(chat_id, kind, text, task_id, error_key, severity,
-                                      buttons, photo)
+                                      buttons, photo, video)
         finally:
             _TASK.reset(token)
 
     async def _notify(self, chat_id: str, kind: MessageType, text: str, task_id: int | None,
                       error_key: str | None, severity: int,
                       buttons: list[list[tuple[str, str]]] | None,
-                      photo: bytes | None) -> bool:
+                      photo: bytes | None,
+                      video: tuple[str, bytes] | None = None) -> bool:
         if kind in self._exempt or kind is MessageType.INFO:
             final_task = (task_id if kind in (MessageType.TASK_COMPLETED,
                                               MessageType.TASK_FAILED_PERMANENTLY) else None)
             if final_task is not None:
                 self._progress.pop(final_task, None)
-            sent = await self._deliver(chat_id, text, buttons, photo)
+            sent = await self._deliver(chat_id, text, buttons, photo, video)
             if final_task is not None and sent:
                 for hook in self.on_task_final:
                     try:
@@ -135,10 +137,11 @@ class Notifier:
 
     async def _deliver(self, chat_id: str, text: str,
                        buttons: list[list[tuple[str, str]]] | None,
-                       photo: bytes | None = None) -> bool:
+                       photo: bytes | None = None,
+                       video: tuple[str, bytes] | None = None) -> bool:
         try:
             await self._send(chat_id, OutgoingMessage(text, buttons or [], photo,
-                                                      task_id=_TASK.get()))
+                                                      task_id=_TASK.get(), video=video))
         except Exception:
             _log.exception("notification delivery failed", extra={"action": "notify"})
             return False

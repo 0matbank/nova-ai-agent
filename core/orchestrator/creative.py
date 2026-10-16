@@ -36,7 +36,8 @@ from models.router import ProviderRouter
 from providers.provider_base import Limits, ProviderRequest
 
 MEDIA_EXT = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".mp3", ".wav", ".m4a")
-STYLE_KEY = "creative"                       # memory "project" for creative preferences
+MAX_PHONE_VIDEO = 45 * 1024 * 1024          # Telegram bots may send up to 50 MB
+STYLE_KEY = "creative"                     # memory "project" for creative preferences
 _STYLE_NOTE = re.compile(r"(style|edit|cut|caption|music|reel|transition|ভিডিও|এডিট)"
                          r".*(mone\s*rakh|remember|bhalo\s*legeche|pochondo|পছন্দ|ভালো\s*লেগেছে|"
                          r"মনে\s*রাখ|sobsomoy|always)|"
@@ -213,9 +214,18 @@ class CreativeFlow:
         return out
 
     async def _preview(self, ctx: TaskContext, out: Path, plan: EditPlan, bn: bool) -> None:
-        """A frame from the middle of the result, so the owner sees it before using it."""
+        """The owner watches the result on the phone (owner 2026-10-16: a still preview
+        could not show whether the edit plays): the video itself when it fits Telegram's
+        limit, otherwise a frame from the middle."""
         if ctx.notifier is None:
             return
+        if out.stat().st_size <= MAX_PHONE_VIDEO:
+            sent = await ctx.notifier.notify(
+                ctx.task.chat_id, MessageType.INFO,
+                f"🎬 Task #{ctx.task.id}: {plan.title} ({plan.total_seconds():.0f}s)",
+                task_id=ctx.task.id, video=(out.name, out.read_bytes()))
+            if sent:
+                return
         frame = out.with_suffix(".preview.jpg")
         ok, _ = await run_ffmpeg(["-ss", f"{plan.total_seconds() / 2:.2f}", "-i", str(out),
                                   "-frames:v", "1", "-q:v", "3", str(frame)])

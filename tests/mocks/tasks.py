@@ -47,7 +47,8 @@ def make_task_env(db_path: Path, backups: Path, approval_timeout: int = 300) -> 
     buttons: list[list[list[tuple[str, str]]]] = []
 
     async def send(chat_id: str, msg: Any) -> None:
-        sent.append((chat_id, msg.text))
+        video = getattr(msg, "video", None)
+        sent.append((chat_id, msg.text + (f" [video:{video[0]}]" if video else "")))
         if msg.buttons:
             buttons.append(msg.buttons)
 
