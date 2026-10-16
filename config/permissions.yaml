@@ -81,3 +81,6 @@ actions:
   admin.package_install: RED  # winget install (machine-wide, elevated)
   admin.package_uninstall: RED
   admin.task: RED             # an allowlisted fixed elevated command
+
+  # Phase 23: /update installs new commits from the owner's repo (with rollback)
+  system.self_update: RED

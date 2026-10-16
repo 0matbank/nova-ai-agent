@@ -97,3 +97,12 @@ whatsapp:
   tunnel: quick                # Cloudflare quick tunnel, re-registered with Meta each start
   public_url: null
   cloudflared: tools/cloudflared/cloudflared.exe
+
+# Phase 23 — /update installs new commits from the owner's repo (fast-forward only,
+# owner approval, automatic rollback). The supervisor does the work: docs/UPDATE.md
+update:
+  remote: origin
+  branch: main
+  health_timeout_seconds: 180  # the new version must be fully up by then, else rollback
+  stable_seconds: 20           # … and keep running this long
+  run_unit_tests: true         # preflight with the new code before it starts

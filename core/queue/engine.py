@@ -40,6 +40,11 @@ class TaskPaused(Exception):
     pass
 
 
+class TaskInterrupted(Exception):
+    """Phase 23 (plan §32A): Nova is going offline (restart / update / stop). The task
+    stops at a safe checkpoint and resumes from it after the restart."""
+
+
 class ApprovalPending(Exception):
     """Raised by `require` — the task parks in WAITING_APPROVAL; the step
     re-runs from its start once the owner approves."""
@@ -116,6 +121,8 @@ class TaskContext:
         # ("skill" or "skill.tool"); None = no agent restriction (system tasks)
         self.agent = ""
         self.allowed_skills: frozenset[str] | None = None
+        # Phase 23: true while Nova is shutting down → stop at the next checkpoint
+        self.interrupted: Callable[[], bool] = lambda: False
 
     async def require(self, action: str, target: str = "", summary: str = "",
                       details: dict[str, Any] | None = None,
@@ -170,6 +177,8 @@ class TaskContext:
             raise TaskCancelled()
         if pause:
             raise TaskPaused()
+        if self.interrupted():
+            raise TaskInterrupted()
 
     async def interruptible(self, aw: Awaitable[T], every: float = 2.0) -> T:
         """Await a long operation (a coding agent run, tests) while honouring /cancel
@@ -251,6 +260,10 @@ class TaskEngine:
         self.current_task_id: int | None = None
         self.heartbeat: float | None = None        # last loop round (for /status)
         self.queue_error: str | None = None
+        # Phase 23 graceful shutdown: no new task starts; the running one stops at its
+        # next checkpoint and is resumed after the restart
+        self.draining = False
+        self.interrupted_ids: list[int] = []
 
     def register(self, task_type: str, executor: Executor) -> None:
         self.executors[task_type] = executor
@@ -291,7 +304,7 @@ class TaskEngine:
                 t.cancel()
 
     async def run_once(self) -> bool:
-        if self.store.is_queue_paused():
+        if self.draining or self.store.is_queue_paused():
             return False
         task = self.store.next_runnable(self.executors)
         if task is None:
@@ -314,6 +327,7 @@ class TaskEngine:
         executor = self.executors[task.task_type]
         store = self.store
         ctx = TaskContext(task, store, self.notifier, self.permissions, self.approvals)
+        ctx.interrupted = lambda: self.draining
         try:
             if task.state is TaskState.RECEIVED:
                 ctx.task = store.transition(task.id, TaskState.PLANNING)
@@ -329,6 +343,13 @@ class TaskEngine:
         except TaskCancelled:
             store.transition(task.id, TaskState.CANCELLED, error_code="CANCELLED_BY_USER")
             await self._tell(task, MessageType.INFO, f"🛑 Task #{task.id} cancel হয়েছে।")
+            return
+        except TaskInterrupted:
+            # resumes from its checkpoint after the restart (not a retry of a failure)
+            store.transition(task.id, TaskState.RETRYING, error_code="INTERRUPTED_BY_RESTART")
+            self.interrupted_ids.append(task.id)
+            _log.info("task interrupted for shutdown — resumes after restart",
+                      extra={"action": "task.interrupt", "status": "checkpointed"})
             return
         except TaskPaused:
             store.transition(task.id, TaskState.PAUSED)

@@ -29,7 +29,7 @@ from channels.telegram.channel import TelegramChannel
 from channels.whatsapp.channel import PREFIX as WA_PREFIX
 from channels.whatsapp.channel import WhatsAppChannel
 from core.agents import Roster
-from core.bootstrap import EXIT_INVALID_CONFIG, EXIT_OK, AppContext, bootstrap
+from core.bootstrap import EXIT_INVALID_CONFIG, AppContext, bootstrap
 from core.broker.client import BrokerClient
 from core.broker.watch import BrokerWatch
 from core.config import ConfigError
@@ -38,6 +38,15 @@ from core.db.migrate import MigrationError, check_and_migrate
 from core.ipc.client import WorkerClient
 from core.ipc.monitor import WorkerMonitor
 from core.ipc.token import TokenStore
+from core.lifecycle import (
+    EXIT_RESTART,
+    EXIT_UPDATE,
+    ExitRequest,
+    head_commit,
+    supervised,
+    watch_stop_file,
+    write_health,
+)
 from core.log import get_logger, redact, shutdown_logging
 from core.log.setup import ROOT_LOGGER
 from core.memory import ProjectMemory
@@ -49,6 +58,7 @@ from core.orchestrator.log_commands import LogCommands
 from core.orchestrator.schedule_commands import ScheduleCommands
 from core.orchestrator.screen_commands import ScreenCommands
 from core.orchestrator.security_commands import SecurityCommands
+from core.orchestrator.self_update import SELF_UPDATE, LifecycleCommands, SelfUpdateExecutor
 from core.orchestrator.skill_commands import SkillCommands
 from core.orchestrator.task_commands import TaskCommands
 from core.permissions.approvals import ApprovalManager
@@ -166,9 +176,25 @@ async def _announce_recovery(notifier: Notifier, recovered: list[TaskView]) -> N
         await notifier.notify(chat_id, MessageType.RECOVERY_AFTER_RESTART, "\n".join(lines))
 
 
+async def _going_offline(channel: TelegramChannel, exiting: ExitRequest,
+                         engine: TaskEngine | None) -> None:
+    why = {EXIT_RESTART: "restart হচ্ছে", EXIT_UPDATE: "update হচ্ছে"}.get(
+        exiting.code, "বন্ধ হচ্ছে")
+    paused = engine.interrupted_ids if engine is not None else []
+    text = (f"🔌 Nova {why} — কিছুক্ষণ offline।"
+            + (f"\nচলমান task {', '.join(f'#{i}' for i in paused)} checkpoint-এ থেমেছে, "
+               "ফিরে এসে সেখান থেকে চলবে।" if paused else "")
+            + ("\nফিরে এলে জানাব।" if exiting.code in (EXIT_RESTART, EXIT_UPDATE) else ""))
+    try:
+        await asyncio.wait_for(channel.broadcast(OutgoingMessage(text)), timeout=10)
+    except Exception:  # noqa: BLE001 - going offline must never hang on the network
+        _log.warning("going-offline notice not sent", extra={"action": "service.stop"})
+
+
 async def run_core_service(
     ctx: AppContext, stop: asyncio.Event, api: TelegramAPI, whitelist: ChatWhitelist,
     provider_registry: ProviderRegistry | None = None,
+    exit_request: ExitRequest | None = None,
 ) -> None:
     me = await api.get_me()   # fails fast on a bad token
     _log.info(f"telegram bot @{me.get('username')} authenticated",
@@ -279,6 +305,18 @@ async def run_core_service(
             IntentRouter(provider_router), provider_router, skill_runner, roster,
             project_memory, schedule_store))
 
+    exiting = exit_request or ExitRequest()
+
+    def request_exit(code: int, reason: str) -> None:
+        """Phase 23: restart / update through the supervisor — no new task starts."""
+        exiting.set(code, reason)
+        if engine is not None:
+            engine.draining = True
+        stop.set()
+
+    if engine is not None:
+        engine.register(SELF_UPDATE, SelfUpdateExecutor(cfg, request_exit))
+
     # Voice (plan §7): transcript → the same path as typed text.
     wcfg = cfg.models.whisper
     whisper_path = wcfg.path if wcfg.path.is_absolute() else cfg.root / wcfg.path
@@ -324,6 +362,12 @@ async def run_core_service(
                                          cfg.default.agent.timezone),
                            ScheduleCommands(schedule_store, cfg.default.agent.timezone)
                            if schedule_store is not None else None)
+    lifecycle = LifecycleCommands(store, engine, request_exit)
+    router.add("/restart-agent", lifecycle.restart)
+    router.add("/update", lifecycle.update)
+    version = head_commit(cfg.app_dir)
+    health.probes["Version"] = lambda: (True, f"{version[:8] or 'unknown'}"
+                                        + (" · supervisor" if supervised() else ""))
     health.probes.update(build_probes(ctx, channel))
     health.probes["Database"] = database_probe(store, revision, safe_reason)
     health.probes["Task engine"] = engine_probe(engine)
@@ -359,6 +403,8 @@ async def run_core_service(
             wa_channel.public_url else (False, "webhook not registered yet"))
 
     _log.info("core service started", extra={"action": "service.start", "status": "ok"})
+    # Phase 23: the supervisor's proof that this version is fully up
+    write_health({"version": version}, cfg.app_dir)
     background: list[asyncio.Task[Any]] = [*wa_tasks,
         asyncio.create_task(monitor.run(stop)),
         asyncio.create_task(_provider_health_loop(providers, stop, provider_router)),
@@ -389,13 +435,18 @@ async def run_core_service(
     try:
         await channel.run(stop)
     finally:
+        # plan §32A graceful shutdown: 1–2 no new task / message (Telegram keeps new
+        # messages until we are back), 3–6 the running task stops at its next checkpoint
+        # (state is in the DB), then going-offline notice, AI drain, DB + logs closed
         stop.set()
-        # Bounded wait (plan §32A forced-shutdown timeout); full procedure in Phase 23.
+        if engine is not None:
+            engine.draining = True
         _, pending = await asyncio.wait(background,
                                         timeout=cfg.default.shutdown.graceful_timeout_seconds)
         for t in pending:
             t.cancel()
         await asyncio.gather(*background, return_exceptions=True)
+        await _going_offline(channel, exiting, engine)
         logging.getLogger(ROOT_LOGGER).removeHandler(alert)
         await monitor.aclose()
         await providers.aclose()
@@ -503,15 +554,17 @@ def main() -> int:
         signal.signal(signal.SIGINT, _request_stop)
         if hasattr(signal, "SIGBREAK"):
             signal.signal(signal.SIGBREAK, _request_stop)
+        watch_stop_file(_request_stop)          # Phase 23: the supervisor's graceful stop
+        exiting = ExitRequest()
         try:
-            await run_core_service(ctx, stop, api, whitelist)
+            await run_core_service(ctx, stop, api, whitelist, exit_request=exiting)
         except TelegramAuthError:
             return EXIT_TELEGRAM_AUTH
         except TelegramError as e:
             _log.error(f"telegram startup failed: {e}", extra={"action": "service.start",
                                                               "status": "error"})
             return EXIT_TELEGRAM_AUTH
-        return EXIT_OK
+        return exiting.code
 
     try:
         return asyncio.run(_amain())

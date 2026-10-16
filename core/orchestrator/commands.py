@@ -42,6 +42,8 @@ COMMAND_DESCRIPTIONS = {
     "/memory": "Project memory: /memory <project> (মুছতে: forget <id>)",
     "/schedules": "Schedule-এর তালিকা (বাতিল: /schedules cancel <id>)",
     "/lockdown": "Emergency: সব dangerous কাজ বন্ধ (off দিলে খোলে)",
+    "/restart-agent": "Nova restart (চলমান কাজ checkpoint থেকে আবার চলবে)",
+    "/update": "নতুন version install (approval লাগবে; ব্যর্থ হলে নিজে আগের version-এ ফেরে)",
     "/help": "সব command-এর তালিকা",
 }
 
@@ -102,6 +104,10 @@ class CommandRouter:
         if schedules is not None:
             self._handlers["/schedules"] = schedules.schedules
 
+    def add(self, command: str, handler: Handler) -> None:
+        assert command in ALL_COMMANDS, command
+        self._handlers[command] = handler
+
     def _safe_mode(self) -> OutgoingMessage:
         return OutgoingMessage(SAFE_MODE_REPLY.format(reason=self.safe_mode_reason or "-"))
 
@@ -113,6 +119,8 @@ class CommandRouter:
         parts = msg.text.split()
         # "/status@MyBot" → "/status"
         command = parts[0].split("@", 1)[0].lower()
+        if command not in ALL_COMMANDS and command.replace("_", "-") in ALL_COMMANDS:
+            command = command.replace("_", "-")     # Telegram's menu: /restart_agent
         if command in TASK_COMMANDS and self.tasks is None:
             return self._safe_mode()
         handler = self._handlers.get(command)
@@ -126,8 +134,10 @@ class CommandRouter:
         return OutgoingMessage(f"❓ অজানা command: {command}\n{hint}/help দেখুন।")
 
     def menu(self) -> list[tuple[str, str]]:
-        """(command, description) for Telegram's "/" menu — only working commands."""
-        return [(c, COMMAND_DESCRIPTIONS[c]) for c in ALL_COMMANDS if c in self._handlers]
+        """(command, description) for Telegram's "/" menu — only working commands.
+        Telegram allows only a-z, 0-9 and _ there, so /restart-agent is /restart_agent."""
+        return [(c.replace("-", "_"), COMMAND_DESCRIPTIONS[c]) for c in ALL_COMMANDS
+                if c in self._handlers]
 
     async def _status(self, msg: IncomingMessage, args: list[str]) -> str:
         lines = [f"🤖 {self.agent_name} — online",

@@ -107,4 +107,7 @@ def run_worker(app: FastAPI, host: str, port: int) -> None:
                             log_level="warning", lifespan="on")
     server = uvicorn.Server(config)
     app.state.server = server
+    # Phase 23: the supervisor's graceful stop (lifespan shutdown closes browsers etc.)
+    from core.lifecycle import watch_stop_file
+    watch_stop_file(lambda: setattr(server, "should_exit", True))
     server.run()

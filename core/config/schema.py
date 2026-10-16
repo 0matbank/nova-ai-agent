@@ -156,6 +156,16 @@ class WhatsAppSection(Strict):
     cloudflared: str = "tools/cloudflared/cloudflared.exe"     # relative to the root
 
 
+class UpdateSection(Strict):
+    """Phase 23: /update installs commits from the owner's repo (fast-forward only)."""
+    remote: Annotated[str, Field(pattern=r"^[A-Za-z0-9_.-]{1,40}$")] = "origin"
+    branch: Annotated[str, Field(pattern=r"^[A-Za-z0-9_./-]{1,80}$")] = "main"
+    # the new version must come up (core health file) within this time, else rollback
+    health_timeout_seconds: Annotated[int, Field(ge=20, le=900)] = 180
+    stable_seconds: Annotated[int, Field(ge=5, le=300)] = 20
+    run_unit_tests: bool = True          # preflight: tests/unit with the new code
+
+
 class DefaultConfig(Strict):
     agent: AgentSection
     paths: PathsSection
@@ -165,6 +175,7 @@ class DefaultConfig(Strict):
     voice: VoiceSection
     shutdown: ShutdownSection
     whatsapp: WhatsAppSection = WhatsAppSection()
+    update: UpdateSection = UpdateSection()
 
 
 # -------------------------------------------------------------- providers.yaml
