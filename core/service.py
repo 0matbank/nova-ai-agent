@@ -33,6 +33,7 @@ from core.bootstrap import EXIT_INVALID_CONFIG, AppContext, bootstrap
 from core.broker.client import BrokerClient
 from core.broker.watch import BrokerWatch
 from core.config import ConfigError
+from core.dashboard.api import DashboardDeps, dashboard_token, ollama_loaded, start_dashboard
 from core.db.engine import make_sessionmaker
 from core.db.migrate import MigrationError, check_and_migrate
 from core.ipc.client import WorkerClient
@@ -392,6 +393,14 @@ async def run_core_service(
     if security is not None:
         security.broker_lockdown = broker_watch.lockdown
     health.probes["AI providers"] = lambda: provider_summary(provider_router)
+    # Phase 24: local dashboard on the same engines (127.0.0.1 only)
+    dash_tasks = start_dashboard(DashboardDeps(
+        cfg=cfg, token=dashboard_token(cfg.path("secrets_dir")),
+        owner_chat=(sorted(channel.whitelist.chat_ids) or [""])[0], version=version,
+        store=store, engine=engine, approvals=approvals, sessions=db_sessions,
+        security=security, probes=health.probes, router=provider_router, roster=roster,
+        registry=registry, memory=project_memory, schedules=schedule_store,
+        ollama_ps=ollama_loaded), cfg, stop)
     # Phase 21: WhatsApp (official Cloud API) — never blocks Telegram
     wa_channel, wa_tasks = await start_whatsapp(cfg, ctx.secrets, handle, on_button,
                                                 channel.broadcast, stop)
@@ -410,7 +419,7 @@ async def run_core_service(
         with contextlib.suppress(Exception):
             await asyncio.wait_for(channel.broadcast(OutgoingMessage(
                 f"🟢 Nova আবার online — version {version[:8]}")), timeout=10)
-    background: list[asyncio.Task[Any]] = [*wa_tasks,
+    background: list[asyncio.Task[Any]] = [*wa_tasks, *dash_tasks,
         asyncio.create_task(monitor.run(stop)),
         asyncio.create_task(_provider_health_loop(providers, stop, provider_router)),
         asyncio.create_task(transcriber.idle_loop(stop)),

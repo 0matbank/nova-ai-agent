@@ -1,0 +1,19 @@
+{
+  "name": "nova-dashboard",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Nova AI local dashboard (Phase 24) — built into dist/ and served by core on 127.0.0.1",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "4.3.4",
+    "vite": "5.4.11"
+  }
+}

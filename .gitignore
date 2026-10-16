@@ -67,6 +67,8 @@ __pycache__/
 .eggs/
 build/
 dist/
+# Phase 24: the built dashboard ships with the code (core serves it)
+!dashboard/dist/
 .venv/
 venv/
 .python-version.local

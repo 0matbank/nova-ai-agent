@@ -106,3 +106,9 @@ update:
   health_timeout_seconds: 180  # the new version must be fully up by then, else rollback
   stable_seconds: 20           # … and keep running this long
   run_unit_tests: true         # preflight with the new code before it starts
+
+# Phase 24 — local dashboard (plan §40): http://127.0.0.1:47810 on this PC only, same
+# engines as Telegram. Open it with `uv run python scripts/dashboard.py`. docs/DASHBOARD.md
+dashboard:
+  enabled: true
+  port: 47810

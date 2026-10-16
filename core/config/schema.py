@@ -166,6 +166,12 @@ class UpdateSection(Strict):
     run_unit_tests: bool = True          # preflight: tests/unit with the new code
 
 
+class DashboardSection(Strict):
+    """Phase 24 (plan §40): local-only web dashboard inside core."""
+    enabled: bool = True
+    port: Annotated[int, Field(ge=1024, le=65535)] = 47810
+
+
 class DefaultConfig(Strict):
     agent: AgentSection
     paths: PathsSection
@@ -176,6 +182,7 @@ class DefaultConfig(Strict):
     shutdown: ShutdownSection
     whatsapp: WhatsAppSection = WhatsAppSection()
     update: UpdateSection = UpdateSection()
+    dashboard: DashboardSection = DashboardSection()
 
 
 # -------------------------------------------------------------- providers.yaml
