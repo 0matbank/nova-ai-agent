@@ -321,6 +321,8 @@ async def run_core_service(
     local = providers.adapters.get("ollama_local")
     if isinstance(local, OllamaAdapter):
         pressure.relievers.append(local.relieve)       # plan §17H critical
+        # owner 2026-10-16: an idle runner whose prompt cache grew gives the RAM back
+        pressure.relievers.append(local.flush_if_bloated)
     if isinstance(local, OllamaAdapter) and local.policy.keep_default_loaded:
         # owner 2026-10-15: the quick-answer model is ready before the first question
         background.append(asyncio.create_task(local.warm()))

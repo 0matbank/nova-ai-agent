@@ -47,9 +47,11 @@ async def main() -> int:
         s = await desk.call("GET", "/v1/session", task_id=7)
         check("desktop: runs in interactive user session", bool(s["interactive_session"]),
               f"session {s['windows_session_id']}")
-        created = await brow.call("POST", "/v1/sessions", task_id=7)
-        sid = created["session_id"]
-        check("browser: separate session id", sid != "7" and len(sid) == 32)
+        # Phase 10+ API: a body is required; profile None = throwaway in-memory profile
+        # (the owner's logged-in agent profile is never touched by this check)
+        created = await brow.call("POST", "/v1/sessions", task_id=7, json={"profile": None})
+        sid = str(created["session_id"])
+        check("browser: separate session id", sid != "7" and len(sid) >= 8, sid)
         closed = await brow.call("DELETE", f"/v1/sessions/{sid}", task_id=7)
         check("browser: session closed", closed.get("closed") == sid)
 
@@ -88,13 +90,18 @@ async def main() -> int:
         pipe = w.workers.privileged_broker.pipe_name
         base_msg = {"protocol_version": v, "request_id": uuid.uuid4().hex, "task_id": "system",
                     "token": tokens.current(), "params": {}}
-        pong = pipe_call(pipe, {**base_msg, "action": "ping"})
-        check("broker pipe: ping", pong.get("ok") is True, str(pong))
-        shell = pipe_call(pipe, {**base_msg, "action": "run_shell",
-                                 "params": {"cmd": "whoami"}})
-        check("broker pipe: arbitrary action refused", shell.get("error") == "ACTION_NOT_ALLOWED")
-        bad = pipe_call(pipe, {**base_msg, "action": "ping", "token": "y" * 43})
-        check("broker pipe: wrong token refused", bad.get("error") == "UNAUTHORIZED")
+        try:
+            pong = pipe_call(pipe, {**base_msg, "action": "ping"})
+        except Exception as e:  # noqa: BLE001 - pywintypes.error: the broker is not running
+            check("broker pipe: ping", False, f"broker not running ({e})")
+        else:
+            check("broker pipe: ping", pong.get("ok") is True, str(pong))
+            shell = pipe_call(pipe, {**base_msg, "action": "run_shell",
+                                     "params": {"cmd": "whoami"}})
+            check("broker pipe: arbitrary action refused",
+                  shell.get("error") == "ACTION_NOT_ALLOWED")
+            bad = pipe_call(pipe, {**base_msg, "action": "ping", "token": "y" * 43})
+            check("broker pipe: wrong token refused", bad.get("error") == "UNAUTHORIZED")
 
         netstat = shutil.which("netstat")
         assert netstat, "netstat not found"

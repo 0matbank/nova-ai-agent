@@ -57,6 +57,7 @@ class FakeOllama:
         self.reply = reply
         self.chats: list[dict[str, Any]] = []
         self.unloaded: list[str] = []
+        self.warms: list[dict[str, Any]] = []    # load-only requests (warm-up bodies)
         self.fail: list[Any] = []            # scripted: int status | "timeout" | "down"
 
     def client(self) -> httpx.AsyncClient:
@@ -81,6 +82,7 @@ class FakeOllama:
             self.loaded = [m for m in self.loaded if m != body["model"]]
             return httpx.Response(200, json={"done": True})
         if path == "/api/generate":                  # empty prompt = load only (warm-up)
+            self.warms.append(body)
             if body["model"] not in self.loaded:
                 self.loaded.append(body["model"])
             return httpx.Response(200, json={"done": True})

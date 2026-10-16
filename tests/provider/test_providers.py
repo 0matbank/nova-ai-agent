@@ -317,6 +317,37 @@ def test_critical_pressure_unloads_idle_heavy_models(cfg) -> None:  # type: igno
         res.pc_status = orig
 
 
+def test_warm_up_loads_with_the_same_options_as_a_chat(cfg) -> None:  # type: ignore[no-untyped-def]
+    """Owner 2026-10-16 (RAM): warm-up without num_ctx made Ollama load the model a
+    second time on the first question (measured: new runner PID)."""
+    fake = FakeOllama()
+    a = OllamaAdapter(_exclusive(cfg), client=fake.client())
+    assert run(a.warm())
+    run(a.complete(ProviderRequest(task_id=1, task_type="simple", user_request="hi")))
+    (warm,) = fake.warms
+    load_keys = set(warm["options"])
+    assert load_keys and {k: warm["options"][k] for k in load_keys} == \
+        {k: fake.chats[0]["options"][k] for k in load_keys}
+    assert warm["options"]["num_ctx"] == cfg.models.ollama_policy.num_ctx
+
+
+def test_bloated_idle_runner_is_reloaded_under_pressure(cfg, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The runner's RAM prompt cache grows ~0.35 GB per new long prompt (measured);
+    under critical RAM an idle runner over the limit is reloaded, a busy one never."""
+    fake = FakeOllama()
+    fake.loaded = ["qwen3:8b"]
+    a = OllamaAdapter(_exclusive(cfg), client=fake.client())
+    rss = {"gb": 1.0}
+    monkeypatch.setattr(OllamaAdapter, "runner_rss_gb", staticmethod(lambda: rss["gb"]))
+    assert run(a.flush_if_bloated()) is False and fake.unloaded == []      # small: left alone
+    rss["gb"] = 6.0
+    a._inflight = 1
+    assert run(a.flush_if_bloated()) is False and fake.unloaded == []      # busy: left alone
+    a._inflight = 0
+    assert run(a.flush_if_bloated()) is True
+    assert fake.unloaded == ["qwen3:8b"] and fake.loaded == ["qwen3:8b"]   # reloaded fresh
+
+
 def test_ram_hovering_at_the_line_alerts_once(cfg, monkeypatch, caplog) -> None:  # type: ignore[no-untyped-def]
     """Owner 2026-10-16: RAM 92↔94 % sent a critical alert every minute. Now it stays
     critical until clearly lower, and the phone hears it once per cooldown, naming

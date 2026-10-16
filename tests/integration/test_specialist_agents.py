@@ -133,6 +133,28 @@ def test_stuck_local_planner_escalates_to_the_cloud_planner(tmp_path: Path) -> N
     assert len(ad["ollama_local"].requests) == 2                     # list_dir not repeated
 
 
+def test_bangla_rewording_never_changes_file_names(tmp_path: Path) -> None:
+    """Drill 2026-10-16: the rewording turned "bill.pdf" into "বিল.পিডিএফ"."""
+    box = tmp_path / "box"
+    box.mkdir()
+    (box / "bill.pdf").write_text("x", encoding="utf-8")
+    s, ad = setup(tmp_path, local=[
+        call("files", "list_dir", path=str(box)),
+        answer("There is 1 PDF: bill.pdf"),
+    ])
+    gemini = FakeAdapter("gemini_api", [
+        "ফোল্ডারে 1টি পিডিএফ: বিল.পিডিএফ",               # rewording 1: name transliterated
+        "ফোল্ডারে 1টি PDF আছে: bill.pdf",                # rewording 2: name kept
+    ], capabilities=frozenset({"summarization"}))
+    ad["gemini_api"] = gemini                        # the rewording step's first choice
+    tid = submit(s, f"{box} folder e koyta pdf ache?")
+    run_all(s)
+    t = s.tasks.store.get(tid)
+    assert t.state is TaskState.COMPLETED, t.error_message
+    assert t.result_summary == "ফোল্ডারে 1টি PDF আছে: bill.pdf"
+    assert "Copy these names exactly" in gemini.requests[-1].system
+
+
 def test_runner_holds_every_call_to_the_agents_skills(tmp_path: Path) -> None:
     import pytest
 
