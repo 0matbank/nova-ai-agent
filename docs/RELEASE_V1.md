@@ -1,8 +1,8 @@
 # Nova AI — V1 release check (plan §42 + Phase 25)
 
-Status: **release candidate** — every §42 requirement verified on the owner's PC/phone;
-Phase 25 stress, security and failure tests passed; the PC-restart test is the last
-open item (see the bottom).
+Status: **V1 release candidate — stable (2026-10-16)**. Every §42 requirement verified
+on the owner's PC/phone; all Phase 25 stress, security and failure tests passed,
+including a real PC restart from the phone.
 
 ## §42 V1 requirements → evidence
 
@@ -47,7 +47,7 @@ foundation (Phase 20).
 | Google outage | → local model; live news → honest "no live source" | all cloud failing → real local qwen3 answered (3.7 s) |
 | Claude disabled/enabled | disabled never called; enabled takes review; signed-out skipped | — (no subscription; stays disabled) |
 | Internet loss | providers + Telegram poller (backoff, recovers) | simulated in-process only (the PC's network was not cut) |
-| PC restart | — | **owner test, see below** |
+| PC restart | network-wait test | from the phone: run 1 → core gave up while the network was not up (5-min delay, fixed); run 2 → online 5 s after login, broker elevated, pre-reboot reminder fired |
 | Browser crash | — | Nova's own Playwright browser killed → error reported, new session works (owner's Chrome untouched) |
 | Worker crash | supervisor backoff tests | desktop + browser worker killed → back in ~3 s; core killed mid-task → back in 6 s, same task resumed |
 | Duplicate action prevention | redelivered Telegram message (**bug found + fixed**), approval double-tap, ledger, 200-task load each once | — |
@@ -63,9 +63,9 @@ foundation (Phase 20).
 - Code already running as the owner's account could read Nova's tokens/DB (Windows
   design); the broker still limits it to its fixed, parameter-checked operations.
 
-## Last open item: PC restart
+## PC restart (done)
 
-The owner restarts the PC from the phone ("PC restart koro" → ✅). After login: the
-broker starts (Task Scheduler, highest privileges), Nova starts 30 s later (supervisor),
-"🟢 Nova আবার online" arrives, `/status` is all ✅, a reminder set before the restart
-still fires.
+Run 2 (2026-10-16 21:31): the owner restarted the PC from the phone; after login the
+broker started elevated, the supervisor started core + workers, core was up 5 s later,
+Telegram connected, and the owner's next voice commands worked. Run 1 had exposed core
+exiting when the network was not ready yet after login — fixed in 3d61dce.
