@@ -81,7 +81,11 @@ def test_jobs_survive_a_restart_and_run_on_time(tmp_path: Path) -> None:
     # the recurring job runs at 23:00 and comes back for the next day
     daily = next(j for j in store.active() if j.kind == "recurring")
     assert daily.next_run_at is not None
-    asyncio.run(restart(s).tick(daily.next_run_at + timedelta(seconds=5)))
+    # tick when BOTH the 23:00 job and the 2-hours-later reminder are due (run between
+    # 21:00 and 23:00 the reminder comes after 23:00 — the test used to fail then)
+    assert rem.next_run_at is not None
+    when = max(daily.next_run_at, rem.next_run_at) + timedelta(seconds=5)
+    asyncio.run(restart(s).tick(when))
     again = store.get(daily.id)
     assert again is not None and again.enabled and again.run_count == 1
     assert again.next_run_at is not None
