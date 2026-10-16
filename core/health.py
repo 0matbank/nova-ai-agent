@@ -76,7 +76,7 @@ async def pc_status(disk_path: Path) -> PcStatus:
         disk_total_gb=disk.total / gb,
         boot_time=psutil.boot_time(),
         gpus=await _gpu_status(),
-        disk_drive=anchor.rstrip("\\/"),
+        disk_drive=anchor.rstrip("\\/") or anchor,      # "D:" on Windows, "/" on Linux
     )
 
 
