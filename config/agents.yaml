@@ -51,6 +51,19 @@ agents:
   verifier:            { enabled: true, kind: reasoning, task_types: [all],
                          provider_task_type: null, skills: [] }
 
+# Plan §8.10 cross-provider review (Phase 18): a high-impact code change gets a
+# read-only second opinion from a DIFFERENT provider before Nova commits it.
+review:
+  enabled: true
+  min_changed_lines: 150      # large refactor
+  min_files: 5
+  roles: [security, devops, backend_architect]
+  keywords: [production, security, secure, refactor, deploy, release, critical, important,
+             payment, auth, review, double check, second opinion, ভালো করে দেখ]
+  path_patterns: [Dockerfile, "docker-compose*", ".github/workflows/*", "*.tf", "deploy*",
+                  "*.env.example", "*auth*", "*security*"]
+  max_fix_rounds: 1           # the implementer fixes the reviewer's blocking issues once
+
 # Project specialists (plan §13, §51, §52): agents/projects/<key>/AGENT.md plus the
 # profile in config/projects/<key>.yaml (same key). One without a profile stays
 # inactive until its profile is added.

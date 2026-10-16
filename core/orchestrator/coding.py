@@ -18,8 +18,12 @@ the tests still fail.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import fnmatch
 import hashlib
+import json
 import os
+import re
 import shlex
 import sys
 from dataclasses import replace
@@ -30,6 +34,7 @@ from core.agents.roster import Roster
 from core.agents.roster import find_project as roster_find_project
 from core.agents.select import Assignment
 from core.config.schema import AppConfig, ProjectProfile
+from core.log import get_logger
 from core.notify.notifier import MessageType
 from core.orchestrator.lang import reply_language
 from core.queue.engine import TaskBlocked, TaskContext
@@ -39,12 +44,24 @@ from models.router import ProviderRouter
 from models.router.router import Handoff, default_handoff
 from providers.provider_base import Limits, ProviderRequest, ProviderResult
 
+_log = get_logger("core")
+
 CODING_SYSTEM = """You are working on the owner's software project "{name}" in the
 current folder. Make the smallest correct change that does what the owner asks.
 Rules: do not commit, push, change git settings or install packages; there is no
 network. Do not touch files outside this folder. If you can, run the tests
 ({test}) to check your change. Finish with a short summary (2-4 sentences) of
 what you changed and why, written in {language}."""
+
+REVIEW_SYSTEM = """You are an independent code reviewer for the owner's project. You did
+NOT write this change. Review the diff for: does it do what the owner asked; bugs; security
+problems (secrets in code, injection, unsafe file / OS / network use); breaking changes;
+missing tests for new behaviour. Do not rewrite the code.
+Reply ONLY with JSON:
+{"verdict": "approve" | "changes_needed", "summary": "<1-2 sentences>",
+ "issues": [{"severity": "high" | "medium" | "low", "file": "<path>", "problem": "<what>"}]}
+Use "changes_needed" only for a high-severity problem that must be fixed before this is
+committed; style preferences are "low"."""
 
 TEXT = {
     "bn": {
@@ -77,6 +94,12 @@ TEXT = {
         "pushed": "🚀 Push হয়েছে: {remote} → {branch}। Main-এ merge আপনার সিদ্ধান্ত।",
         "push_failed": "❌ Push হয়নি: {reason}",
         "commit_failed": "❌ Commit হয়নি: {reason}",
+        "reviewing": "🔍 গুরুত্বপূর্ণ পরিবর্তন ({reason}) — আরেকটা AI আলাদাভাবে review করছে…",
+        "review_fix": "🔍 {provider} {n}টা সমস্যা পেয়েছে — ঠিক করানো হচ্ছে…",
+        "review": "🔍 আলাদা review ({provider}): {verdict} — {summary}",
+        "review_skipped": "🔍 আলাদা review হয়নি: {reason}",
+        "review_blocked": "⛔ Reviewer-এর গুরুতর আপত্তি এখনো আছে — তাই commit/push করিনি। "
+                          "পরিবর্তন working tree-তে আছে; আপনি দেখে সিদ্ধান্ত দিন।",
         "working": "💻 {name}: কোড বদলানোর কাজ চলছে — কয়েক মিনিট লাগতে পারে। থামাতে /cancel",
         "follow_up": "🧪 Test এখনো ফেল — আরেকবার ঠিক করার চেষ্টা চলছে…",
         "switched": "🔁 {failed} মাঝপথে থেমে গিয়েছিল — {provider} আগের কাজ থেকেই বাকিটা শেষ করেছে।",
@@ -113,6 +136,12 @@ TEXT = {
         "pushed": "🚀 Pushed: {remote} → {branch}. Merging into main is your call.",
         "push_failed": "❌ Push failed: {reason}",
         "commit_failed": "❌ Commit failed: {reason}",
+        "reviewing": "🔍 High-impact change ({reason}) — another AI is reviewing it…",
+        "review_fix": "🔍 {provider} found {n} problem(s) — getting them fixed…",
+        "review": "🔍 Independent review ({provider}): {verdict} — {summary}",
+        "review_skipped": "🔍 No independent review: {reason}",
+        "review_blocked": "⛔ The reviewer still has a must-fix objection — so nothing was "
+                          "committed or pushed. The changes are in the working tree; your call.",
         "working": "💻 {name}: changing the code — this can take a few minutes. /cancel stops it",
         "follow_up": "🧪 Tests still fail — trying once more…",
         "switched": "🔁 {failed} stopped midway — {provider} finished it from where it left off.",
@@ -358,8 +387,15 @@ class CodingFlow:
         if switched:
             agent_text = t["switched"].format(failed=", ".join(dict.fromkeys(switched)),
                                               provider=provider) + "\n" + agent_text
+        review: dict[str, Any] = {}
+        if passed is not False and await self._changed(folder):
+            reason = await self._review_reason(goal, folder)
+            if reason:
+                review, passed, test_out, build_out = await self._cross_review(
+                    ctx, request, handoff, provider, project, folder, goal, reason, lang,
+                    passed, test_out, build_out)
         report = await self._report(lang, project, folder, provider, agent_text, passed,
-                                    test_out, result.session_id, build_out)
+                                    test_out, result.session_id, build_out, review)
         if pull_note:
             report["answer"] = pull_note + "\n\n" + report["answer"]
         if self.skills is None or not report["ok"] or "git" not in self.skills.registry.skills:
@@ -442,6 +478,104 @@ class CodingFlow:
         return {"kind": "coding", "ok": True, "answer": "\n".join(lines),
                 "evidence": {**evidence, "pushed": True}}
 
+    async def _review_reason(self, goal: str, folder: Path) -> str:
+        """Plan §8.10: only high-impact changes get a second opinion (quota, §58 rule 11)."""
+        pol = self.cfg.agents.review
+        if not pol.enabled:
+            return ""
+        low = goal.lower()
+        word = next((k for k in pol.keywords if k.lower() in low), "")
+        if word:
+            return f"'{word}' in the request"
+        if self.assignment is not None and self.assignment.lead in pol.roles:
+            return f"{self.assignment.lead} change"
+        _, numstat = await git(folder, "diff", "HEAD", "--numstat")
+        _, untracked = await git(folder, "ls-files", "--others", "--exclude-standard")
+        files = [ln.split("\t")[-1] for ln in numstat.splitlines() if ln.strip()]
+        files += [f for f in untracked.splitlines() if f.strip() and "__pycache__" not in f]
+        lines = sum(int(a) + int(b) for a, b, *_ in
+                    (ln.split("\t") for ln in numstat.splitlines() if ln.strip())
+                    if a.isdigit() and b.isdigit())
+        if lines >= pol.min_changed_lines or len(files) >= pol.min_files:
+            return f"large change ({len(files)} files, {lines} lines)"
+        hit = next((f for f in files for pat in pol.path_patterns
+                    if fnmatch.fnmatch(f, pat) or fnmatch.fnmatch(Path(f).name, pat)), "")
+        return f"sensitive file {hit}" if hit else ""
+
+    async def _review_once(self, ctx: TaskContext, implementer: str, folder: Path, goal: str,
+                           test_out: str) -> dict[str, Any] | None:
+        """A DIFFERENT provider reads the diff — no workspace, no tools: it cannot edit
+        (plan §8.10: two AIs never edit the same tree)."""
+        _, diff = await git(folder, "diff", "HEAD")
+        _, untracked = await git(folder, "ls-files", "--others", "--exclude-standard")
+        new_files = []
+        for rel in [f for f in untracked.splitlines() if f.strip()][:10]:
+            with contextlib.suppress(OSError):
+                body = (folder / rel).read_text(encoding="utf-8", errors="replace")[:3000]
+                new_files.append(f"--- new file: {rel}\n{body}")
+        context = (f"The owner asked: {goal[:600]}\n\nDiff:\n{diff[-12000:]}\n"
+                   + "\n".join(new_files)
+                   + f"\n\nNova's own test run (passed):\n{test_out[-1500:]}")
+        r = await ctx.interruptible(self.providers.complete(ProviderRequest(
+            task_id=ctx.task.id, task_type="review", user_request="Review this change.",
+            context=context, system=REVIEW_SYSTEM, json_output=True,
+            limits=Limits(timeout_seconds=600, max_output_tokens=1500)),
+            exclude=(implementer,)))
+        if not r.ok:
+            return None
+        m = re.search(r"\{.*\}", r.answer or "", re.DOTALL)
+        try:
+            data = json.loads(m.group(0)) if m else {}
+        except ValueError:
+            data = {}
+        issues = [i for i in (data.get("issues") or []) if isinstance(i, dict)]
+        verdict = str(data.get("verdict", "")).lower()
+        if verdict not in ("approve", "changes_needed"):
+            # no readable verdict is never an approval (plan §54: no PASS on a non-answer)
+            _log.info(f"review by {r.provider} gave no usable verdict: {(r.answer or '')[:200]}",
+                      extra={"task_id": ctx.task.id, "action": "coding.review"})
+            return {"unusable": r.provider}
+        blocking = verdict == "changes_needed" and any(
+            str(i.get("severity", "")).lower() in ("high", "critical") for i in issues)
+        return {"provider": r.provider, "verdict": verdict, "blocking": blocking,
+                "summary": str(data.get("summary", ""))[:300], "issues": issues[:10]}
+
+    async def _cross_review(self, ctx: TaskContext, request: ProviderRequest,
+                            handoff: Handoff, implementer: str, project: ProjectProfile,
+                            folder: Path, goal: str, reason: str, lang: str,
+                            passed: bool | None, test_out: str, build_out: str
+                            ) -> tuple[dict[str, Any], bool | None, str, str]:
+        t = TEXT[lang]
+        await ctx.progress(t["reviewing"].format(reason=reason))
+        review = await self._review_once(ctx, implementer, folder, goal, test_out)
+        rounds = 0
+        while (review is not None and review.get("blocking")
+               and rounds < self.cfg.agents.review.max_fix_rounds):
+            rounds += 1
+            await ctx.progress(t["review_fix"].format(provider=review["provider"],
+                                                      n=len(review["issues"])))
+            issues = "\n".join(f"- [{i.get('severity')}] {i.get('file', '')}: "
+                               f"{i.get('problem', '')}" for i in review["issues"])
+            fix = await ctx.interruptible(self.providers.complete(replace(
+                request, previous_attempt=(
+                    "Your change was applied and the tests pass, but an independent reviewer "
+                    f"found problems that must be fixed:\n{issues}")), handoff=handoff))
+            if not fix.ok:
+                break
+            built, build_out = await self._build(ctx, project, folder)
+            passed, test_out = (False, build_out) if built is False else \
+                await self._test(ctx, project, folder)
+            if passed is False:
+                break                      # the report shows the failing tests
+            review = await self._review_once(ctx, implementer, folder, goal, test_out)
+        if review is None:
+            return {"skipped": "no other provider was available", "reason": reason}, \
+                passed, test_out, build_out
+        if "unusable" in review:
+            return {"skipped": f"{review['unusable']} gave no usable verdict",
+                    "reason": reason}, passed, test_out, build_out
+        return {**review, "reason": reason, "fix_rounds": rounds}, passed, test_out, build_out
+
     async def _test(self, ctx: TaskContext, project: ProjectProfile, folder: Path
                     ) -> tuple[bool | None, str]:
         if not project.test_command:
@@ -455,7 +589,8 @@ class CodingFlow:
 
     async def _report(self, lang: str, project: ProjectProfile, folder: Path, provider: str,
                       agent_text: str, passed: bool | None, test_out: str,
-                      session: str | None, build_out: str = "") -> dict[str, Any]:
+                      session: str | None, build_out: str = "",
+                      review: dict[str, Any] | None = None) -> dict[str, Any]:
         t = TEXT[lang]
         _, status = await git(folder, "status", "--porcelain")
         _, stat = await git(folder, "diff", "--stat")
@@ -484,16 +619,29 @@ class CodingFlow:
             lines += ["", t["tests_ok"].format(cmd=cmd), _test_tail(test_out, 3)]
         else:
             lines += ["", t["tests_fail"].format(cmd=cmd), _test_tail(test_out, 12)]
+        review = review or {}
+        if review.get("provider"):
+            lines += ["", t["review"].format(provider=review["provider"],
+                                             verdict=review.get("verdict"),
+                                             summary=review.get("summary", ""))]
+            lines += [f"   • [{i.get('severity')}] {i.get('file', '')}: {i.get('problem', '')}"
+                      for i in (review.get("issues") or [])[:6]]
+        elif review.get("skipped"):
+            lines += ["", t["review_skipped"].format(reason=review["skipped"])]
         if changed:
             lines += ["", t["undo"].format(folder=folder)]
         ok = bool(changed) and passed is not False
         if changed and passed is False:
             # tests still fail after the follow-up round: the owner decides what next
             raise TaskBlocked("\n".join(lines))
+        if review.get("blocking"):
+            # the independent reviewer still sees a must-fix problem: nothing is committed
+            raise TaskBlocked("\n".join([*lines, "", t["review_blocked"]]))
         return {"kind": "coding", "ok": ok, "answer": "\n".join(lines),
                 "evidence": {"project": project.name, "provider": provider,
                              "files_changed": changed, "tests_passed": passed,
-                             "session_id": session}}
+                             "session_id": session, "folder": str(folder),
+                             "review": {k: v for k, v in review.items() if k != "issues"}}}
 
 
 def _test_tail(output: str, n: int) -> str:

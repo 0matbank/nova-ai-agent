@@ -16,6 +16,8 @@ non-empty answer actually returned by a provider.
 from __future__ import annotations
 
 import base64
+from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from core.agents import Assignment, Roster, assign
@@ -25,13 +27,14 @@ from core.notify.notifier import MessageType
 from core.orchestrator import project_agent
 from core.orchestrator.answer import answer
 from core.orchestrator.browse import BrowserFlow
-from core.orchestrator.coding import CodingFlow
+from core.orchestrator.coding import CodingFlow, git
 from core.orchestrator.context import for_request
 from core.orchestrator.lang import reply_language
 from core.orchestrator.operator import OperatorAgent
-from core.queue.engine import TaskContext, Verdict
+from core.queue.engine import TaskContext, Verdict, VerdictStatus
 from core.router.intent import Intent, IntentRouter, is_screen_question
 from core.skills.runner import SkillRunner
+from core.verifier import check_effect
 from models.router import ProviderRouter
 from providers.provider_base import ProviderRequest
 
@@ -222,7 +225,7 @@ class UserRequestExecutor:
             if done:
                 answer = f"{app}: {done[0] if result.ok else done[1]}\n({result.summary})"
         return {"kind": "skill", "skill": f"{skill}.{tool}", "ok": result.ok,
-                "answer": answer, "evidence": result.evidence}
+                "answer": answer, "evidence": result.evidence, "app": params.get("app")}
 
     async def _screen_question(self, ctx: TaskContext, lang: str) -> dict[str, Any]:
         """Plan §57 screen understanding: screenshot → vision AI answers the owner's
@@ -270,64 +273,46 @@ class UserRequestExecutor:
                 "answer": result.answer, "ok": True}
 
     async def verify(self, ctx: TaskContext, result: str) -> Verdict:
-        verdict = self._check(ctx, result)
+        """Plan §30 / §54 (Phase 18): PASS only on proof that is not the agent's own word —
+        the PC is looked at again (files, processes, git), tests are Nova's own run, a
+        second provider reviewed high-impact code. Verdicts: PASS, PASS WITH KNOWN
+        LIMITATIONS, NEEDS WORK (→ the action runs again), BLOCKED (→ the owner)."""
+        verdict = await self._check(ctx, result)
         step1 = next((s for s in ctx.steps if s.seq == 1), None)
         routed = ((step1.checkpoint if step1 is not None else None) or {}).get("assignment")
         if routed and self.roster is not None:
             # which specialist(s) did it — one short line, no provider noise
             label = Assignment.from_json(routed).label(self.roster)
-            return Verdict(verdict.passed, f"{verdict.detail} · 🧭 {label}")
+            return replace(verdict, proofs=(*verdict.proofs, f"🧭 {label}"))
         return verdict
 
-    def _check(self, ctx: TaskContext, result: str) -> Verdict:
+    async def _check(self, ctx: TaskContext, result: str) -> Verdict:
         step2 = next((s for s in ctx.steps if s.seq == 2), None)
         act = (step2.checkpoint if step2 is not None else None) or {}
         if not result.strip():
-            return Verdict(False, "empty result")
+            return Verdict(False, "empty result", VerdictStatus.NEEDS_WORK, redo_from=2)
         kind = act.get("kind")
+        ev = act.get("evidence") or {}
         bn = reply_language(ctx.task.request_text) == "bn"
+        if act.get("needs_input"):
+            return Verdict(True, "asked the owner", VerdictStatus.LIMITED)
         if kind == "operator":
-            ev = act.get("evidence") or {}
-            calls = ev.get("calls") or []
-            if not calls:
-                # e.g. a refused step: the agent said what it could not do (no facts claimed;
-                # numbers are checked against tool results before an answer is accepted)
-                return Verdict(bool(act.get("ok")),
-                               "PASS WITH KNOWN LIMITATIONS — no tool result behind the answer")
-            return Verdict(bool(act.get("ok")), f"{len(calls)}টা tool-এর ফল থেকে উত্তর ✓"
-                           if bn else f"answer grounded in {len(calls)} tool result(s) ✓")
+            return self._check_operator(ev, bn)
         if kind == "project":
-            if act.get("needs_input"):
-                return Verdict(True, "PASS WITH KNOWN LIMITATIONS — asked the owner")
-            ev = act.get("evidence") or {}
             if "memory_id" in ev:
-                return Verdict(bool(act.get("ok")), f"saved in project memory #{ev['memory_id']}"
-                                                    f" ({ev.get('memory_kind')}) ✓")
-            return Verdict(True, f"tests run by Nova: {ev.get('command')} → "
-                                 f"{'passed' if ev.get('tests_passed') else 'FAILED (reported)'}")
+                return Verdict(bool(act.get("ok")), "", VerdictStatus.PASS, (
+                    f"project memory #{ev['memory_id']} ({ev.get('memory_kind')}) ✓",))
+            return Verdict(True, "", VerdictStatus.PASS, (
+                f"Nova-র নিজের test run: {ev.get('command')} → "
+                f"{'pass ✓' if ev.get('tests_passed') else 'fail (জানানো হয়েছে)'}",))
         if kind == "skill":
-            if act.get("skill") == "download.fetch" and act.get("ok"):
-                ev = act.get("evidence") or {}
-                exists = "ফাইলটা আছে ✓" if bn else "file exists ✓"
-                return Verdict(bool(ev.get("exists")), (
-                    f"{exists} · {ev.get('size', 0) / 1024:.1f} KB · "
-                    f"SHA-256 {str(ev.get('sha256', ''))[:12]}…"))
-            return Verdict(bool(act.get("ok")), f"skill {act.get('skill')} evidence "
-                                                f"{act.get('evidence')}")
+            return self._check_skill(act, ev, bn)
         if kind == "coding":
-            if act.get("needs_input"):
-                return Verdict(True, "PASS WITH KNOWN LIMITATIONS — asked the owner which project")
-            ev = act.get("evidence") or {}
-            tests = ("tests passed ✓" if ev.get("tests_passed") else "no test command"
-                     if ev.get("tests_passed") is None else "tests failed")
-            return Verdict(bool(act.get("ok")), f"{ev.get('provider')}: "
-                           f"{len(ev.get('files_changed') or [])} file(s) changed · {tests}")
+            return await self._check_coding(ev)
         if kind == "browser":
-            if act.get("needs_input"):
-                return Verdict(True, "PASS WITH KNOWN LIMITATIONS — asked the owner for the site")
             if not act.get("ok"):
-                return Verdict(False, f"browser: {str(act.get('answer', ''))[:300]}")
-            ev = act.get("evidence") or {}
+                return Verdict(False, f"browser: {str(act.get('answer', ''))[:300]}",
+                               VerdictStatus.NEEDS_WORK)
             where = ev.get("title") or ev.get("url")
             parts = [f"পেজ খোলা হয়েছে ✓ ({where})" if bn else f"page opened ✓ ({where})"]
             if ev.get("searched"):
@@ -337,7 +322,85 @@ class UserRequestExecutor:
                              else "summary from the page text only ✓")
             if ev.get("screenshot"):
                 parts.append("screenshot পাঠানো হয়েছে ✓" if bn else "screenshot sent ✓")
-            return Verdict(True, " · ".join(parts))
+            return Verdict(True, "", VerdictStatus.PASS, tuple(parts))
         if kind == "ai":
-            return Verdict(True, f"answer from {act.get('provider')} ({act.get('model')})")
-        return Verdict(True, "PASS WITH KNOWN LIMITATIONS — capability not built yet")
+            return Verdict(True, "", VerdictStatus.PASS,
+                           (f"answer from {act.get('provider')} ({act.get('model')})",))
+        return Verdict(True, "capability not built yet", VerdictStatus.LIMITED)
+
+    def _resolve(self, raw: str) -> Path:
+        assert self.skills is not None
+        return self.skills.env.paths.resolve(raw)
+
+    def _check_operator(self, ev: dict[str, Any], bn: bool) -> Verdict:
+        calls = ev.get("calls") or []
+        if not calls:
+            # e.g. a refused step: the agent said what it could not do (no facts claimed;
+            # numbers are checked against tool results before an answer is accepted)
+            return Verdict(True, "no tool result behind the answer", VerdictStatus.LIMITED)
+        proofs = [f"{len(calls)}টা tool-এর ফল থেকে উত্তর ✓" if bn
+                  else f"answer grounded in {len(calls)} tool result(s) ✓"]
+        bad = []
+        for effect in ev.get("effects") or []:
+            ok, proof = check_effect(effect, self._resolve)
+            proofs.append(proof)
+            if not ok:
+                bad.append(proof)
+        if bad:
+            # the agent said it was done, the PC says otherwise: do it again
+            return Verdict(False, "যা বলা হয়েছে PC-তে তা মেলেনি: " + "; ".join(bad),
+                           VerdictStatus.NEEDS_WORK, tuple(proofs), redo_from=2)
+        return Verdict(True, "", VerdictStatus.PASS, tuple(proofs))
+
+    def _check_skill(self, act: dict[str, Any], ev: dict[str, Any], bn: bool) -> Verdict:
+        skill = str(act.get("skill"))
+        if not act.get("ok"):
+            return Verdict(False, f"{skill}: {str(act.get('answer', ''))[:300]}",
+                           VerdictStatus.NEEDS_WORK)
+        if skill == "download.fetch":
+            exists = "ফাইলটা আছে ✓" if bn else "file exists ✓"
+            return Verdict(bool(ev.get("exists")), "", VerdictStatus.PASS
+                           if ev.get("exists") else VerdictStatus.NEEDS_WORK, (
+                f"{exists}", f"{ev.get('size', 0) / 1024:.1f} KB",
+                f"SHA-256 {str(ev.get('sha256', ''))[:12]}…"))
+        if skill in ("app-control.open", "app-control.close"):
+            tool = skill.split(".", 1)[1]
+            ok, proof = check_effect({"skill": "app-control", "tool": tool,
+                                      "params": {"app": act.get("app", "")}, "evidence": ev},
+                                     self._resolve)
+            return Verdict(ok, "" if ok else "process check মেলেনি",
+                           VerdictStatus.PASS if ok else VerdictStatus.NEEDS_WORK, (proof,),
+                           redo_from=None if ok else 2)
+        return Verdict(True, "", VerdictStatus.PASS, (f"{skill} ✓",))
+
+    async def _check_coding(self, ev: dict[str, Any]) -> Verdict:
+        files = len(ev.get("files_changed") or [])
+        proofs = [f"{ev.get('provider')}: {files}টা ফাইল বদলেছে"]
+        limits = []
+        tests = ev.get("tests_passed")
+        if tests is True:
+            proofs.append("Nova-র নিজের test run: pass ✓")
+        elif tests is None:
+            limits.append("এই project-এ test command নেই")
+        else:
+            return Verdict(False, "test এখনো fail", VerdictStatus.NEEDS_WORK, tuple(proofs))
+        review = ev.get("review") or {}
+        if review.get("provider"):
+            proofs.append(f"আলাদা reviewer {review['provider']}: {review.get('verdict')} ✓")
+        elif review.get("skipped"):
+            limits.append(f"independent review হয়নি ({review['skipped']})")
+        if ev.get("commit") and ev.get("folder"):
+            # the commit really is on that branch (git itself, not the agent's word)
+            code, out = await git(Path(str(ev["folder"])), "rev-parse",
+                                  str(ev.get("branch", "")))
+            on_branch = code == 0 and out.strip().startswith(str(ev["commit"])[:7])
+            proofs.append(f"commit {str(ev['commit'])[:8]} {ev.get('branch')}-এ আছে ✓"
+                          if on_branch else "commit branch-এ পাওয়া যায়নি ✗")
+            if not on_branch:
+                return Verdict(False, "commit যাচাই হয়নি", VerdictStatus.NEEDS_WORK,
+                               tuple(proofs))
+        if ev.get("pushed"):
+            proofs.append("push হয়েছে (remote-এ যাচাই করা) ✓")
+        if limits:
+            return Verdict(True, "; ".join(limits), VerdictStatus.LIMITED, tuple(proofs))
+        return Verdict(True, "", VerdictStatus.PASS, tuple(proofs))

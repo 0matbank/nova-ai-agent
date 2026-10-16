@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import replace
 
 from core.config.schema import ProvidersConfig
@@ -114,8 +114,10 @@ class ProviderRouter:
 
         return sorted(self.capabilities.candidates(task_type), key=lambda c: -score(c))
 
-    async def complete(self, request: ProviderRequest,
-                       handoff: Handoff | None = None) -> ProviderResult:
+    async def complete(self, request: ProviderRequest, handoff: Handoff | None = None,
+                       exclude: Collection[str] = ()) -> ProviderResult:
+        """`exclude`: providers that must not serve this request — e.g. the one that wrote
+        the code must not be its own independent reviewer (plan §8.10)."""
         budget = self.config.task_budgets.get(request.task_type)
         if budget is not None:          # plan §58: limits come from config, not call sites
             request = replace(request, limits=replace(
@@ -124,6 +126,8 @@ class ProviderRouter:
         tried: list[str] = []
         noteworthy = False          # a provider that should have served failed / is limited
         for cand in self.ranked(request.task_type):
+            if cand.provider in exclude:
+                continue
             adapter = self.adapters[cand.provider]
             left = self.breaker.open_for(cand.provider)
             if left > 0:

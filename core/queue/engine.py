@@ -15,6 +15,7 @@ import contextlib
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, Protocol, TypeVar
 
 from core.config.schema import TaskEngineSection
@@ -56,10 +57,39 @@ class TaskBlocked(Exception):
 SafetyCheck = Callable[[], Awaitable[tuple[bool, str]]]
 
 
+class VerdictStatus(StrEnum):
+    """Plan §54 final verdicts."""
+    PASS = "PASS"  # noqa: S105 - a verdict, not a password
+    LIMITED = "PASS WITH KNOWN LIMITATIONS"
+    NEEDS_WORK = "NEEDS WORK"
+    BLOCKED = "BLOCKED BY USER/AUTH/EXTERNAL SERVICE"
+
+
+VERDICT_ICON = {VerdictStatus.PASS: "✅", VerdictStatus.LIMITED: "☑️",
+                VerdictStatus.NEEDS_WORK: "🔧", VerdictStatus.BLOCKED: "🧩"}
+
+
 @dataclass(frozen=True)
 class Verdict:
     passed: bool
     detail: str
+    # Phase 18 (plan §30, §54): the final verdict and its evidence. Without a status,
+    # passed → PASS and not passed → NEEDS WORK.
+    status: VerdictStatus | None = None
+    proofs: tuple[str, ...] = ()
+    # NEEDS WORK found after the action step was done: these steps run again on retry
+    redo_from: int | None = None
+
+    @property
+    def final(self) -> VerdictStatus:
+        if self.status is not None:
+            return self.status
+        return VerdictStatus.PASS if self.passed else VerdictStatus.NEEDS_WORK
+
+    def text(self) -> str:
+        proofs = " · ".join(self.proofs)
+        body = " · ".join(x for x in (self.detail, proofs) if x)
+        return f"{VERDICT_ICON[self.final]} {self.final.value}" + (f" — {body}" if body else "")
 
 
 class Executor(Protocol):
@@ -332,13 +362,38 @@ class TaskEngine:
             await self._report_if_failed(task)
             return
 
-        if verdict.passed:
+        final = verdict.final
+        if final in (VerdictStatus.PASS, VerdictStatus.LIMITED):
+            done = store.get(task.id)
+            # plan §53: a task that passes after a retry recovered by itself
+            recovered = (f"\n🔁 AUTO_RECOVERED — {done.retry_count + 1}-তম চেষ্টায় সফল"
+                         if done is not None and done.retry_count else "")
             store.transition(task.id, TaskState.COMPLETED, result_summary=result,
                              error_code=None, error_message=None)
             await self._tell(task, MessageType.TASK_COMPLETED,
-                             f"✅ TASK #{task.id} COMPLETE\n{result}\nVerifier: {verdict.detail}")
+                             f"✅ TASK #{task.id} COMPLETE\n{result}\n"
+                             f"Verifier: {verdict.text()}{recovered}")
+        elif final is VerdictStatus.BLOCKED:
+            # plan §53 WAITING_USER: retrying cannot fix what needs the owner / a sign-in
+            store.transition(task.id, TaskState.FAILED, error_code="BLOCKED_NEEDS_USER",
+                             error_message=verdict.text())
+            await self._tell(task, MessageType.USER_INPUT_REQUIRED,
+                             f"🧩 Task #{task.id}: {verdict.text()}")
         else:
-            self._retry_or_fail(task, "VERIFICATION_FAILED", verdict.detail)
+            current = store.get(task.id)
+            if (verdict.redo_from is not None and current is not None
+                    and current.retry_count < self.settings.max_retries):
+                # the action step was DONE but its result did not hold up: run it again
+                for s in (current.steps or ()):
+                    if s.seq >= verdict.redo_from:
+                        store.reset_step(task.id, s.seq)
+            self._retry_or_fail(task, "VERIFICATION_FAILED", verdict.text())
+            after = store.get(task.id)
+            if after is not None and after.state is TaskState.RETRYING:
+                await self._tell(task, MessageType.INFO,
+                                 f"🔁 Task #{task.id}: যাচাইয়ে ঘাটতি — আবার চেষ্টা "
+                                 f"({after.retry_count}/{self.settings.max_retries}, "
+                                 f"RETRY_WITH_FALLBACK)\n{verdict.text()}")
             await self._report_if_failed(task)
 
     def _retry_or_fail(self, task: TaskView, code: str, message: str) -> None:
@@ -354,9 +409,16 @@ class TaskEngine:
     async def _report_if_failed(self, task: TaskView) -> None:
         current = self.store.get(task.id)
         if current is not None and current.state is TaskState.FAILED:
+            # plan §30: retry limit reached → a blocker report, not just an error code
+            tries = current.retry_count + 1
+            done = [s.title for s in current.steps if s.status is StepStatus.DONE]
             await self._tell(task, MessageType.TASK_FAILED_PERMANENTLY,
-                             f"❌ Task #{task.id} FAILED ({current.error_code})\n"
-                             f"{current.error_message or ''}")
+                             f"❌ Task #{task.id} FAILED ({current.error_code}) — "
+                             f"{tries} বার চেষ্টা করেছি (FAILED_SAFE)\n"
+                             f"{current.error_message or ''}"
+                             + (f"\nযা হয়েছে: {', '.join(done)}" if done else "")
+                             + "\nকী লাগবে: উপরের কারণটা দেখুন; ঠিক করে আবার পাঠালে নতুন করে "
+                               "করব।")
 
     async def _tell(self, task: TaskView, kind: MessageType, text: str) -> None:
         if self.notifier is not None:

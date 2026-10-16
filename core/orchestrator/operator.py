@@ -38,6 +38,9 @@ from providers.provider_base import Limits, ProviderRequest
 _log = get_logger("core")
 
 MAX_STEPS = 8
+# calls that change something — the verifier re-checks each one itself (plan §54)
+EFFECT_TOOLS = ("files.write", "files.mkdir", "files.copy", "files.move", "files.delete",
+                "app-control.open", "app-control.close")
 # local planner stuck → the cloud planner (Antigravity → Gemini) gets these more steps
 ESCALATED_TASK_TYPE = "reasoning"
 ESCALATED_STEPS = 6
@@ -229,7 +232,9 @@ class OperatorAgent:
                                    + "\n" + "\n".join(f"• {f}" for f in found))
                     return {"kind": "operator", "ok": True, "answer": answer,
                             "evidence": {"agent": assignment.lead, "steps": len(steps),
-                                         "calls": [s["call"] for s in steps if s.get("ok")]}}
+                                         "calls": [s["call"] for s in steps if s.get("ok")],
+                                         "effects": [s["effect"] for s in steps
+                                                     if s.get("effect")]}}
                 rejected += 1
                 steps.append({"call": "answer", "ok": False, "result": (
                     f"rejected: {', '.join(missing) or 'empty answer'} is not in any tool "
@@ -278,8 +283,14 @@ class OperatorAgent:
         data = json.dumps(r.data, ensure_ascii=False, default=str) if r.data else ""
         findings = [f"{h.get('file')}" + (f" (line {h['line']})" if h.get("line") else "")
                     for h in (r.data or {}).get("findings") or [] if isinstance(h, dict)]
-        return {"call": call, "ok": r.ok, "items": _items(r.data), "findings": findings[:20],
-                "result": (r.summary + ("\n" + data if data else ""))[:RESULT_CHARS]}
+        step: dict[str, Any] = {
+            "call": call, "ok": r.ok, "items": _items(r.data), "findings": findings[:20],
+            "result": (r.summary + ("\n" + data if data else ""))[:RESULT_CHARS]}
+        if r.ok and f"{skill}.{tool}" in EFFECT_TOOLS:
+            # Phase 18: what this call changed, for the verifier to check by itself
+            step["effect"] = {"skill": skill, "tool": tool, "params": params,
+                              "evidence": r.evidence}
+        return step
 
     async def _plan(self, ctx: TaskContext, task_type: str, system: str,
                     steps: list[dict[str, Any]]) -> dict[str, Any]:

@@ -279,10 +279,28 @@ class AgentEntry(Strict):
     skills: list[str] = []
 
 
+class ReviewPolicy(Strict):
+    """Plan §8.10 cross-provider review: which coding tasks get a read-only second
+    opinion from a DIFFERENT provider before the commit (Phase 18)."""
+    enabled: bool = True
+    min_changed_lines: PositiveInt = 150          # large refactor
+    min_files: PositiveInt = 5
+    roles: list[str] = ["security", "devops", "backend_architect"]
+    # production code, security-sensitive change, deployment config, important logic,
+    # or the owner asking for it
+    keywords: list[str] = ["production", "security", "secure", "refactor", "deploy",
+                           "release", "critical", "important", "payment", "auth",
+                           "review", "double check", "second opinion", "ভালো করে দেখ"]
+    path_patterns: list[str] = ["Dockerfile", "docker-compose*", ".github/workflows/*",
+                                "*.tf", "deploy*", "*.env.example", "*auth*", "*security*"]
+    max_fix_rounds: Annotated[int, Field(ge=0, le=3)] = 1
+
+
 class AgentsConfig(Strict):
     runtime: AgentsRuntime
     agents: dict[str, AgentEntry]
     project_agents: list[str]
+    review: ReviewPolicy = ReviewPolicy()
 
     @field_validator("agents")
     @classmethod
