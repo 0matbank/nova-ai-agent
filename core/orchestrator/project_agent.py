@@ -194,7 +194,9 @@ def record_outcome(memory: ProjectMemory | None, roster: Roster, a: Assignment |
         else:
             errors = [ln.strip() for ln in str(out.get("answer", "")).splitlines()
                       if _ERROR_LINE.search(ln)][-3:]
-            memory.put(key, "known_issue", f"Tests fail ({cmd}) since task #{task_id} ({day}): "
+            # "last seen", not "since": Nova only knows when it ran them, not when it broke
+            memory.put(key, "known_issue", f"Tests fail ({cmd}) — last seen in task #{task_id} "
+                       f"({day}): "
                        + (" | ".join(errors) or "see the test output"),
                        key="tests", source="nova", task_id=task_id, project_name=name)
     elif kind == "coding":
