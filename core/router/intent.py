@@ -70,6 +70,16 @@ RULES: list[tuple[str, re.Pattern[str], tuple[str, str, dict[str, Any]] | None]]
     ("research", _rx(r"\b(news|latest\s+news|headlines?|breaking|current\s+events?|weather)\b",
                      r"(খবর|নিউজ|সংবাদ|সর্বশেষ|লেটেস্ট|আবহাওয়া)",
                      r"\b(khobor|khabar|akhon\s*ki\s*hocche)\b"), None),
+    # Phase 22: administrator work → the Windows Operator with the admin (broker) skill
+    ("pc_control", _rx(r"\b(pc|computer|windows)\s*(restart|reboot|shut\s*down|shutdown)\b",
+                       r"\b(restart|reboot|shutdown|shut\s*down)\s*(cancel|bondho|thamao|"
+                       r"batil)\b",
+                       r"\b(firewall|winget|flush\s*dns|dns\s*flush|defender\s*(scan|update)|"
+                       r"print\s*spooler|spooler|w32time|time\s*resync)\b",
+                       r"(?<!npm )(?<!pip )(?<!yarn )\b(install|uninstall)\s*(koro|kore\s*dao|"
+                       r"dao)\b",
+                       r"\b(as\s*admin|administrator)\b",
+                       r"(রিস্টার্ট|শাটডাউন|ফায়ারওয়াল|ইনস্টল)"), None),
     ("coding", _rx(r"\b(code|coding|bug|debug|refactor|compile|build|repo|repository|git|"
                    r"commit|function|script)\b", r"কোড", r"\bfix\s*koro\b"), None),
     ("browser", _rx(r"\b(website|browser|chrome|site|login|url|web\s*page)\b",

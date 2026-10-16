@@ -25,6 +25,8 @@ skills:
   archive:        { status: enabled }
   media:          { status: enabled }
   image:          { status: enabled }
+  # Phase 22: approved admin work through the Privileged/Admin Broker (Windows)
+  admin:          { status: enabled }
   network:        { status: planned }
   monitoring:     { status: planned }
   scheduler:      { status: planned }

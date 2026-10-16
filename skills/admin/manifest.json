@@ -1,0 +1,8 @@
+{
+  "name": "admin",
+  "version": "1.0.0",
+  "description": "Approved admin-level work through the Privileged/Admin Broker: allowlisted services, Nova firewall rules, winget packages, restart/shutdown, fixed elevated tasks.",
+  "worker": "core",
+  "platforms": ["win32"],
+  "tools": ["status", "service", "firewall", "package", "power", "task"]
+}

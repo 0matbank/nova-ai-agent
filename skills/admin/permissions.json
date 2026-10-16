@@ -1,0 +1,8 @@
+{
+  "status": ["admin.status"],
+  "service": ["admin.status", "admin.service_control"],
+  "firewall": ["admin.status", "admin.firewall"],
+  "package": ["admin.package_install", "admin.package_uninstall"],
+  "power": ["system.restart", "system.shutdown", "admin.power_cancel"],
+  "task": ["admin.task"]
+}

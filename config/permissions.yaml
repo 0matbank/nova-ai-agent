@@ -72,3 +72,12 @@ actions:
   system.restart: RED
   account.security_change: RED
   admin.destructive: RED
+
+  # Phase 22 Privileged/Admin Broker — the broker itself re-checks every RED approval
+  admin.status: GREEN         # broker status, a service's state, Nova's firewall rules
+  admin.power_cancel: GREEN   # cancelling a scheduled restart/shutdown is always safe
+  admin.service_control: RED  # start/stop/restart an allowlisted Windows service
+  admin.firewall: RED         # add/remove a "Nova AI - …" firewall rule
+  admin.package_install: RED  # winget install (machine-wide, elevated)
+  admin.package_uninstall: RED
+  admin.task: RED             # an allowlisted fixed elevated command

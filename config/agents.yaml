@@ -20,7 +20,7 @@ agents:
                          provider_task_type: planning,
                          skills: [windows, app-control, desktop-ui, screenshot, clipboard,
                                   powershell, terminal, files.list_dir, files.metadata,
-                                  files.read_text, search] }
+                                  files.read_text, search, admin] }
   developer:           { enabled: true, kind: reasoning, task_types: [coding],
                          provider_task_type: coding, skills: [git] }
   frontend_ui:         { enabled: true, kind: reasoning, task_types: [coding, frontend],

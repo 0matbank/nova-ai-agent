@@ -16,6 +16,26 @@ workers:
     host: 127.0.0.1
     port: 47802
   privileged_broker:
-    enabled: false          # built in Phase 22
+    # Phase 22: an elevated, allowlist-only broker (docs/BROKER.md). Installed once
+    # with `uv run python scripts/broker_install.py` (the owner clicks Yes on UAC).
+    # The policy below is COPIED into the protected install — edits take effect
+    # only after reinstalling.
+    enabled: false
     transport: named_pipe
     pipe_name: '\\.\pipe\personal-agent-broker'
+    install_dir: 'C:\Program Files\Nova AI\broker'
+    scheduled_task: '\Nova AI\Broker'
+    approval_max_age_seconds: 900     # the broker refuses an approval older than this
+    services:                         # services Nova may start / stop / restart
+      - Spooler                       # Print Spooler
+      - W32Time                       # Windows Time
+      - BITS                          # Background Intelligent Transfer
+      - wuauserv                      # Windows Update
+      - WSearch                       # Windows Search
+    tasks:                            # fixed elevated commands, no parameters
+      flush_dns: ['%SystemRoot%\System32\ipconfig.exe', '/flushdns']
+      time_resync: ['%SystemRoot%\System32\w32tm.exe', '/resync']
+      defender_quick_scan: ['%ProgramFiles%\Windows Defender\MpCmdRun.exe', '-Scan',
+                            '-ScanType', '1']
+      defender_update: ['%ProgramFiles%\Windows Defender\MpCmdRun.exe', '-SignatureUpdate']
+    packages: true                    # winget install / uninstall (owner approves each)

@@ -23,7 +23,9 @@ from core.log import get_logger
 
 _audit = get_logger("audit")
 BUFSIZE = 65536
-Action = Callable[[dict[str, Any]], dict[str, Any]]
+# FILE_GENERIC_READ | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES
+CLIENT_ACCESS = 0x0012018B
+Action =Callable[[dict[str, Any]], dict[str, Any]]
 
 
 def _require_windows() -> None:
@@ -157,9 +159,10 @@ def pipe_call(pipe_name: str, message: dict[str, Any], timeout_ms: int = 5000) -
         # (FILE_NOT_FOUND) or all instances are busy (PIPE_BUSY): retry.
         try:
             win32pipe.WaitNamedPipe(pipe_name, 200)
+            # read + write data + write attributes only: the Phase 22 broker grants the
+            # user no FILE_CREATE_PIPE_INSTANCE (part of GENERIC_WRITE)
             handle = win32file.CreateFile(
-                pipe_name, win32file.GENERIC_READ | win32file.GENERIC_WRITE,
-                0, None, win32file.OPEN_EXISTING, 0, None)
+                pipe_name, CLIENT_ACCESS, 0, None, win32file.OPEN_EXISTING, 0, None)
             break
         except pywintypes.error as e:
             retryable = e.winerror in (winerror.ERROR_FILE_NOT_FOUND, winerror.ERROR_PIPE_BUSY,

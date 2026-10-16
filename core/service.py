@@ -30,6 +30,8 @@ from channels.whatsapp.channel import PREFIX as WA_PREFIX
 from channels.whatsapp.channel import WhatsAppChannel
 from core.agents import Roster
 from core.bootstrap import EXIT_INVALID_CONFIG, EXIT_OK, AppContext, bootstrap
+from core.broker.client import BrokerClient
+from core.broker.watch import BrokerWatch
 from core.config import ConfigError
 from core.db.engine import make_sessionmaker
 from core.db.migrate import MigrationError, check_and_migrate
@@ -340,7 +342,11 @@ async def run_core_service(
 
     for c in monitor.clients:
         health.probes[f"{c.name.capitalize()} worker"] = monitor.probe(c.name)
-    health.probes["Privileged broker"] = lambda: (True, "not built yet (Phase 22) — disabled")
+    # Phase 22: the elevated allowlist-only broker (started by Task Scheduler)
+    broker_watch = BrokerWatch(BrokerClient(cfg, TokenStore(cfg.path("secrets_dir"))))
+    health.probes["Privileged broker"] = broker_watch.probe
+    if security is not None:
+        security.broker_lockdown = broker_watch.lockdown
     health.probes["AI providers"] = lambda: provider_summary(provider_router)
     # Phase 21: WhatsApp (official Cloud API) — never blocks Telegram
     wa_channel, wa_tasks = await start_whatsapp(cfg, ctx.secrets, handle, on_button,
@@ -357,7 +363,9 @@ async def run_core_service(
         asyncio.create_task(monitor.run(stop)),
         asyncio.create_task(_provider_health_loop(providers, stop, provider_router)),
         asyncio.create_task(transcriber.idle_loop(stop)),
-        asyncio.create_task(pressure.run(stop))]
+        asyncio.create_task(pressure.run(stop)),
+        asyncio.create_task(broker_watch.run(
+            stop, lambda text: channel.broadcast(OutgoingMessage(text))))]
     local = providers.adapters.get("ollama_local")
     if isinstance(local, OllamaAdapter):
         pressure.relievers.append(local.relieve)       # plan §17H critical

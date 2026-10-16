@@ -1,46 +1,42 @@
-"""Privileged/Admin Broker — INTERFACE SKELETON (plan §4, §17A; built in Phase 22).
+"""Privileged/Admin Broker — DEVELOPMENT launcher (Phase 22).
 
-Serves the restricted named pipe with a single harmless action, "ping". No
-elevated action exists yet, and the broker never runs arbitrary commands.
+Runs the broker package from the repo, NOT elevated, with a policy built from
+config/workers.yaml (state in <data>/broker-dev). Admin operations then answer
+NOT_ELEVATED; ping/status/validation/approval checks work as in production.
+
+The real broker is the protected, elevated copy installed by
+`uv run python scripts/broker_install.py` (docs/BROKER.md). Don't run both: the
+first one owns the pipe name.
 
     uv run python workers/privileged-broker/run.py
 """
 
-import os
-import signal
+import json
 import sys
-import threading
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parents[1]))
+sys.path.insert(0, str(HERE))
+
+from nova_broker.__main__ import main as broker_main  # noqa: E402
 
 from core.bootstrap import bootstrap  # noqa: E402
-from core.ipc.pipe import PipeServer  # noqa: E402
+from core.broker.policy import build_policy  # noqa: E402
 from core.ipc.token import TokenStore  # noqa: E402
-from core.log import get_logger, shutdown_logging  # noqa: E402
-
-ALLOWLIST = {"ping": lambda params: {"pong": True, "pid": os.getpid()}}
 
 
 def main() -> int:
     ctx = bootstrap(worker="broker")
-    cfg = ctx.config.workers
-    tokens = TokenStore(ctx.config.path("secrets_dir"))
-    tokens.ensure()
-    server = PipeServer(cfg.workers.privileged_broker.pipe_name, cfg.protocol_version,
-                        tokens, ALLOWLIST)
-    log = get_logger("core")
-    log.info(f"broker skeleton serving {cfg.workers.privileged_broker.pipe_name} "
-             f"(allowlist: {sorted(ALLOWLIST)})", extra={"action": "broker.start"})
-    done = threading.Event()
-    signal.signal(signal.SIGINT, lambda *_: done.set())
-    server.start()
-    try:
-        done.wait()
-    finally:
-        server.stop()
-        shutdown_logging()
-    return 0
+    cfg = ctx.config
+    TokenStore(cfg.path("secrets_dir")).ensure()
+    dev = cfg.path("data_dir") / "broker-dev"
+    dev.mkdir(parents=True, exist_ok=True)
+    policy = build_policy(cfg, install_dir=dev, folders={}, winget="")
+    policy["log_dir"] = str(cfg.path("logs_dir") / "broker")
+    path = dev / "policy.json"
+    path.write_text(json.dumps(policy, indent=2), encoding="utf-8")
+    return broker_main(["--policy", str(path)])
 
 
 if __name__ == "__main__":

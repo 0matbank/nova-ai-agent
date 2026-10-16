@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 from channels.base import CallbackReply, IncomingCallback, IncomingMessage
 from core.permissions.approvals import ApprovalManager, DecisionOutcome, parse_callback
 from core.permissions.audit import AuditTrail
@@ -24,6 +26,13 @@ class SecurityCommands:
         self.approvals = approvals
         self.store = store
         self.audit = audit
+        # Phase 22: the broker's own lockdown (returns one status line)
+        self.broker_lockdown: Callable[[bool], Awaitable[str]] | None = None
+
+    async def _broker(self, on: bool) -> str:
+        if self.broker_lockdown is None:
+            return "Privileged broker: install করা নেই — admin কাজ এমনিতেই বন্ধ"
+        return await self.broker_lockdown(on)
 
     async def on_button(self, cb: IncomingCallback) -> CallbackReply | None:
         parsed = parse_callback(cb.data)
@@ -38,18 +47,21 @@ class SecurityCommands:
         if args and args[0].lower() == "off":
             self.permissions.set_lockdown(False)
             self.audit.record(actor=msg.user_id, action="permission.lockdown", status="off")
-            return ("🔓 Lockdown বন্ধ।\nQueue এখনো paused — নিশ্চিত হলে /resume দিন।")
+            broker = await self._broker(False)
+            return (f"🔓 Lockdown বন্ধ।\n• {broker}\n"
+                    "Queue এখনো paused — নিশ্চিত হলে /resume দিন।")
         self.permissions.set_lockdown(True)
         self.store.pause_queue()
         rejected = self.approvals.reject_all_pending(actor="lockdown")
         self.audit.record(actor=msg.user_id, action="permission.lockdown", status="on",
                           details={"rejected_approvals": [a.id for a in rejected]})
+        broker = await self._broker(True)
         lines = [
             "🚨 LOCKDOWN চালু",
             "• নতুন task নেওয়া বন্ধ, queue paused",
             f"• Pending dangerous action বাতিল: {len(rejected)}",
             "• GREEN ছাড়া সব action blocked",
-            "• Privileged broker: এখনো তৈরি হয়নি (Phase 22) — তাই চালু নেই",
+            f"• {broker}",
             "• Telegram control চালু আছে",
             "\nবন্ধ করতে: /lockdown off",
         ]

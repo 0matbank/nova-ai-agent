@@ -59,7 +59,7 @@ package = false
 default-groups = ["dev", "test"]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = [".", "workers/privileged-broker"]   # Phase 22: the nova_broker package
 testpaths = ["tests", "skills"]
 addopts = "-ra --strict-markers"
 markers = [

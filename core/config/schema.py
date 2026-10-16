@@ -404,16 +404,40 @@ class CoreServiceWorker(Strict):
     enabled: bool
 
 
+_SERVICE_NAME = r"^[A-Za-z0-9_.-]{1,80}$"
+_TASK_NAME = r"^[a-z0-9_]{1,40}$"
+
+
 class BrokerWorker(Strict):
     enabled: bool
     transport: Literal["named_pipe"]   # never a localhost admin HTTP endpoint (§17A)
     pipe_name: str
+    # Phase 22 policy — copied into the protected install by scripts/broker_install.py;
+    # editing it changes nothing until the owner reinstalls (UAC).
+    install_dir: str = r"C:\Program Files\Nova AI\broker"
+    scheduled_task: str = r"\Nova AI\Broker"
+    approval_max_age_seconds: Annotated[int, Field(ge=60, le=3600)] = 900
+    services: list[Annotated[str, Field(pattern=_SERVICE_NAME)]] = Field(default_factory=list)
+    # name → fixed argv; %SystemRoot% / %ProgramFiles% are resolved by the installer
+    tasks: dict[Annotated[str, Field(pattern=_TASK_NAME)], list[str]] = Field(
+        default_factory=dict)
+    packages: bool = False             # winget install/uninstall (each one asks the owner)
 
     @field_validator("pipe_name")
     @classmethod
     def _is_pipe(cls, v: str) -> str:
         if not v.startswith("\\\\.\\pipe\\"):
             raise ValueError("pipe_name must start with \\\\.\\pipe\\")
+        return v
+
+    @field_validator("tasks")
+    @classmethod
+    def _fixed_programs(cls, v: dict[str, list[str]]) -> dict[str, list[str]]:
+        for name, argv in v.items():
+            exe = argv[0] if argv else ""
+            if not exe.lower().startswith(("%systemroot%\\", "%programfiles%\\")):
+                raise ValueError(f"task {name}: the program must live under %SystemRoot% or "
+                                 "%ProgramFiles% (admin-only folders)")
         return v
 
 
