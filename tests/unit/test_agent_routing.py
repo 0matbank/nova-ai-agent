@@ -52,6 +52,11 @@ CASES = [
     ("git demo project ta ki?", "master_orchestrator", "project_info", "git-demo",
      "quick_answer"),
     ("বাংলাদেশের রাজধানী কী?", "master_orchestrator", "answer", None, "quick_answer"),
+    # Phase 17: a note for the project memory — no AI
+    ("Click TV te mone rakho: player HLS.js use kore", "project:click-tv", "project_remember",
+     "click-tv", None),
+    ("ক্লিক টিভি-র জন্য মনে রাখো: স্ক্যানার প্রতি ঘণ্টায় চলে", "project:click-tv",
+     "project_remember", "click-tv", None),
 ]
 
 

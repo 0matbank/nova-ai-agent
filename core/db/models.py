@@ -139,6 +139,10 @@ class Memory(Base):
     key: Mapped[str] = mapped_column(String(200))
     content: Mapped[str] = mapped_column(Text)
     source: Mapped[str | None] = mapped_column(String(100))
+    # Phase 17: decision | fact | known_issue | task | test (see core/memory)
+    kind: Mapped[str] = mapped_column(String(30), index=True, default="note",
+                                      server_default="note")
+    task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 

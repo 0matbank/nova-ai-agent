@@ -21,7 +21,7 @@ TABLES = {"tasks", "task_steps", "messages", "projects", "memories", "skills", "
 
 def test_fresh_database_created_at_head(tmp_path: Path) -> None:
     res = check_and_migrate(tmp_path / "agent.db", tmp_path / "bk")
-    assert res.before is None and res.after == head_revision() == "003"
+    assert res.before is None and res.after == head_revision() == "004"
     assert res.backup is None                       # nothing to back up yet
     assert set(inspect(res.engine).get_table_names()) >= TABLES
     res.engine.dispose()

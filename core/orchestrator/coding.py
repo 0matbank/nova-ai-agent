@@ -235,12 +235,15 @@ class CodingFlow:
 
     def __init__(self, cfg: AppConfig, providers: ProviderRouter,
                  skills: SkillRunner | None = None, assignment: Assignment | None = None,
-                 roster: Roster | None = None) -> None:
+                 roster: Roster | None = None,
+                 project_memory: tuple[str, str] = ("", "")) -> None:
         self.cfg = cfg
         self.providers = providers
         self.skills = skills
         self.assignment = assignment            # Phase 16: which specialist does the work
         self.roster = roster
+        # Phase 17: (earlier tasks / open issues, owner decisions) of this project
+        self.project_memory = project_memory
 
     def _system(self, key: str, project: ProjectProfile, language: str) -> str:
         """Role prompt of the chosen specialist + the coding rules + only this
@@ -254,6 +257,12 @@ class CodingFlow:
         if r is not None and key in r.projects:
             parts.append("Project specialist context (" + r.projects[key].title + "):\n"
                          + r.projects[key].rules(self.cfg.root))
+        remembered, decisions = self.project_memory
+        if decisions:
+            parts.append("The owner's decisions for this project (follow them):\n" + decisions)
+        if remembered:
+            parts.append("Project memory (earlier tasks and open issues — for context; the "
+                         "current files are the truth):\n" + remembered)
         return "\n\n".join(p for p in parts if p)
 
     async def run(self, ctx: TaskContext) -> dict[str, Any]:

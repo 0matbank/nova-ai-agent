@@ -26,6 +26,7 @@ from channels.telegram.alerts import TelegramAlertHandler
 from channels.telegram.api import TelegramAPI, TelegramAuthError, TelegramError
 from channels.telegram.auth import ChatWhitelist
 from channels.telegram.channel import TelegramChannel
+from core.agents import Roster
 from core.bootstrap import EXIT_INVALID_CONFIG, EXIT_OK, AppContext, bootstrap
 from core.config import ConfigError
 from core.db.engine import make_sessionmaker
@@ -35,7 +36,9 @@ from core.ipc.monitor import WorkerMonitor
 from core.ipc.token import TokenStore
 from core.log import get_logger, redact, shutdown_logging
 from core.log.setup import ROOT_LOGGER
+from core.memory import ProjectMemory
 from core.notify.notifier import MessageType, Notifier
+from core.orchestrator.agent_commands import AgentCommands
 from core.orchestrator.commands import CommandRouter, HealthSources
 from core.orchestrator.executor import UserRequestExecutor
 from core.orchestrator.log_commands import LogCommands
@@ -242,13 +245,17 @@ async def run_core_service(
     history = ProviderHistory(db_sessions) if db_sessions is not None else None
     pressure = ResourcePressure(cfg.resources, cfg.root)     # plan §17H
     provider_router = ProviderRouter(cfg.providers, providers.adapters, history, pressure)
+    # Phase 16 roster + Phase 17 project memory (in the agent DB, survives restarts)
+    roster = Roster.load(cfg)
+    project_memory = ProjectMemory(db_sessions) if db_sessions is not None else None
     if engine is not None and security is not None and approvals is not None:
         # plan §9.1: side effects go through the idempotency ledger
         skill_runner = (SkillRunner(registry, ToolEnv(cfg, PathPolicy(cfg), tool_workers),
                                     approvals.audit, SideEffectLedger(db_sessions))
                         if registry is not None and db_sessions is not None else None)
         engine.register("user_request", UserRequestExecutor(
-            IntentRouter(provider_router), provider_router, skill_runner))
+            IntentRouter(provider_router), provider_router, skill_runner, roster,
+            project_memory))
 
     # Voice (plan §7): transcript → the same path as typed text.
     wcfg = cfg.models.whisper
@@ -290,7 +297,9 @@ async def run_core_service(
     router = CommandRouter(cfg.root, health, cfg.default.agent.name, tasks, safe_reason,
                            security, skill_cmds, ScreenCommands(desktop),
                            LogCommands(db_sessions, cfg.default.agent.timezone)
-                           if db_sessions is not None else None)
+                           if db_sessions is not None else None,
+                           AgentCommands(cfg, roster, project_memory,
+                                         cfg.default.agent.timezone))
     health.probes.update(build_probes(ctx, channel))
     health.probes["Database"] = database_probe(store, revision, safe_reason)
     health.probes["Task engine"] = engine_probe(engine)

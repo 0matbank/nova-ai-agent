@@ -16,7 +16,18 @@ from pathlib import Path
 from core.config.schema import AppConfig, ProjectProfile
 
 AGENTS_DIR = Path(__file__).resolve().parents[2] / "agents"
-MAX_RULES_CHARS = 1500        # the Context Manager caps a section at 2000 (§49.2)
+MAX_RULES_CHARS = 2000        # the Context Manager caps a section at 2000 (§49.2)
+# plan §51 project-knowledge/<key>/ — the owner's own notes, read in this order
+KNOWLEDGE_FILES = (("rules.md", "Rules"), ("architecture.md", "Architecture"),
+                   ("known-issues.md", "Known issues"), ("decisions.md", "Decisions"))
+
+
+def _strip_template(text: str) -> str:
+    """Drop headings, HTML comments and blank lines: an untouched template is empty."""
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+    rows = [r.rstrip() for r in text.splitlines()
+            if r.strip() and not r.lstrip().startswith("#")]
+    return "\n".join(rows).strip()
 
 
 @dataclass(frozen=True)
@@ -49,9 +60,13 @@ class ProjectAgent:
         if facts:
             parts.append("\n".join(facts))
         if p.knowledge_dir:
-            rules = root / p.knowledge_dir / "rules.md"
-            if rules.is_file():
-                parts.append(rules.read_text(encoding="utf-8", errors="replace").strip())
+            # plan §51 knowledge profile, written by the owner (empty templates skipped)
+            for name, title in KNOWLEDGE_FILES:
+                f = root / p.knowledge_dir / name
+                if f.is_file():
+                    text = _strip_template(f.read_text(encoding="utf-8", errors="replace"))
+                    if text:
+                        parts.append(f"{title}:\n{text}")
         return "\n\n".join(x for x in parts if x)[:MAX_RULES_CHARS]
 
 

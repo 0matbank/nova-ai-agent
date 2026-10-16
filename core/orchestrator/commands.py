@@ -11,6 +11,7 @@ from pathlib import Path
 
 from channels.base import IncomingMessage, OutgoingMessage
 from core.health import format_duration, format_pc_status, pc_status
+from core.orchestrator.agent_commands import AgentCommands
 from core.orchestrator.log_commands import LogCommands
 from core.orchestrator.screen_commands import ScreenCommands
 from core.orchestrator.security_commands import SecurityCommands
@@ -21,6 +22,7 @@ from core.orchestrator.task_commands import TaskCommands
 ALL_COMMANDS = (
     "/status", "/tasks", "/task", "/cancel", "/pause", "/resume", "/screenshot",
     "/pc", "/skills", "/agents", "/logs", "/restart-agent", "/update", "/lockdown", "/help",
+    "/memory",                      # Phase 17 addition: what Nova keeps about each project
 )
 
 COMMAND_DESCRIPTIONS = {
@@ -34,6 +36,8 @@ COMMAND_DESCRIPTIONS = {
     "/pc": "CPU / GPU / RAM / Disk",
     "/skills": "Skill ও tool-এর তালিকা (permission level সহ)",
     "/logs": "সাম্প্রতিক কাজের log (audit): /logs বা /logs 30",
+    "/agents": "Specialist ও project agent-দের তালিকা",
+    "/memory": "Project memory: /memory <project> (মুছতে: forget <id>)",
     "/lockdown": "Emergency: সব dangerous কাজ বন্ধ (off দিলে খোলে)",
     "/help": "সব command-এর তালিকা",
 }
@@ -62,7 +66,8 @@ class CommandRouter:
                  security: SecurityCommands | None = None,
                  skills: SkillCommands | None = None,
                  screen: ScreenCommands | None = None,
-                 logs: LogCommands | None = None) -> None:
+                 logs: LogCommands | None = None,
+                 agents: AgentCommands | None = None) -> None:
         self.started_at = time.time()
         self.disk_path = disk_path
         self.health = health
@@ -87,6 +92,9 @@ class CommandRouter:
             self._handlers["/screenshot"] = screen.screenshot
         if logs is not None:
             self._handlers["/logs"] = logs.logs
+        if agents is not None:
+            self._handlers["/agents"] = agents.agents
+            self._handlers["/memory"] = agents.memory_cmd
 
     def _safe_mode(self) -> OutgoingMessage:
         return OutgoingMessage(SAFE_MODE_REPLY.format(reason=self.safe_mode_reason or "-"))

@@ -17,6 +17,9 @@ BANGLISH = {
     "apnar", "ekta", "ektu", "kichu", "hobe", "hoy", "hoise", "hoyeche", "dao", "daw",
     "nao", "er", "theke", "jonno", "pathao", "lagbe", "valo", "bhalo", "thik", "ar", "o",
     "na", "hae", "haa", "acha", "accha", "namao", "bondho", "chalu", "shuru", "sesh",
+    # Phase 17 ("git demo te mone rakho: sobsomoy …")
+    "te", "mone", "rakho", "rakhbe", "rekho", "sobsomoy", "kokhono", "kokhonoi", "kintu",
+    "jodi", "tahole", "ekhon", "age", "pore", "obostha", "hoyechilo", "korechilo", "kaj",
 }
 
 

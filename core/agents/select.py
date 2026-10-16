@@ -48,6 +48,11 @@ _GIT_READ = re.compile(
     r"\b(ki|what)\s*(ki\s*)?(change|changes|poriborton)\b|কী\s*কী?\s*পরিবর্তন|"
     r"\b(changes?|diff)\s*(dekhao|show|bolo)\b", re.IGNORECASE)
 
+# Phase 17: the owner asks Nova to keep something about a project
+_REMEMBER = re.compile(
+    r"\bmone\s*rakh(o|ben|un|e\s*dao)?\b|\bmone\s*rekho\b|মনে\s*রাখ|মনে\s*রেখ|"
+    r"\bremember\s+(that|this)\b|\bnote\s*(koro|kore\s*rakho)\b|নোট\s*কর", re.IGNORECASE)
+
 # category → (lead agent, route); routes are what the executor runs
 _LEADS: dict[str, tuple[str, str]] = {
     "question": ("master_orchestrator", "answer"),
@@ -73,7 +78,7 @@ class Assignment:
     agents: tuple[str, ...]           # active agents (lead first), incl. verifier
     route: str                        # answer | skill | operator | coding | git | browser |
                                       # project_test | project_info (an answer with the
-                                      # project's context) | not_yet
+                                      # project's context) | project_remember | not_yet
     project: str | None
     provider_task_type: str | None
     skills: tuple[str, ...]           # allowlist: "skill" or "skill.tool"
@@ -114,7 +119,11 @@ def assign(intent: Intent, text: str, cfg: AppConfig, roster: Roster) -> Assignm
     edits = bool(_EDIT.search(text))
     security = _SUB_ROLES[0][1].search(text)
 
-    if security and not edits and route in ("answer", "project_info", "coding", "operator"):
+    if proj is not None and _REMEMBER.search(text):
+        # Phase 17: "Click TV-te mone rakho: …" → that project's memory, no AI
+        lead, route = "project:" + proj.key, "project_remember"
+        reason += "; owner note for the project memory"
+    elif security and not edits and route in ("answer", "project_info", "coding", "operator"):
         # a security look is read-only, whatever the words around it (§50 Security Auditor)
         lead, route = "security", "operator"
         reason += f"; '{security.group(0)}' → security (read-only)"
@@ -149,7 +158,7 @@ def assign(intent: Intent, text: str, cfg: AppConfig, roster: Roster) -> Assignm
         # "notepad kholo", "pc status": a fixed skill call, no AI needed (§45, §49.1)
         route = "skill"
         reason += f"; deterministic {intent.skill[0]}.{intent.skill[1]}"
-    if route in ("skill", "project_test", "git", "not_yet"):
+    if route in ("skill", "project_test", "git", "not_yet", "project_remember"):
         ptype = None
     if category == "screenshot" and intent.skill is None:
         ptype = "vision"                             # a question about the screen (§57)

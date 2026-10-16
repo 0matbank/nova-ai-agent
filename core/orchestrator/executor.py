@@ -20,6 +20,7 @@ from typing import Any
 
 from core.agents import Assignment, Roster, assign
 from core.log import get_logger
+from core.memory import ProjectMemory
 from core.notify.notifier import MessageType
 from core.orchestrator import project_agent
 from core.orchestrator.answer import answer
@@ -69,10 +70,12 @@ class ActionFailed(RuntimeError):
 
 class UserRequestExecutor:
     def __init__(self, intents: IntentRouter, providers: ProviderRouter,
-                 skills: SkillRunner | None, roster: Roster | None = None) -> None:
+                 skills: SkillRunner | None, roster: Roster | None = None,
+                 memory: ProjectMemory | None = None) -> None:
         self.intents = intents
         self.providers = providers
         self.skills = skills
+        self.memory = memory            # Phase 17: project memory (None = not kept)
         # Phase 16: specialist + project agents (from the config the skills run with)
         self.roster = roster if roster is not None or skills is None else \
             Roster.load(skills.env.config)
@@ -151,6 +154,14 @@ class UserRequestExecutor:
             failed = out.get("kind") in ("skill", "browser", "coding") and not out.get("ok")
             if failed and not out.get("needs_input"):
                 raise ActionFailed(str(out.get("answer", "action failed")))
+            if self.roster is not None and assignment is not None:
+                try:
+                    # Phase 17: the project's memory learns what this task did
+                    project_agent.record_outcome(self.memory, self.roster, assignment,
+                                                 ctx.task.id, ctx.task.request_text, out)
+                except Exception:  # noqa: BLE001 - memory must never fail the task
+                    _log.exception("project memory write failed",
+                                   extra={"task_id": ctx.task.id, "action": "memory.write"})
             return out
 
         out = await ctx.run_step(2, act_or_fail) or {}
@@ -167,19 +178,30 @@ class UserRequestExecutor:
         assert self.roster is not None and self.skills is not None
         cfg = self.skills.env.config
         rules = project_agent.project_rules(cfg.root, self.roster, a)
+        remembered, decisions = project_agent.memory_context(self.memory, a)
         if a.route == "operator":
+            memo = "\n\n".join(x for x in (
+                f"Earlier decisions:\n{decisions}" if decisions else "",
+                f"Project memory:\n{remembered}" if remembered else "") if x)
             return await OperatorAgent(self.skills, self.providers, self.roster).run(
-                ctx, a, lang, rules)
+                ctx, a, lang, "\n\n".join(x for x in (rules, memo) if x))
         if a.route == "coding":
-            return await CodingFlow(cfg, self.providers, self.skills, a, self.roster).run(ctx)
-        if a.route in ("git", "project_test", "project_info") and a.project is None:
+            return await CodingFlow(cfg, self.providers, self.skills, a, self.roster,
+                                    (remembered, decisions)).run(ctx)
+        if a.route in ("git", "project_test", "project_info",
+                       "project_remember") and a.project is None:
             return project_agent.which_project(self.roster, lang)
+        if a.route == "project_remember":
+            if self.memory is None:
+                return None
+            return project_agent.remember_note(ctx, self.memory, self.roster, a, lang)
         if a.route == "git":
             return await project_agent.git_look(ctx, self.skills, self.roster, a, lang)
         if a.route == "project_test":
             return await project_agent.run_project_tests(ctx, self.roster, a, lang)
         if a.route == "project_info":
-            return await self._ask_ai(ctx, project_rules=rules)
+            return await self._ask_ai(ctx, project_rules=rules, memory=remembered,
+                                      decisions=decisions)
         return None
 
     async def _run_skill(self, ctx: TaskContext, intent: Intent) -> dict[str, Any]:
@@ -225,7 +247,8 @@ class UserRequestExecutor:
         return {"kind": "ai", "provider": result.provider, "model": result.model,
                 "answer": result.answer, "ok": True, "evidence": shot.evidence}
 
-    async def _ask_ai(self, ctx: TaskContext, project_rules: str = "") -> dict[str, Any]:
+    async def _ask_ai(self, ctx: TaskContext, project_rules: str = "", memory: str = "",
+                      decisions: str = "") -> dict[str, Any]:
         """Questions, incl. current-information ones (owner 2026-10-15): quick ones
         stay local, the rest escalate automatically — see core/orchestrator/answer.py.
         A question about a project gets that project specialist's context (§51)."""
@@ -235,6 +258,8 @@ class UserRequestExecutor:
                               instruction=ctx.task.request_text, risk="GREEN",
                               known_errors=known)
         package.add("Project Rules", project_rules)
+        package.add("Relevant Memory", memory)              # Phase 17: earlier tasks
+        package.add("Previous Decisions", decisions)
         got = await answer(self.providers, ctx.task.id, ctx.task.request_text,
                            SYSTEM_PROMPT, package.render())
         result = got.result
@@ -275,6 +300,9 @@ class UserRequestExecutor:
             if act.get("needs_input"):
                 return Verdict(True, "PASS WITH KNOWN LIMITATIONS — asked the owner")
             ev = act.get("evidence") or {}
+            if "memory_id" in ev:
+                return Verdict(bool(act.get("ok")), f"saved in project memory #{ev['memory_id']}"
+                                                    f" ({ev.get('memory_kind')}) ✓")
             return Verdict(True, f"tests run by Nova: {ev.get('command')} → "
                                  f"{'passed' if ev.get('tests_passed') else 'FAILED (reported)'}")
         if kind == "skill":
