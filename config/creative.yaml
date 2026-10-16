@@ -1,0 +1,166 @@
+# Universal Software Adapter Registry (owner requirement 2026-10-16, Phase 20
+# foundation). One entry per creative program. Nova detects which are installed
+# and only uses an adapter for capabilities marked `tested` (proven by tests and a
+# live drill). Everything else is honest: partial / unsupported / future.
+#
+# automation: how Nova would drive it, best first — native_api | script | cli | ui
+# detect:     exe names on PATH, install paths (env vars allowed), App Paths keys
+# capabilities: tested | partial | unsupported | future
+
+capability_names: [cut, trim, reorder, transitions, crossfade, captions, color, audio_mix,
+                   audio_cleanup, music, effects, motion_graphics, compositing, three_d,
+                   templates, aspect_reframe, export, editable_project, analysis]
+
+software:
+  ffmpeg:
+    name: FFmpeg
+    category: processing
+    automation: [cli]
+    license: LGPL/GPL (bundled build via imageio-ffmpeg, BSD-2 wrapper)
+    detect: {bundled: imageio_ffmpeg, exe: [ffmpeg]}
+    capabilities: {cut: tested, trim: tested, reorder: tested, transitions: tested,
+                   crossfade: future, captions: tested, color: partial, audio_mix: tested,
+                   audio_cleanup: partial, music: tested, effects: partial,
+                   motion_graphics: unsupported, compositing: partial, three_d: unsupported,
+                   templates: unsupported, aspect_reframe: tested, export: tested,
+                   editable_project: partial, analysis: tested}
+    notes: "Nova's working engine today. editable_project = the neutral plan + an
+      OpenTimelineIO (.otio) timeline next to every render; crossfade = later (xfade)."
+
+  premiere_pro:
+    name: Adobe Premiere Pro
+    category: editor
+    automation: [native_api, ui]
+    detect: {app_paths: [Adobe Premiere Pro.exe],
+             paths: ["%ProgramFiles%/Adobe/Adobe Premiere Pro*/Adobe Premiere Pro.exe"]}
+    capabilities: {cut: future, trim: future, reorder: future, transitions: future,
+                   captions: future, color: future, audio_mix: future, effects: future,
+                   export: future, editable_project: future}
+    notes: "UXP plugin API (timeline, sequences, export); paid, needs the owner's Adobe login."
+
+  after_effects:
+    name: Adobe After Effects
+    category: vfx
+    automation: [script, ui]
+    detect: {app_paths: [AfterFX.exe], paths: ["%ProgramFiles%/Adobe/Adobe After Effects*/Support Files/AfterFX.exe"]}
+    capabilities: {motion_graphics: future, compositing: future, effects: future,
+                   templates: future, export: future}
+    notes: "ExtendScript / aerender CLI for rendering; paid."
+
+  media_encoder:
+    name: Adobe Media Encoder
+    category: render
+    automation: [script, ui]
+    detect: {app_paths: [Adobe Media Encoder.exe]}
+    capabilities: {export: future}
+
+  davinci_resolve:
+    name: DaVinci Resolve
+    category: editor
+    automation: [script, ui]
+    detect: {app_paths: [Resolve.exe], paths: ["%ProgramFiles%/Blackmagic Design/DaVinci Resolve/Resolve.exe"]}
+    capabilities: {cut: future, trim: future, reorder: future, transitions: future,
+                   color: future, audio_mix: future, export: future, editable_project: future}
+    notes: "Python scripting API (external scripting is a Studio feature; the free
+      version allows it only from the in-app console)."
+
+  capcut:
+    name: CapCut Desktop
+    category: editor
+    automation: [ui]
+    detect: {exe: [CapCut], paths: ["%LOCALAPPDATA%/CapCut/Apps/CapCut.exe"]}
+    capabilities: {templates: future, captions: future, export: future}
+    notes: "No public automation API — desktop UI / vision only."
+
+  filmora:
+    name: Wondershare Filmora
+    category: editor
+    automation: [ui]
+    detect: {paths: ["%ProgramFiles%/Wondershare/Wondershare Filmora*/Wondershare Filmora*.exe"]}
+    capabilities: {templates: future, transitions: future, export: future}
+    notes: "No public automation API — desktop UI / vision only."
+
+  vegas_pro:
+    name: VEGAS Pro
+    category: editor
+    automation: [script, ui]
+    detect: {paths: ["%ProgramFiles%/VEGAS/VEGAS Pro*/vegas*.exe"]}
+    capabilities: {cut: future, trim: future, transitions: future, export: future}
+    notes: "C# script API inside VEGAS."
+
+  final_cut_pro:
+    name: Final Cut Pro
+    category: editor
+    automation: [script]
+    detect: {}
+    capabilities: {cut: unsupported, export: unsupported}
+    notes: "macOS only — needs a future macOS remote worker."
+
+  blender:
+    name: Blender
+    category: 3d
+    automation: [script, cli]
+    license: GPL
+    detect: {exe: [blender], paths: ["%ProgramFiles%/Blender Foundation/Blender*/blender.exe"]}
+    capabilities: {three_d: future, motion_graphics: future, compositing: future,
+                   export: future}
+    notes: "bpy Python API + headless `blender -b` rendering."
+
+  audition:
+    name: Adobe Audition
+    category: audio
+    automation: [ui]
+    detect: {app_paths: [Adobe Audition.exe]}
+    capabilities: {audio_cleanup: future, audio_mix: future}
+
+  audacity:
+    name: Audacity
+    category: audio
+    automation: [script, ui]
+    license: GPL
+    detect: {exe: [audacity], paths: ["%ProgramFiles%/Audacity/Audacity.exe"]}
+    capabilities: {audio_cleanup: future, audio_mix: future}
+    notes: "mod-script-pipe scripting."
+
+  obs:
+    name: OBS Studio
+    category: capture
+    automation: [native_api]
+    license: GPL
+    detect: {paths: ["%ProgramFiles%/obs-studio/bin/64bit/obs64.exe"]}
+    capabilities: {export: future}
+    notes: "obs-websocket API (recording, scenes)."
+
+  kdenlive:
+    name: Kdenlive
+    category: editor
+    automation: [cli, ui]
+    license: GPL
+    detect: {paths: ["%ProgramFiles%/kdenlive/bin/kdenlive.exe"]}
+    capabilities: {cut: future, export: future, editable_project: future}
+    notes: "MLT XML projects + melt CLI rendering; OTIO import."
+
+  shotcut:
+    name: Shotcut
+    category: editor
+    automation: [cli, ui]
+    license: GPL
+    detect: {paths: ["%ProgramFiles%/Shotcut/shotcut.exe"]}
+    capabilities: {cut: future, export: future, editable_project: future}
+    notes: "MLT XML projects + melt CLI rendering."
+
+  photoshop:
+    name: Adobe Photoshop
+    category: image
+    automation: [script, ui]
+    detect: {app_paths: [Photoshop.exe]}
+    capabilities: {effects: future, templates: future}
+
+  gimp:
+    name: GIMP
+    category: image
+    automation: [script]
+    license: GPL
+    detect: {paths: ["%ProgramFiles%/GIMP 2/bin/gimp-2.10.exe", "%ProgramFiles%/GIMP 3/bin/gimp-3.0.exe"]}
+    capabilities: {effects: future}
+    notes: "Script-Fu / Python-Fu batch mode."

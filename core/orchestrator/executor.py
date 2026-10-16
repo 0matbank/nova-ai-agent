@@ -29,6 +29,7 @@ from core.orchestrator.answer import answer
 from core.orchestrator.browse import BrowserFlow
 from core.orchestrator.coding import CodingFlow, git
 from core.orchestrator.context import for_request
+from core.orchestrator.creative import CreativeFlow
 from core.orchestrator.lang import reply_language
 from core.orchestrator.operator import OperatorAgent
 from core.orchestrator.schedule_route import schedule_request
@@ -197,6 +198,9 @@ class UserRequestExecutor:
         if a.route in ("git", "project_test", "project_info",
                        "project_remember") and a.project is None:
             return project_agent.which_project(self.roster, lang)
+        if a.route == "creative":
+            return await CreativeFlow(self.skills, self.providers, self.memory).run(
+                ctx, a, lang)
         if a.route == "schedule":
             if self.schedules is None:
                 return {"kind": "not_yet", "answer": (
@@ -308,6 +312,16 @@ class UserRequestExecutor:
             return Verdict(True, "asked the owner", VerdictStatus.LIMITED)
         if kind == "operator":
             return self._check_operator(ev, bn)
+        if kind == "creative":
+            # the render really exists and QC measured it (owner requirement 2026-10-16)
+            out = Path(str(ev.get("output", "")))
+            exists = out.is_file()
+            ok = bool(act.get("ok")) and exists and bool(ev.get("qc_ok"))
+            proofs = (f"{out.name} আছে ✓" if exists else f"{out.name} নেই ✗",
+                      *(f"QC {x} ✓" for x in ev.get("qc") or []),
+                      *(f"QC {x} ✗" for x in ev.get("qc_failed") or []))
+            return Verdict(ok, "" if ok else "render/QC মেলেনি",
+                           VerdictStatus.PASS if ok else VerdictStatus.NEEDS_WORK, proofs)
         if kind == "schedule" and self.schedules is not None:
             # Phase 19: the job is really in the DB (so it survives a restart)
             job = self.schedules.get(int(ev.get("schedule_id", 0)))

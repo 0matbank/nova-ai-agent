@@ -15,7 +15,8 @@ from core.skills.urls import URL_RX
 from providers.provider_base import Limits, ProviderRequest
 
 # Categories from plan §49.1.
-CATEGORIES = ("question", "pc_status", "screenshot", "processes", "pc_control", "media",
+CATEGORIES = ("question", "pc_status", "screenshot", "processes", "pc_control", "creative",
+              "media",
               "files", "coding", "browser", "research", "project", "reminder", "social",
               "document", "communication")
 
@@ -150,11 +151,43 @@ def is_screen_question(text: str) -> bool:
     return bool(SCREEN_Q.search(text))
 
 
+def is_creative(text: str) -> bool:
+    """A creative edit of footage (Creative Director), not a single media operation:
+    "ei video theke 30 second er reel banao", "trip.mp4 cinematic edit koro"."""
+    if _STYLE_NOTE.search(text):
+        return True
+    if _PUBLISH.search(text) and not _EDIT_WORD.search(text):
+        return False                    # posting to a platform is Social work (V2), not editing
+    footage = bool(_FOOTAGE.search(text) or _SOCIAL_CUT.search(text))
+    if _CREATIVE.search(text) and footage:
+        return True
+    return footage and bool(_MAKE.search(text)) and not _SINGLE_OP.search(text)
+
+
+_CREATIVE = re.compile(r"\b(edit|editing|reels?|shorts|highlights?|montage|cinematic|b-?roll|"
+                       r"intro|outro)\b|এডিট|রিল", re.IGNORECASE)
+_EDIT_WORD = re.compile(r"\b(edit|editing|montage|cinematic|highlights?|b-?roll)\b|এডিট",
+                        re.IGNORECASE)
+_PUBLISH = re.compile(r"\b(post|upload|publish|share)\b|পোস্ট|আপলোড", re.IGNORECASE)
+_MAKE = re.compile(r"\b(banao|banaw|baniye\s*dao|make|create)\b|বানাও|বানিয়ে", re.IGNORECASE)
+# one fixed operation is media work, not a creative edit ("… thumbnail banao")
+_SINGLE_OP = re.compile(r"\b(thumbnail|trim|compress|convert|crop|resize|merge|jora|frames?|"
+                        r"duration|resolution|info|audio\s*(alada|extract)|mp3|gif)\b|"
+                        r"থাম্বনেইল|অডিও", re.IGNORECASE)
+_FOOTAGE = re.compile(r"\b(video|videos|footage|clip|clips|mp4|mov|mkv)\b|ভিডিও|ফুটেজ",
+                      re.IGNORECASE)
+_SOCIAL_CUT = re.compile(r"\b(reels?|shorts|tiktok)\b|রিল", re.IGNORECASE)
+_STYLE_NOTE = re.compile(r"\b(edit|editing)\s*style\b.*(mone\s*rakh|remember|bhalo\s*legeche)|"
+                         r"এডিট\S*\s*স্টাইল.*(মনে\s*রাখ|ভালো\s*লেগেছে)", re.IGNORECASE)
+
+
 def classify_by_rules(text: str) -> Intent | None:
     if looks_scheduled(text):
         # Phase 19: "protidin raat 11 tay pc status bolo" is a job for later, not a
         # status request now — the time wins over the action words
         return Intent("reminder", 0.95, "rule", None, matched="schedule")
+    if is_creative(text):
+        return Intent("creative", 0.9, "rule", None, matched="creative edit")
     if is_screen_question(text) and not URL_RX.search(text):
         # plan §57: a question ABOUT the screen → screenshot + vision answer
         return Intent("screenshot", 0.9, "rule", None, matched="screen question")

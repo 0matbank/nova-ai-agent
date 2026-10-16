@@ -41,6 +41,9 @@ agents:
                          provider_task_type: coding, skills: [git] }
   git:                 { enabled: true, kind: reasoning, task_types: [git],
                          provider_task_type: null, skills: [git] }
+  creative_director:   { enabled: true, kind: reasoning, task_types: [creative],
+                         provider_task_type: reasoning,
+                         skills: [media, image, files.list_dir, files.metadata] }
   media:               { enabled: true, kind: reasoning, task_types: [media],
                          provider_task_type: planning,
                          skills: [media, image, files.list_dir, files.metadata, search.find,

@@ -66,6 +66,7 @@ _LEADS: dict[str, tuple[str, str]] = {
     "coding": ("developer", "coding"),
     "document": ("file_document", "operator"),   # Phase 20
     "media": ("media", "operator"),             # Phase 20
+    "creative": ("creative_director", "creative"),   # Phase 20 creative foundation
     "reminder": ("automation", "schedule"),          # Phase 19
     "social": ("master_orchestrator", "not_yet"),
     "communication": ("master_orchestrator", "not_yet"),
