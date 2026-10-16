@@ -405,6 +405,11 @@ async def run_core_service(
     _log.info("core service started", extra={"action": "service.start", "status": "ok"})
     # Phase 23: the supervisor's proof that this version is fully up
     write_health({"version": version}, cfg.app_dir)
+    if supervised():
+        # the counterpart of the going-offline notice (restart, update, crash, reboot)
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(channel.broadcast(OutgoingMessage(
+                f"🟢 Nova আবার online — version {version[:8]}")), timeout=10)
     background: list[asyncio.Task[Any]] = [*wa_tasks,
         asyncio.create_task(monitor.run(stop)),
         asyncio.create_task(_provider_health_loop(providers, stop, provider_router)),
