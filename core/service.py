@@ -124,6 +124,11 @@ def build_probes(
     root = ctx.config.root
 
     def telegram() -> tuple[bool, str]:
+        first = channel.polling_since
+        if (channel.last_poll_ok is None and first is not None
+                and time.time() - first < channel.poll_timeout + 30):
+            # getMe passed at start; the first long-poll is still open (up to ~50 s)
+            return True, "connected (first poll running)"
         if not channel.connected or channel.last_poll_ok is None:
             return False, "disconnected"
         age = time.time() - channel.last_poll_ok
@@ -394,7 +399,7 @@ async def run_core_service(
         security.broker_lockdown = broker_watch.lockdown
     health.probes["AI providers"] = lambda: provider_summary(provider_router)
     # Phase 24: local dashboard on the same engines (127.0.0.1 only)
-    dash_tasks = start_dashboard(DashboardDeps(
+    dash_tasks, health.probes["Dashboard"] = start_dashboard(DashboardDeps(
         cfg=cfg, token=dashboard_token(cfg.path("secrets_dir")),
         owner_chat=(sorted(channel.whitelist.chat_ids) or [""])[0], version=version,
         store=store, engine=engine, approvals=approvals, sessions=db_sessions,

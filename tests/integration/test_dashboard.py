@@ -127,3 +127,35 @@ def test_built_page_matches_its_assets() -> None:
     assert assets and all((dist / a).is_file() for a in assets)
     assert "http" not in html.replace("http-equiv", "")          # nothing from the internet
     asyncio.run(asyncio.sleep(0))
+
+
+def test_a_busy_port_never_takes_core_down(tmp_path: Path) -> None:
+    """Live finding: uvicorn exits the whole process when its port is taken."""
+    import socket
+
+    from core.dashboard.api import start_dashboard
+    s = make_skill_env(tmp_path)
+    blocker = socket.socket()
+    blocker.bind(("127.0.0.1", 0))
+    blocker.listen()
+    from core.config.schema import DashboardSection
+    cfg = s.cfg.model_copy(update={"default": s.cfg.default.model_copy(update={
+        "dashboard": DashboardSection(port=blocker.getsockname()[1])})})
+
+    async def go() -> tuple[bool, str]:
+        stop = asyncio.Event()
+        tasks, probe = start_dashboard(DashboardDeps(cfg=cfg, token=TOKEN, owner_chat="5"),
+                                       cfg, stop)
+        for _ in range(50):
+            await asyncio.sleep(0.1)
+            if "busy" in probe()[1]:
+                break
+        result = probe()
+        stop.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        return result
+    try:
+        ok, detail = asyncio.run(go())               # no SystemExit escapes
+    finally:
+        blocker.close()
+    assert not ok and "busy" in detail

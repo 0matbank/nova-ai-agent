@@ -393,23 +393,41 @@ async def ollama_loaded() -> list[dict[str, Any]]:
              "expires_at": m.get("expires_at")} for m in r.json().get("models", [])]
 
 
-def start_dashboard(deps: DashboardDeps, cfg: Any, stop: Any) -> list[Any]:
-    """Serve the dashboard inside core's event loop (127.0.0.1 only)."""
+def start_dashboard(deps: DashboardDeps, cfg: Any, stop: Any
+                    ) -> tuple[list[Any], Callable[[], tuple[bool, str]]]:
+    """Serve the dashboard inside core's event loop (127.0.0.1 only). It can never take
+    core down: a busy port only shows up on its own /status line."""
     import asyncio
 
     import uvicorn
     dcfg = cfg.default.dashboard
+    state: dict[str, Any] = {"ok": False, "detail": "off (config dashboard.enabled)"}
     if not dcfg.enabled:
-        return []
+        return [], lambda: (True, str(state["detail"]))
     static = cfg.app_dir / "dashboard" / "dist"
     app = create_dashboard_app(deps, dcfg.port, static)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=dcfg.port,
                                            log_level="warning", access_log=False,
                                            log_config=None))
+    state["detail"] = "starting"
 
-    async def stopper() -> None:
+    async def serve() -> None:
+        try:
+            await server.serve()
+        except (SystemExit, OSError) as e:      # uvicorn exits the process on a busy port
+            state.update(ok=False, detail=f"not running — port {dcfg.port} busy?")
+            _log.error(f"dashboard could not start on 127.0.0.1:{dcfg.port}: "
+                       f"{type(e).__name__}", extra={"action": "dashboard.start",
+                                                     "status": "error"})
+
+    async def watch() -> None:
+        while not server.started and not stop.is_set() and state["detail"] == "starting":
+            await asyncio.sleep(0.2)
+        if server.started:
+            state.update(ok=True, detail=f"http://127.0.0.1:{dcfg.port}")
+            _log.info(f"dashboard on http://127.0.0.1:{dcfg.port}",
+                      extra={"action": "dashboard.start", "status": "ok"})
         await stop.wait()
         server.should_exit = True
-    _log.info(f"dashboard on http://127.0.0.1:{dcfg.port}",
-              extra={"action": "dashboard.start", "status": "ok"})
-    return [asyncio.create_task(server.serve()), asyncio.create_task(stopper())]
+    return ([asyncio.create_task(serve()), asyncio.create_task(watch())],
+            lambda: (bool(state["ok"]), str(state["detail"])))

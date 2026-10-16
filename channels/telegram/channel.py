@@ -55,6 +55,7 @@ class TelegramChannel:
         self.offset: int | None = None
         self.last_poll_ok: float | None = None
         self.connected = False
+        self.polling_since: float | None = None      # first long-poll sent (after getMe)
 
     # ------------------------------------------------------------- polling
 
@@ -93,6 +94,7 @@ class TelegramChannel:
 
     async def run(self, stop: asyncio.Event) -> None:
         backoff = 1.0
+        self.polling_since = time.time()
         while not stop.is_set():
             try:
                 updates = await self._fetch_or_stop(stop)
