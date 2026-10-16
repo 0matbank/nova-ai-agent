@@ -20,6 +20,24 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
+@pytest.fixture(autouse=True)
+def _never_touch_the_real_broker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Phase 22/24 live finding: a full-service test reached the owner's REAL elevated
+    broker (refused: wrong token). No test may talk to it or start its scheduled task."""
+    import os
+    import tempfile
+
+    from core.broker import client
+    real_init = client.BrokerClient.__init__
+
+    def init(self: client.BrokerClient, cfg: Any, tokens: Any) -> None:
+        real_init(self, cfg, tokens)
+        self.pipe = rf"\\.\pipe\nova-test-no-broker-{os.getpid()}"
+        self.install_dir = Path(tempfile.gettempdir()) / "nova-test-no-broker"
+    monkeypatch.setattr(client.BrokerClient, "__init__", init)
+    monkeypatch.setattr(client.BrokerClient, "start_task", lambda self: False)
+
+
 @pytest.fixture
 def config_dir(tmp_path: Path) -> Path:
     """A writable copy of the real config/ directory. Worker ports are moved to
@@ -31,6 +49,11 @@ def config_dir(tmp_path: Path) -> Path:
     for key in ("desktop_worker", "browser_worker"):
         data["workers"][key]["port"] = _free_port()
     workers.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    # the real Nova's dashboard holds 47810 while tests run
+    default = dst / "default.yaml"
+    d = yaml.safe_load(default.read_text(encoding="utf-8"))
+    d.setdefault("dashboard", {})["port"] = _free_port()
+    default.write_text(yaml.safe_dump(d, allow_unicode=True), encoding="utf-8")
     return dst
 
 
