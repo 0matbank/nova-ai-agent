@@ -1,0 +1,16 @@
+{
+  "name": "archive",
+  "version": "1.0.0",
+  "description": "Zip and unzip safely (plan §34).",
+  "worker": "core",
+  "platforms": [
+    "win32",
+    "linux",
+    "darwin"
+  ],
+  "tools": [
+    "list",
+    "zip",
+    "unzip"
+  ]
+}

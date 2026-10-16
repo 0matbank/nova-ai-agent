@@ -35,13 +35,16 @@ agents:
   research:            { enabled: true, kind: reasoning, task_types: [research],
                          provider_task_type: current_info, skills: [] }
   file_document:       { enabled: true, kind: reasoning, task_types: [document, files],
-                         provider_task_type: planning, skills: [files, search, download] }
+                         provider_task_type: planning,
+                         skills: [files, search, download, documents, archive, image] }
   devops:              { enabled: true, kind: reasoning, task_types: [devops],
                          provider_task_type: coding, skills: [git] }
   git:                 { enabled: true, kind: reasoning, task_types: [git],
                          provider_task_type: null, skills: [git] }
   media:               { enabled: true, kind: reasoning, task_types: [media],
-                         provider_task_type: null, skills: [] }
+                         provider_task_type: planning,
+                         skills: [media, image, files.list_dir, files.metadata, search.find,
+                                  search.recent] }
   automation:          { enabled: true, kind: reasoning, task_types: [automation, reminder],
                          provider_task_type: null, skills: [] }
   security:            { enabled: true, kind: reasoning, task_types: [security],

@@ -48,6 +48,12 @@ CASES = [
     ("aajker news ki", "research", "answer", None, "current_info"),
     ("m3u8 playlist er code e bug fix koro", "developer", "coding", "stream-doctor", "coding"),
     ("prothomalo.com kholo", "browser", "browser", None, "planning"),
+    # Phase 20: media → the Media agent; documents / zip → File & Document
+    ("Downloads e clip.mp4 video ta compress koro", "media", "operator", None, "planning"),
+    ("ভিডিওটা থেকে অডিও আলাদা করো", "media", "operator", None, "planning"),
+    ("ei pdf duita jora lagiye ekta report banao", "file_document", "operator", None,
+     "planning"),
+    ("photos folder ta zip koro", "file_document", "operator", None, "planning"),
     ("kal sokal 8 tay remind koro", "automation", "schedule", None, None),
     # Phase 19: the time wins over the action words
     ("protidin raat 11 tay pc status bolo", "automation", "schedule", None, None),

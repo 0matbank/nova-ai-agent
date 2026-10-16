@@ -1,0 +1,17 @@
+{
+  "read": [
+    "file.read"
+  ],
+  "create": [
+    "file.create"
+  ],
+  "pdf_merge": [
+    "file.create"
+  ],
+  "pdf_split": [
+    "file.create"
+  ],
+  "sheet_create": [
+    "file.create"
+  ]
+}

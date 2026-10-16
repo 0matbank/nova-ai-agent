@@ -286,7 +286,7 @@ class OperatorAgent:
         step: dict[str, Any] = {
             "call": call, "ok": r.ok, "items": _items(r.data), "findings": findings[:20],
             "result": (r.summary + ("\n" + data if data else ""))[:RESULT_CHARS]}
-        if r.ok and f"{skill}.{tool}" in EFFECT_TOOLS:
+        if r.ok and (f"{skill}.{tool}" in EFFECT_TOOLS or "output" in (r.evidence or {})):
             # Phase 18: what this call changed, for the verifier to check by itself
             step["effect"] = {"skill": skill, "tool": tool, "params": params,
                               "evidence": r.evidence}

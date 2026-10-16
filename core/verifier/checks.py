@@ -55,4 +55,9 @@ def check_effect(effect: dict[str, Any], resolve: Resolve) -> tuple[bool, str]:
         still = pids_alive(ev.get("still_running") or [])
         return not still, (f"{p.get('app')} বন্ধ ✓" if not still
                            else f"{p.get('app')} এখনো চলছে (pid {still}) ✗")
+    out = ev.get("output")
+    if out:
+        # Phase 20 media / documents / archive / image: the new file is really there
+        path = Path(str(out))
+        return path.exists(), f"{path.name} {'আছে ✓' if path.exists() else 'নেই ✗'}"
     return True, f"{tool} (tool-confirmed)"

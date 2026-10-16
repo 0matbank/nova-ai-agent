@@ -57,6 +57,13 @@ def test_conditions() -> None:
                                              "path": r"D:\inbox\report.pdf"}
 
 
+def test_a_position_in_a_video_is_not_a_schedule() -> None:
+    from core.scheduler.parse import looks_scheduled
+    assert not looks_scheduled("clip.mp4 video ta theke 2 second e ekta thumbnail banao")
+    assert not looks_scheduled("video ta 10 second theke 20 second porjonto trim koro")
+    assert looks_scheduled("2 second por amake bolo")
+
+
 def test_no_time_means_ask_again_and_past_is_noticed() -> None:
     assert parse_schedule("scanner run koro", NOW) is None
     past = parse_schedule("aj shokal 9 tay scanner run koro", NOW)

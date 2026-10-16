@@ -15,9 +15,9 @@ from core.skills.urls import URL_RX
 from providers.provider_base import Limits, ProviderRequest
 
 # Categories from plan §49.1.
-CATEGORIES = ("question", "pc_status", "screenshot", "processes", "pc_control", "files",
-              "coding", "browser", "research", "project", "reminder", "social", "document",
-              "communication")
+CATEGORIES = ("question", "pc_status", "screenshot", "processes", "pc_control", "media",
+              "files", "coding", "browser", "research", "project", "reminder", "social",
+              "document", "communication")
 
 
 @dataclass(frozen=True)
@@ -73,6 +73,12 @@ RULES: list[tuple[str, re.Pattern[str], tuple[str, str, dict[str, Any]] | None]]
                    r"commit|function|script)\b", r"কোড", r"\bfix\s*koro\b"), None),
     ("browser", _rx(r"\b(website|browser|chrome|site|login|url|web\s*page)\b",
                     r"ওয়েবসাইট", r"ব্রাউজার"), None),
+    # Phase 20: packing is file work, even of photos / videos ("photos folder zip koro")
+    ("files", _rx(r"\b(zip|unzip|archive|extract\s*koro)\b", r"জিপ"), None),
+    # Phase 20 (plan §37): video / audio / image work → the Media agent
+    ("media", _rx(r"\b(video|videos|audio|mp4|mkv|mov|webm|avi|mp3|wav|m4a|flac|gif|trim|"
+                  r"subtitles?|thumbnail|ffmpeg|frames?|jpe?g|png|webp|images?|photos?|"
+                  r"chobi)\b", r"ভিডিও", r"অডিও", r"ছবি", r"সাবটাইটেল"), None),
     ("files", _rx(r"\b(file|folder|download(s)?\s*folder|rename|zip|unzip)\b", r"ফাইল",
                   r"ফোল্ডার"), None),
     ("pc_control", _rx(r"\b(open|kholo|khol|close|bondho|band|launch|start)\b.*\b(app|notepad|"
@@ -84,7 +90,8 @@ RULES: list[tuple[str, re.Pattern[str], tuple[str, str, dict[str, Any]] | None]]
                        r"installed\s*(apps?|programs?|software)|ip\s*address|wi-?fi|"
                        r"[a-z]\s*drive|disk\s*space|windows\s*version|startup\s*apps?)\b",
                        r"পাওয়ারশেল", r"ড্রাইভ"), None),
-    ("document", _rx(r"\b(pdf|docx?|excel|xlsx|spreadsheet|document)\b", r"ডকুমেন্ট"), None),
+    ("document", _rx(r"\b(pdf|docx?|word\s*file|excel|xlsx|csv|spreadsheet|document|report|"
+                     r"checklist)\b", r"ডকুমেন্ট", r"রিপোর্ট"), None),
     ("social", _rx(r"\b(facebook|fb|tiktok|instagram|youtube|caption|reel|post\s*koro)\b"),
      None),
     ("research", _rx(r"\b(research|compare|khuje|search\s*kore)\b", r"খুঁজে", r"তুলনা"), None),

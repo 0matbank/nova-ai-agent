@@ -1,0 +1,8 @@
+{
+  "info": [
+    "file.read"
+  ],
+  "process": [
+    "file.create"
+  ]
+}

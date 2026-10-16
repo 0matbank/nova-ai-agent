@@ -1,0 +1,15 @@
+{
+  "name": "image",
+  "version": "1.0.0",
+  "description": "Image info, resize, convert, compress (Pillow).",
+  "worker": "core",
+  "platforms": [
+    "win32",
+    "linux",
+    "darwin"
+  ],
+  "tools": [
+    "info",
+    "process"
+  ]
+}

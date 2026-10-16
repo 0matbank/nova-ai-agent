@@ -1,0 +1,41 @@
+{
+  "info": [
+    "file.read"
+  ],
+  "trim": [
+    "file.create"
+  ],
+  "cut": [
+    "file.create"
+  ],
+  "crop": [
+    "file.create"
+  ],
+  "resize": [
+    "file.create"
+  ],
+  "compress": [
+    "file.create"
+  ],
+  "convert": [
+    "file.create"
+  ],
+  "merge": [
+    "file.create"
+  ],
+  "extract_audio": [
+    "file.create"
+  ],
+  "normalize_audio": [
+    "file.create"
+  ],
+  "subtitle_burn": [
+    "file.create"
+  ],
+  "thumbnail": [
+    "file.create"
+  ],
+  "frames": [
+    "file.create"
+  ]
+}

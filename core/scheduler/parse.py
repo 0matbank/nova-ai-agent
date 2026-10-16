@@ -27,7 +27,8 @@ UNIT_MINUTES = {"second": 1 / 60, "sec": 1 / 60, "সেকেন্ড": 1 / 60
                 "hr": 60, "hrs": 60, "ঘণ্টা": 60, "ঘন্টা": 60, "din": 1440, "day": 1440,
                 "days": 1440, "দিন": 1440}
 _UNIT = "|".join(sorted(map(re.escape, UNIT_MINUTES), key=len, reverse=True))
-DELAY = re.compile(rf"(\d+(?:\.\d+)?)\s*({_UNIT})\s*(?:por|pore|পর|পরে|later|after|e)\b|"
+# "2 second e" means AT 2 seconds (a position in a video), not "after" — Phase 20 drill
+DELAY = re.compile(rf"(\d+(?:\.\d+)?)\s*({_UNIT})\s*(?:por|pore|পর|পরে|later|after)\b|"
                    rf"\b(?:in|after)\s+(\d+(?:\.\d+)?)\s*({_UNIT})\b", re.IGNORECASE)
 EVERY_N = re.compile(rf"(?:proti|prottek|every|প্রতি)\s*(\d+)\s*({_UNIT})"
                      r"(?:\s*(?:por\s*por|পর\s*পর|পরপর))?", re.IGNORECASE)

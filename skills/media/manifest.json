@@ -1,0 +1,26 @@
+{
+  "name": "media",
+  "version": "1.0.0",
+  "description": "Video / audio work with FFmpeg (plan §37): trim, cut, crop, resize, compress, convert, merge, audio extract / normalize, subtitle burn, thumbnail, frames, metadata.",
+  "worker": "core",
+  "platforms": [
+    "win32",
+    "linux",
+    "darwin"
+  ],
+  "tools": [
+    "info",
+    "trim",
+    "cut",
+    "crop",
+    "resize",
+    "compress",
+    "convert",
+    "merge",
+    "extract_audio",
+    "normalize_audio",
+    "subtitle_burn",
+    "thumbnail",
+    "frames"
+  ]
+}

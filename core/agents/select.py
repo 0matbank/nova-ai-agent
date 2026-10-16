@@ -64,7 +64,8 @@ _LEADS: dict[str, tuple[str, str]] = {
     "files": ("file_document", "operator"),
     "browser": ("browser", "browser"),
     "coding": ("developer", "coding"),
-    "document": ("file_document", "not_yet"),
+    "document": ("file_document", "operator"),   # Phase 20
+    "media": ("media", "operator"),             # Phase 20
     "reminder": ("automation", "schedule"),          # Phase 19
     "social": ("master_orchestrator", "not_yet"),
     "communication": ("master_orchestrator", "not_yet"),

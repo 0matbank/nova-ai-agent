@@ -1,0 +1,11 @@
+{
+  "list": [
+    "file.read"
+  ],
+  "zip": [
+    "file.create"
+  ],
+  "unzip": [
+    "file.create"
+  ]
+}

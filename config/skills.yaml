@@ -19,13 +19,12 @@ skills:
   download: { status: enabled }
   screenshot: { status: enabled }
   clipboard: { status: enabled }
-  documents:      { status: planned }
-  pdf:            { status: planned }
-  spreadsheet:    { status: planned }
-  archive:        { status: planned }
-  ffmpeg:         { status: planned }
-  audio:          { status: planned }
-  image:          { status: planned }
+  # Phase 20 (plan §34, §37, §56): PDF + spreadsheet work lives in `documents`,
+  # FFmpeg video + audio work in `media`
+  documents:      { status: enabled }
+  archive:        { status: enabled }
+  media:          { status: enabled }
+  image:          { status: enabled }
   network:        { status: planned }
   monitoring:     { status: planned }
   scheduler:      { status: planned }
