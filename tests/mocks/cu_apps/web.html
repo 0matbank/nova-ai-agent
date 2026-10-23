@@ -1,0 +1,13 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Nova Web Test</title>
+<script>if (location.hash) document.title = decodeURIComponent(location.hash.slice(1));</script></head>
+<body style="font-family:Segoe UI;margin:20px">
+<!-- Private web-style test app (computer-use tests, plan §71), opened in an app window
+     with its own temporary browser profile — never the owner's browser profile. -->
+<h2>Upload video</h2>
+<label>Title <input id="title" value="My clip"></label><br><br>
+<label><input type="checkbox"> Public</label><br><br>
+<select><option>HD</option><option>4K</option></select><br><br>
+<button>Upload</button> <button>Discard</button>
+<p><a href="#help">Help</a></p>
+</body></html>

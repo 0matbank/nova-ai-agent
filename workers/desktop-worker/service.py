@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import desktop_apps  # noqa: E402
 import desktop_clipboard  # noqa: E402
 import desktop_inside  # noqa: E402
+import desktop_observe  # noqa: E402
 import desktop_screen  # noqa: E402
 import desktop_ui  # noqa: E402
 import desktop_windows  # noqa: E402
@@ -53,6 +54,13 @@ class Target(Strict):
     name: str | None = None
     automation_id: str | None = None
     control_type: str | None = None
+
+
+class ObserveRequest(Strict):
+    window: str | None = None          # title; none = the window in front
+    hwnd: int | None = None
+    image: bool = True
+    focus: bool = False                # bring it to the front first (the work loop)
 
 
 class InspectRequest(Strict):
@@ -148,6 +156,12 @@ def register(app: FastAPI, ctx: AppContext | None = None) -> None:
     async def resolve(t: Target) -> Any:
         return await _call(desktop_ui.resolve, t.window, t.name, t.automation_id,
                            t.control_type)
+
+    @app.post("/v1/ui/observe")
+    async def observe(r: ObserveRequest) -> Any:
+        # plan §71 CU-1: one window's controls + screenshot + numbered marks, any app
+        return await _call(desktop_observe.observe, shots_dir.parent / "observe", r.window,
+                           r.hwnd, r.image, r.focus)
 
     @app.post("/v1/ui/inspect")
     async def inspect(r: InspectRequest) -> Any:

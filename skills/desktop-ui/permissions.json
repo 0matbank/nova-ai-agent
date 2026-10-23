@@ -1,5 +1,6 @@
 {
   "windows": ["ui.read"],
+  "observe": ["ui.read", "ui.focus"],
   "inspect": ["ui.read"],
   "read_value": ["ui.read"],
   "focus": ["ui.focus"],

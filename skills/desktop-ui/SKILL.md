@@ -8,6 +8,7 @@ plan's priority order (§17): UIA control patterns → keyboard → raw coordina
 | Tool | Action (level) | Notes |
 |---|---|---|
 | `windows` | ui.read 🟢 | top-level windows, owning process, which one is in front |
+| `observe` | ui.read 🟢 | plan §71: one window's controls numbered 1…n with their boxes, a window screenshot + a numbered-marks copy, and `sparse` (tree tells little → vision needed) — any app, **untrusted** |
 | `inspect` | ui.read 🟢 | control tree (name, type, automation id) |
 | `read_value` | ui.read 🟢 | current text/value of a control — **untrusted** |
 | `focus` | ui.focus 🔵 | bring a window to front; verified |
