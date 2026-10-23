@@ -83,11 +83,11 @@ def test_jobs_survive_a_restart_and_run_on_time(tmp_path: Path) -> None:
     assert ran.state is TaskState.COMPLETED and "CPU:" in ran.result_summary
     # the recurring job runs at 23:00 and comes back for the next day
     assert daily.next_run_at is not None
-    # tick when BOTH the 23:00 job and the 2-hours-later reminder are due (run between
-    # 21:00 and 23:00 the reminder comes after 23:00 — the test used to fail then)
+    # each job is ticked at its own time, in time order (one shared tick made the
+    # reminder 22 h "late" when the test ran after 23:00, and other hours broke too)
     assert rem.next_run_at is not None
-    when = max(daily.next_run_at, rem.next_run_at) + timedelta(seconds=5)
-    asyncio.run(restart(s).tick(when))
+    for when in sorted({daily.next_run_at, rem.next_run_at}):
+        asyncio.run(restart(s).tick(when + timedelta(seconds=5)))
     again = store.get(daily.id)
     assert again is not None and again.enabled and again.run_count == 1
     assert again.next_run_at is not None

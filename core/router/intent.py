@@ -315,6 +315,22 @@ def app_intent(res: Any) -> Intent:
         "app_choices": [m.app.id for m in res.candidates]})
 
 
+QUICK_SKILLS = frozenset({("windows", "status"), ("windows", "processes"),
+                          ("windows", "open_windows"), ("screenshot", "capture"),
+                          ("app-control", "open"), ("app-control", "close")})
+
+
+def is_quick_request(text: str, apps: Any | None = None) -> bool:
+    """V1.1 fast lane: a request a fixed skill answers in seconds, with no AI — it must
+    not wait behind a long AI task (live 2026-10-23: "প্রিমিয়ার প্রো খোলো" waited 2 min
+    behind one slow answer)."""
+    hit = classify_by_rules(text)
+    if hit is not None:
+        return hit.skill is not None and hit.skill[:2] in QUICK_SKILLS
+    return (apps is not None and not STATE_QUESTION.search(text)
+            and apps.is_quick_command(text))
+
+
 def classify_by_rules(text: str, apps: Any | None = None, chat_id: str = "") -> Intent | None:
     if looks_scheduled(text):
         # Phase 19: "protidin raat 11 tay pc status bolo" is a job for later, not a

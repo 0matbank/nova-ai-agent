@@ -30,6 +30,9 @@ from core.skills.desktop import NEEDS_DESKTOP, DesktopUnavailable
 
 T = TypeVar("T")
 _log = get_logger("tasks")
+# V1.1 fast lane: quick deterministic requests (app open/close, PC status, screenshot,
+# open windows, process list) get this priority and their own dispatcher
+FAST_PRIORITY = 10
 
 
 class TaskCancelled(Exception):
@@ -257,7 +260,9 @@ class TaskEngine:
             approvals.on_task_released.append(self.wake)
         self.executors: dict[str, Executor] = {}
         self._wake = asyncio.Event()
+        self._fast_wake = asyncio.Event()
         self.current_task_id: int | None = None
+        self.current_fast_task_id: int | None = None      # V1.1 fast lane
         self.heartbeat: float | None = None        # last loop round (for /status)
         self.queue_error: str | None = None
         # Phase 23 graceful shutdown: no new task starts; the running one stops at its
@@ -270,12 +275,17 @@ class TaskEngine:
 
     def wake(self) -> None:
         self._wake.set()
+        self._fast_wake.set()
 
-    async def run(self, stop: asyncio.Event) -> None:
+    async def run(self, stop: asyncio.Event, fast: bool = False) -> None:
+        """The dispatcher. `fast=True` is the V1.1 fast lane: it only takes quick
+        deterministic tasks (priority FAST_PRIORITY — app open, PC status, screenshot …),
+        so they never wait behind a long AI task in the main lane."""
         failures = 0
+        wake = self._fast_wake if fast else self._wake
         while not stop.is_set():
             try:
-                ran = await self.run_once()
+                ran = await self.run_once(fast)
             except Exception as e:
                 # e.g. "database is locked" or a disk error while picking the next task:
                 # the dispatcher must never die silently (audit 2026-10-15) — alert, retry.
@@ -289,12 +299,13 @@ class TaskEngine:
                     await asyncio.wait_for(stop.wait(), timeout=min(60.0, 2.0 * failures))
                 continue
             failures, self.queue_error = 0, None
-            self.heartbeat = time.time()
+            if not fast:
+                self.heartbeat = time.time()
             if ran:
                 continue
-            self._wake.clear()
+            wake.clear()
             stopper = asyncio.create_task(stop.wait())
-            waker = asyncio.create_task(self._wake.wait())
+            waker = asyncio.create_task(wake.wait())
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(
                     asyncio.wait({stopper, waker}, return_when=asyncio.FIRST_COMPLETED),
@@ -303,12 +314,29 @@ class TaskEngine:
             for t in (stopper, waker):
                 t.cancel()
 
-    async def run_once(self) -> bool:
+    async def run_once(self, fast: bool = False) -> bool:
         if self.draining or self.store.is_queue_paused():
             return False
-        task = self.store.next_runnable(self.executors)
+        # picking and claiming (RECEIVED -> PLANNING) happen with no await in between,
+        # so the two lanes can never start the same task
+        task = self.store.next_runnable(self.executors,
+                                        min_priority=FAST_PRIORITY if fast else None)
         if task is None:
             return False
+        if fast:
+            self.current_fast_task_id = task.id
+            try:
+                with log_context(task_id=str(task.id)):
+                    await self._execute(task)
+            except Exception:
+                _log.critical("task engine internal error (fast lane)", exc_info=True,
+                              extra={"action": "task.engine", "status": "error"})
+                with contextlib.suppress(Exception):
+                    self.store.transition(task.id, TaskState.FAILED,
+                                          error_code="ENGINE_ERROR")
+            finally:
+                self.current_fast_task_id = None
+            return True
         self.current_task_id = task.id
         try:
             with log_context(task_id=str(task.id)):

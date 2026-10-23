@@ -311,6 +311,17 @@ class AppResolver:
             return None
         return res
 
+    def is_quick_command(self, text: str) -> bool:
+        """A clear open/close of a known installed app (fast lane) — no rescan, no
+        question, nothing remembered."""
+        if GUARD_RX.search(text):
+            return False
+        action = "close" if CLOSE_RX.search(text) else "open" if OPEN_RX.search(text) else ""
+        try:
+            return bool(action) and self.resolve(text, action).status == "sure"
+        except Exception:  # noqa: BLE001 - unsure → the normal lane
+            return False
+
     def is_safe_open(self, text: str) -> bool:
         """Opening a clearly named installed app cannot do harm, so a voice command for
         it needs no extra ✅ (closing may lose work — it keeps the strict check)."""

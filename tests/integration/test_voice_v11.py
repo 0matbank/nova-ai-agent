@@ -75,8 +75,28 @@ def test_warm_idle_follows_memory_pressure(tmp_path: Path) -> None:
     assert t.unload_if_idle(now) and not t.loaded    # memory short → given back sooner
     t.transcribe_sync(tmp_path / "model")
     level[0] = "critical"
-    asyncio.run(t.relieve())                         # Resource Manager critical action
-    assert not t.loaded
+    asyncio.run(t.relieve())                         # Resource Manager critical action …
+    assert t.loaded                                  # … keeps a just-used model 60 s
+    assert t.unload_if_idle(t._last_used + 61) and not t.loaded
+
+
+def test_warm_up_is_never_undone_before_its_transcription(tmp_path: Path) -> None:
+    """Live 2026-10-23 (Premiere open, RAM 91 % = critical): Whisper loaded in 31 s,
+    the idle loop unloaded it at once, the same voice note loaded it again (65 s)."""
+    loads: list[int] = []
+
+    def factory(*a: Any) -> DetectingModel:
+        loads.append(1)
+        return DetectingModel("bn", [("bn", 0.9)])
+    (tmp_path / "model").mkdir()
+    t = Transcriber(tmp_path / "model", factory=factory, idle_unload_seconds=1200,
+                    pressure=lambda: "critical")
+    t.decoder = lambda path, sampling_rate: [0.0]
+    t.warm_sync()
+    assert not t.unload_if_idle(time.time() + 100)    # still waiting for its audio
+    t.transcribe_sync(tmp_path / "model")
+    assert loads == [1]                               # loaded once
+    assert t.unload_if_idle(time.time() + 61)         # then given back under pressure
 
 
 def test_cold_load_overlaps_the_download(tmp_path: Path) -> None:

@@ -326,11 +326,11 @@ def test_dispatcher_survives_a_queue_read_error(task_env: TaskEnv,
     real = task_env.store.next_runnable
     calls = {"n": 0}
 
-    def flaky(executors):  # type: ignore[no-untyped-def]
+    def flaky(executors, **kw):  # type: ignore[no-untyped-def]
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("database is locked")
-        return real(executors)
+        return real(executors, **kw)
     monkeypatch.setattr(task_env.store, "next_runnable", flaky)
 
     async def go() -> None:

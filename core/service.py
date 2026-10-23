@@ -72,7 +72,7 @@ from core.queue.desktop_watch import DesktopWatcher
 from core.queue.engine import TaskEngine
 from core.queue.store import TaskStore, TaskView
 from core.resources import ResourcePressure
-from core.router.intent import IntentRouter
+from core.router.intent import IntentRouter, is_quick_request
 from core.scheduler import Scheduler, ScheduleStore
 from core.skills.api import ToolEnv
 from core.skills.ledger import SideEffectLedger
@@ -344,6 +344,9 @@ async def run_core_service(
     schedule_store = ScheduleStore(db_sessions) if db_sessions is not None else None
     # V1.1: installed apps by spoken / misheard / learned name (catalog in data/)
     app_resolver = build_app_resolver(cfg, db_sessions)
+    if tasks is not None:
+        # V1.1 fast lane: quick deterministic requests never wait behind long AI work
+        tasks.quick = lambda text: is_quick_request(text, app_resolver)
     if engine is not None and security is not None and approvals is not None:
         # plan §9.1: side effects go through the idempotency ledger
         skill_runner = (SkillRunner(registry, ToolEnv(cfg, PathPolicy(cfg), tool_workers),
@@ -481,6 +484,7 @@ async def run_core_service(
         background.append(asyncio.create_task(local.warm()))
     if engine is not None and store is not None:
         background.append(asyncio.create_task(engine.run(stop)))
+        background.append(asyncio.create_task(engine.run(stop, fast=True)))
         watcher = DesktopWatcher(store, engine, desktop, notifier)
         background.append(asyncio.create_task(watcher.run(stop)))
     if approvals is not None:

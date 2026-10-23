@@ -83,6 +83,9 @@ LIVE_RULE = ("This question may need current information. Use live search if you
              "say so honestly — never guess current facts.")
 
 
+ESCALATION_LIMITS = Limits(timeout_seconds=25, max_output_tokens=800)
+
+
 def is_unsure(result: ProviderResult) -> bool:
     a = (result.answer or "").strip()
     return not a or UNSURE in a.upper()[:40]
@@ -107,7 +110,9 @@ async def answer(providers: object, task_id: int, text: str, system: str, contex
         first = await providers.complete(request(QUICK, LOCAL_QUICK_RULE))
         if first.ok and not is_unsure(first):
             return Answer(first, QUICK, escalated=False)
-        result = await providers.complete(request(FACT))
+        # live 2026-10-23: the silent escalation waited 120 s on one stuck Gemini call
+        # (it normally answers in ~5 s) — a quick question's check gets a short limit
+        result = await providers.complete(replace(request(FACT), limits=ESCALATION_LIMITS))
         return Answer(result, FACT, escalated=True)
     extra = LIVE_RULE if tier == CURRENT else ""
     result = await providers.complete(request(tier, extra))

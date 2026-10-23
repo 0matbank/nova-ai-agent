@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from channels.base import IncomingMessage, OutgoingMessage
 from core.log import redact
-from core.queue.engine import TaskEngine
+from core.queue.engine import FAST_PRIORITY, TaskEngine
 from core.queue.states import TaskState
 from core.queue.store import CancelOutcome, StepStatus, TaskStore, TaskView
 
@@ -34,9 +34,10 @@ def parse_task_id(args: list[str]) -> int | None:
 
 class TaskCommands:
     def __init__(self, store: TaskStore, engine: TaskEngine, list_limit: int,
-                 timezone: str) -> None:
+                 timezone: str, quick: Callable[[str], bool] | None = None) -> None:
         self.store = store
         self.engine = engine
+        self.quick = quick                    # V1.1: → the fast lane (FAST_PRIORITY)
         self.list_limit = list_limit
         self.tz = ZoneInfo(timezone)
 
@@ -54,8 +55,15 @@ class TaskCommands:
                                    "বন্ধ করতে: /lockdown off")
         text = redact(msg.text)          # plan §21: a token typed by the owner is never kept
         title = " ".join(text.split())[:60]
+        quick = False
+        if self.quick is not None:
+            try:
+                quick = self.quick(text)
+            except Exception:  # noqa: BLE001 - unsure → the normal lane
+                quick = False
         task = self.store.create(title=title, request_text=text, task_type=USER_REQUEST,
-                                 channel=msg.channel, chat_id=msg.chat_id)
+                                 channel=msg.channel, chat_id=msg.chat_id,
+                                 priority=FAST_PRIORITY if quick else 0)
         self.engine.wake()
         lines = [f"📥 Task #{task.id} তৈরি হয়েছে — {task.state}"]
         if USER_REQUEST not in self.engine.executors:

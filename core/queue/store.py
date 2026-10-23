@@ -128,17 +128,17 @@ class TaskStore:
             rows = s.scalars(select(Task).where(Task.state.in_(list(states))).order_by(Task.id))
             return [_view(t) for t in rows]
 
-    def next_runnable(self, task_types: Iterable[str]) -> TaskView | None:
+    def next_runnable(self, task_types: Iterable[str],
+                      min_priority: int | None = None) -> TaskView | None:
         types = list(task_types)
         if not types:
             return None
         with self._sessions() as s:
-            t = s.scalars(
-                select(Task)
-                .where(Task.state.in_(list(RUNNABLE)), Task.task_type.in_(types))
-                .order_by(Task.priority.desc(), Task.id)
-                .limit(1)
-            ).first()
+            q = select(Task).where(Task.state.in_(list(RUNNABLE)), Task.task_type.in_(types))
+            if min_priority is not None:
+                # the fast lane takes only fresh quick tasks (a retry goes the normal way)
+                q = q.where(Task.priority >= min_priority, Task.state == TaskState.RECEIVED)
+            t = s.scalars(q.order_by(Task.priority.desc(), Task.id).limit(1)).first()
             return _view(t) if t else None
 
     def transition(self, task_id: int, dst: TaskState, **fields: Any) -> TaskView:

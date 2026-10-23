@@ -28,6 +28,8 @@ from core.log import get_logger
 
 _log = get_logger("core")
 OWNER_LANGUAGES = ("bn", "en")
+MIN_WARM_SECONDS = 60.0     # even at critical memory pressure, stay this long after use
+HOLD_SECONDS = 120.0        # a warm-up keeps the model until its transcription (at most)
 INDIC = frozenset({"hi", "ur", "as", "ne", "mr", "pa", "or", "gu", "sa", "si"})
 
 
@@ -96,6 +98,7 @@ class Transcriber:
         self.pressure = pressure
         self.last_load_seconds = 0.0      # cold load paid by the last transcription
         self._load_seconds = 0.0
+        self._held_until = 0.0            # no idle unload before this (warm → transcribe)
         self.decoder: Callable[..., Any] | None = None    # audio file → samples (tests)
         self.factory = factory
         self._model: Any = None
@@ -132,7 +135,10 @@ class Transcriber:
         with self._lock:
             if self._model is None:
                 return False
-            if (now or time.time()) - self._last_used < self.idle_limit():
+            now = now or time.time()
+            if now < self._held_until:
+                return False                # a voice note is between warm-up and transcribe
+            if now - self._last_used < self.idle_limit():
                 return False
             self._model = None
             _log.info("whisper unloaded (idle)", extra={"action": "voice.unload"})
@@ -208,7 +214,7 @@ class Transcriber:
                 if bn_conf >= conf:
                     text, conf, lang, prob = bn_text, bn_conf, "bn", float(
                         bn_info.language_probability)
-            self._last_used = time.time()
+            self._last_used, self._held_until = time.time(), 0.0
         return Transcript(text, lang, prob, conf, float(info.duration),
                           time.perf_counter() - t0, self._loaded_on)
 
@@ -230,7 +236,7 @@ class Transcriber:
             self._loaded_on = "cpu/int8"
             lang, prob = self._owner_language(model, samples) or ("bn", 0.0)
             text, info, conf = self._run(model, samples, lang)
-        self._last_used = time.time()
+        self._last_used, self._held_until = time.time(), 0.0
         return Transcript(text, lang, prob, conf, float(info.duration),
                           time.perf_counter() - t0, self._loaded_on)
 
@@ -238,6 +244,8 @@ class Transcriber:
         """Load now (seconds it took; 0 when already loaded) — started while the voice
         note is still downloading."""
         with self._lock:
+            # the transcription that follows must find the model still loaded
+            self._held_until = time.time() + HOLD_SECONDS
             if self._model is not None:
                 return 0.0
             self._ensure()
@@ -251,10 +259,13 @@ class Transcriber:
         """Warm-idle (V1.1): stay loaded between close voice commands, but give the
         memory back sooner when the PC is short of it (Resource Manager level)."""
         level = self.pressure() if self.pressure is not None else "normal"
+        # live 2026-10-23: at "critical" (Premiere open, RAM 91 %) a 0 s limit unloaded
+        # Whisper right after its 31 s warm-up — the next voice note paid it twice.
+        # A short minimum keeps back-to-back commands fast.
         if level == "critical":
-            return 0.0
+            return min(self.idle_unload_seconds, MIN_WARM_SECONDS)
         if level == "high":
-            return min(self.idle_unload_seconds, 60.0)
+            return min(self.idle_unload_seconds, 2 * MIN_WARM_SECONDS)
         return self.idle_unload_seconds
 
     async def relieve(self) -> None:
