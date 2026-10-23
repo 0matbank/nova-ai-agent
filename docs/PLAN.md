@@ -3103,3 +3103,64 @@ Telegram voice-এর দেরি মাপা ও কমানো, installed a
 4. **V1.3 শেখা নিয়ন্ত্রিত:** কোনো recipe/skill স্থায়ী হবে শুধু **verifier PASS → owner approval** দুই ধাপ পার হলে; ব্যর্থ বা যাচাইহীন পদ্ধতি কখনো শেখা হবে না; প্রতিটা পরিবর্তনের diff ও আগের অবস্থায় ফেরা থাকবে।
 5. **V1.4 (Agent Office, Character) কম অগ্রাধিকার:** মূল কাজের গতি কমাবে না; dashboard বন্ধ থাকলে কোনো RAM/CPU খরচ নয়; animation হালকা।
 6. **পুরোনো V2 কিছুই বাদ নয়:** §৪৩-এর সব (Gmail, Calendar, Google Drive, উন্নত WhatsApp, Facebook/TikTok, Social Selling, Advanced Creative/Video Automation, Wake-on-LAN, Remote File Transfer, Advanced browser profiles, Multiple simultaneous agents, Multi-PC control, Advanced web dashboard) আর §৫৫–৫৬ যেমন ছিল তেমনই থাকবে; §৬৫–৬৮-এর V2 বিষয়গুলো এগুলোর **সঙ্গে যোগ**, বদলে নয়।
+
+
+## ৭০. খোলা app-এর ভেতরের কাজ + Stonic AI পর্যালোচনা (2026-10-23)
+
+**V1.1-এ যোগ হয়েছে (owner-এর আসল ব্যবহার থেকে):** "OBS এখন কি অবস্থা / কি দেখছ" আগে OBS আবার খুলত বা web থেকে উত্তর দিত; "OBS update চাইছে, skip করো" আগে process তালিকা দিত।
+- `app-control.view` — খোলা app-এর window, pop-up (লেখা + বোতাম) আর ছোট লেখা পড়ে বলে (UIA, শুধু পড়া)। "খুলে দেখো" হলে আগে খোলে; "খোলা তো আছে" হলে কখনো খোলে না।
+- ~~`app-control.choose`~~ — নির্দিষ্ট বোতাম-নাম ধরে skip; **বাদ (§৭১, hardcoded নিয়ম)** — pop-up-এর উত্তর General Computer-Use Engine দেবে।
+- আগে লুকানো একটা ভুলও ঠিক হলো: "প্রিমিয়ার প্রো খোলো" fast lane-এ যাচ্ছিল না।
+
+**Stonic AI 3.1.18 (owner-এর দেওয়া installer) — শুধু ভেতরের ফাইল পড়ে দেখা, চালানো হয়নি:**
+- বন্ধ-উৎসের পয়সার Electron app; মূল কোড bytecode/obfuscated, installer-এ signature নেই, email + hardware-ID দিয়ে telemetry, বাধ্যতামূলক login। ভেতরে খোলা-উৎসের Hermes Agent (MIT), Agent S3 (computer use), Pipecat (voice) বাঁধা।
+- সিদ্ধান্ত: **Nova-তে Stonic-এর কোনো ফাইল/binary চালানো হবে না, install-ও সুপারিশ নয়।** ভালো ধারণাগুলো Nova নিজে বানাবে:
+  1. **Esc দিয়ে থামানো** — কাজ চলার সময়ই শুধু keyboard hook; Nova-র নিজের পাঠানো (injected) Esc আলাদা চেনে। → V1.2 (UI automation-এর নিরাপত্তা, আগে)।
+  2. **সজাগ থাকা app (sidecar)** — model গরম রাখে, NDJSON-এ কথা, "stop" = শুধু কাজ থামানো। → V1.2।
+  3. **হালকা নজরদার** — সামনের window, mic কে ব্যবহার করছে, display জেগে আছে কিনা; বদলালেই শুধু খবর। → V1.3 proactive।
+  4. **PowerShell runner** — `-NoProfile -NonInteractive`, command env দিয়ে, timeout-এ পুরো process tree বন্ধ। → V1.2 (বর্তমান runner-এর সাথে মিলিয়ে)।
+  5. **API key Windows DPAPI-তে encrypt** — UI শুধু শেষ ৪ অক্ষর দেখে। → V1.3 (secrets/.env-এর বিকল্প হিসেবে বিবেচনা)।
+  6. **Tool-এর ফল কাঠামোবদ্ধ** (errorCode, retryable, retrySuggestion) → verifier-এ। → V1.3।
+  7. Hermes Agent ও Agent S3 দরকার হলে তাদের নিজের GitHub উৎস থেকে, তাদের license মেনে (§৬৪-এ hermes-agent আগেই আছে)।
+- নেওয়া হবে না: obfuscated কোড, hardware-fingerprint telemetry, vendor cloud দিয়ে remote control, অনুমতি-স্তর ছাড়া os_exec / mouse।
+
+
+## ৭১. General Computer-Use Engine — যেকোনো app, hardcoded নিয়ম ছাড়া (owner অনুমোদিত 2026-10-24)
+
+**লক্ষ্য:** Nova আজকের PC-র কয়েকটা app-এর bot নয়। কাল নতুন app install হলেও, UI বদলালেও, core code না বদলে কাজ করার চেষ্টা করবে। App catalog শুধু app খুঁজে পাওয়ার জন্য; নির্দিষ্ট app-নাম / বোতাম-নাম / coordinate / layout ধরে core logic লেখা নিষেধ। কোনো app-এর নির্ভরযোগ্য API/SDK থাকলে সেটা ঐচ্ছিক adapter — তা ছাড়াও সাধারণ engine কাজ করবে। (§৭০-এর OBS-নির্দিষ্ট skip নিয়ম এই কারণে বাদ।)
+
+**কাজের ধারা:** নির্দেশ → উদ্দেশ্য বোঝা → পথ বাছাই → দেখা → পরিকল্পনা → নিরাপদ কাজ → ফল দেখা → যাচাই → শোধরানো / পরের ধাপ।
+- **পথ বাছাই (tiered):** সহজ নির্দিষ্ট কাজ → fast path (বর্তমান skill, AI ছাড়া) · যার API/CLI/COM আছে → native tool (Office COM, browser DOM, পরে Premiere ইত্যাদি) · অচেনা GUI → General Computer-Use Agent · বড় কাজ → planner + specialist + verifier।
+- **দেখা (Observer):** UIA/Accessibility tree (cached, শুধু কাজের control, তাদের ঘর) + window তথ্য + শুধু সেই window-এর screenshot। tree প্রায় খালি হলে (Electron/web-ধাঁচ, canvas, Adobe) vision দিয়ে উপাদান শনাক্ত; দুই তালিকা overlap বাদ দিয়ে মেলানো, প্রতিটায় নম্বর বসানো ছবি (set-of-marks) — UFO-র ধারণা (MIT)।
+- **Grounding:** নম্বর না থাকলে বর্ণনা → ছবিতে জায়গা (Agent S3-এর ধারণা, Apache-2.0)। মডেল মেপে বাছাই: বর্তমান qwen3-vl বনাম UI-TARS-1.5-7B (local, on-demand, idle-এ unload); Gemini শুধু শেষ fallback।
+- **কাজ (Actor):** UIA pattern আগে (Invoke/Value/Toggle/Select/Expand/Scroll), না হলে উপাদানের ঘরের মাঝে mouse/keyboard। কাজের তালিকা: click, double/right click, type/set text, hotkey, scroll, drag-drop, menu, wait, ask, done, fail।
+- **Loop:** প্রতি ধাপে একটা (নিরাপদ হলে কয়েকটা) কাজ → আবার দেখা → অগ্রগতি যাচাই (Agent S3 reflection); আটকে গেলে অন্য পথ; সীমা পেরোলে সৎভাবে জানানো। শুরুতেই "কী হলে কাজ শেষ" (expected result) ঠিক — verifier সেটার প্রমাণ দেখবে (Task Goal → Expected Result → Evidence → Verdict)।
+- **নিরাপত্তা (অপরিবর্তিত + নতুন):** RED/YELLOW approval, privacy, resource manager কোনো fast/visual পথে bypass নয়। ঝুঁকির কাজ (install/update/delete/send/pay, অচেনা coordinate click) → owner-কে ছবিসহ ✅। অস্পষ্ট হলে আন্দাজ নয়, প্রশ্ন। **Esc kill-switch** (Nova-র নিজের পাঠানো key আলাদা চেনে) আর **owner keyboard/mouse ধরলে Nova থামে**। screen-এর লেখা untrusted data।
+- **Progress:** Telegram-এ একটা বার্তা প্রতি ধাপে বদলায় (ধাপ + ছোট ছবি); cancel / checkpoint / safe resume বর্তমান ব্যবস্থা দিয়ে।
+
+**নেওয়া / না-নেওয়া:** UFO (MIT) আর Agent S3 (Apache-2.0)-এর নির্দিষ্ট pattern license notice রেখে Nova-র ভেতরে; পুরো framework install নয় (UFO: ৪৫ dependency + নিজের server, Nova-র permission মানে না; Agent S: AI-লেখা code exec করে)। OmniParser-এর detector license (AGPL কিনা) যাচাই ছাড়া নয়।
+
+**পরীক্ষা:** ব্যক্তিগত test app (Win32 dialog, WinForms, WPF, Tk, web/Electron-ধাঁচ, accessibility-হীন canvas) + এলোমেলো pop-up; একটা অংশ held-out (আগে দেখানো হয় না, বোতাম-নাম বদলানো, বাংলা নাম)। মাপ: unseen success rate, task accuracy, wrong-action rate, recovery rate, time-to-first-action, মোট সময়, token/RAM/VRAM। কিবোর্ড/মাউসের পরীক্ষা Windows Sandbox-এ (owner-এর desktop ছোঁয় না); owner-এর আসল app-এ পরীক্ষা শুধু আগে জানিয়ে। Regression-এ একটা fail থাকলেও PASS নয়; pytest-এর নিজের exit code আর summary দুটোই দেখা হবে (pipe-এর exit code নয়)।
+
+**সীমাবদ্ধতা (সৎভাবে):** ১০০% কোথাও নয় (সেরা agent-ও কঠিন benchmark-এ ~৭০%); timeline/3D/canvas/game/DRM-এ কম; elevated window শুধু broker দিয়ে; UAC secure desktop কখনো নয়; প্রতি ধাপ ~৩–১৫ সে.।
+
+**আগের গবেষণার সঙ্গে সম্পর্ক (§৬৪–§৭০):** mobilerun (accessibility tree + screenshot, local model) আর Agent Zero (element দেখিয়ে নির্দেশ) এই Observer-এর একই ধারা; ego-lite-এর "সফল কাজ মনে রেখে পরে দ্রুত" → V1.3 recipe-এ computer-use trajectory-ও যাবে; Hermes/nanobot-এর শেখা ও memory → V1.3 (verifier PASS + owner approval ছাড়া কিছু স্থায়ী নয়, §৬৯-৪); Dodaios/MYRA-র কণ্ঠ ও orb → V1.2 (CU-এর progress ওখানেও দেখাবে); Stonic থেকে Esc kill-switch ও সজাগ sidecar (§৭০) → CU-4 ও CU-5; ARTEMIS/mobilerun-এর Android → V2-তে একই Observe→Act→Verify চক্র ফোনে।
+
+**Roadmap-এ অবস্থান:** V1.1 (বাকি: owner-এর ১০টা আসল phone voice test) → **CU (এই §, CU-0…CU-8)** → V1.2 → V1.3 → V1.4 → V2। V1.2–V2-এর কোনো feature বাদ নয় (§৬৫, §৬৯-৬)। Phase 21 WhatsApp আগের মতো deferred।
+
+**Dependencies:** নতুন বাধ্যতামূলক কিছু নয় — uiautomation, pywin32, mss/Pillow, Playwright, Ollama/llama.cpp আগে থেকেই আছে। ঐচ্ছিক: UI-TARS-1.5-7B (Apache-2.0, ~৫ GB, CU-2-এ মেপে তবেই), Windows Sandbox (Windows-এর নিজের, শুধু test-এর সময় ~৪ GB RAM)। UFO/Agent-S package install নয়।
+
+**Performance লক্ষ্য:** নির্দেশ পাওয়ার জানান < ১ সে.; fast-path কাজ < ৩ সে.; Observer (শুধু UIA) প্রতি window < ১.৫ সে.; vision লাগলে প্রথম কাজ < ১৫ সে.; প্রতি ধাপ সাধারণত ৩–১৫ সে.; ভারী model (grounding/vision) একসাথে একটার বেশি নয়, idle-এ unload; streaming progress আর আসল কাজের গতি আলাদা মাপা হবে — ভুয়া progress নয়।
+
+**ধাপ (প্রতিটা আসল পরীক্ষায় PASS হলে তবেই পরেরটা):**
+| ধাপ | কাজ | PASS শর্ত |
+|---|---|---|
+| CU-0 | পরিষ্কার: §৭০-এর app-নির্দিষ্ট skip বাদ, সঠিক exit-code দিয়ে test চালানো | পুরো suite 0 fail, exit code 0 |
+| CU-1 | Observer: control তালিকা + window ছবি + নম্বর-ছবি + "প্রায় খালি" চেনা | ৫ ধরনের test app-এ সঠিক control, প্রতি window < ১.৫ সে. |
+| CU-2 | Vision উপাদান-শনাক্ত + grounding model মাপা | accessibility-হীন test app-এ বোতাম খুঁজে পাওয়া; মডেলের গতি/নির্ভুলতা/VRAM টেবিল |
+| CU-3 | Actor: নম্বর/বর্ণনা ধরে কাজ, UIA আগে, না হলে input | সব test app-এ click/type/scroll/drag/menu সঠিক, ভুল-কাজ 0 |
+| CU-4 | নিরাপত্তা: Esc kill-switch, owner-input pause, ঝুঁকির কাজে ছবিসহ ✅ | Esc-এ < ০.৫ সে.-এ থামা; danger বোতামে কখনো নিজে চাপ নয় |
+| CU-5 | Computer-Use Loop + লক্ষ্য-ভিত্তিক verifier + Telegram progress | dev test-এ ≥৮০%, held-out-এ মাপা ফল রিপোর্ট, ভুল-কাজ 0 |
+| CU-6 | Windows Sandbox test lab + metrics রিপোর্ট | পুরো benchmark একটা command-এ চলে, owner-এর desktop না ছুঁয়ে |
+| CU-7 | Native adapter-এর কাঠামো (প্রথমে Office COM) | Word/Excel-এ API পথে কাজ + GUI fallback |
+| CU-8 | owner-এর আসল ব্যবহারে ছোট পরীক্ষা (আগে জানিয়ে) | owner-এর দেওয়া ৫টা কাজের ফল |
