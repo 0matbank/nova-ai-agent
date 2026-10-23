@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import desktop_apps  # noqa: E402
 import desktop_clipboard  # noqa: E402
+import desktop_inside  # noqa: E402
 import desktop_screen  # noqa: E402
 import desktop_ui  # noqa: E402
 import desktop_windows  # noqa: E402
@@ -123,6 +124,11 @@ def register(app: FastAPI, ctx: AppContext | None = None) -> None:
     async def visible_apps() -> Any:
         # V1.1: what is open on screen (windows grouped by app), not the process list
         return await _call(desktop_windows.visible_apps)
+
+    @app.post("/v1/apps/view")
+    async def view_app(req: AppRequest) -> Any:
+        # what an open app's windows and pop-ups show (read-only)
+        return await _call(desktop_inside.view, req.app)
 
     @app.post("/v1/apps/kill")
     async def kill_app(req: AppRequest) -> Any:

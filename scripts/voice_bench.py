@@ -3,6 +3,9 @@
     uv run python scripts/voice_bench.py --make            # speak the corpus (edge-tts)
     uv run python scripts/voice_bench.py --run --label before
     uv run python scripts/voice_bench.py --compare before after
+    uv run python scripts/voice_bench.py --run --phone 2026-10-24T10:00 --label v11
+        the owner's 10 real phone recordings (scripts/voice_phone_test.json, in the
+        order sent, from workspace/voice) — PASS only with all 10 real recordings
 
 The corpus (scripts/voice_corpus.json) is spoken by Microsoft neural voices, so it is
 a repeatable stand-in for the owner's voice — the real check is the owner's phone test.
@@ -26,6 +29,7 @@ sys.path.insert(0, str(ROOT))
 from core.config import load_config  # noqa: E402
 
 CORPUS = ROOT / "scripts" / "voice_corpus.json"
+PHONE = ROOT / "scripts" / "voice_phone_test.json"
 
 
 def out_dir() -> Path:
@@ -36,6 +40,11 @@ def out_dir() -> Path:
 
 def items() -> list[dict[str, Any]]:
     data: dict[str, Any] = json.loads(CORPUS.read_text(encoding="utf-8"))
+    return list(data["items"])
+
+
+def phone_items() -> list[dict[str, Any]]:
+    data: dict[str, Any] = json.loads(PHONE.read_text(encoding="utf-8"))
     return list(data["items"])
 
 
@@ -149,10 +158,29 @@ def vram_used_mb() -> int | None:
         return None
 
 
+def phone_recordings(since: str) -> list[Path]:
+    """The owner's Telegram voice notes kept since `since` (local time), oldest first."""
+    from datetime import datetime
+    t0 = datetime.fromisoformat(since).timestamp()
+    d = load_config().path("workspace_dir") / "voice"
+    return sorted((f for f in d.glob("*.ogg") if f.stat().st_mtime >= t0),
+                  key=lambda f: f.stat().st_mtime)
+
+
 def run(label: str, limit: int | None, ai: bool = False, hotwords: int = 0,
-        model: str | None = None) -> None:
+        model: str | None = None, phone: str | None = None) -> bool:
     import psutil
     cfg = load_config()
+    corpus = phone_items() if phone else items()
+    if phone:
+        audio = phone_recordings(phone)
+        if len(audio) != len(corpus):
+            # never a PASS without every real recording (owner 2026-10-24)
+            print(f"NOT PASS: {len(audio)} recordings since {phone}, need {len(corpus)}")
+            return False
+        label = f"phone-{label}"
+    else:
+        audio = [out_dir() / f"{it['id']}.ogg" for it in corpus]
     if model:
         cfg = cfg.model_copy(update={"models": cfg.models.model_copy(update={
             "whisper": cfg.models.whisper.model_copy(update={"path": Path(model)})})})
@@ -173,9 +201,8 @@ def run(label: str, limit: int | None, ai: bool = False, hotwords: int = 0,
            "vram_mb_added": (vram_used_mb() - vram0) if vram0 is not None else None,
            "ram_percent_after_load": psutil.virtual_memory().percent}
     rows = []
-    for it in items()[:limit]:
-        audio = d / f"{it['id']}.ogg"
-        t = tr.transcribe_sync(audio)
+    for it, path in list(zip(corpus, audio, strict=True))[:limit]:
+        t = tr.transcribe_sync(path)
         r0 = time.perf_counter()
         routed = route(t.text, it["id"]) if route.__name__ == "route_new" else route(t.text)
         route_s = time.perf_counter() - r0
@@ -188,7 +215,7 @@ def run(label: str, limit: int | None, ai: bool = False, hotwords: int = 0,
               f"{t.confidence:.2f}  «{t.text}» → {to}")
     passed = sum(r["ok"] for r in rows)
     stt = sorted(r["stt_s"] for r in rows)
-    apps = [r for r, it in zip(rows, items()[:limit], strict=True) if "app" in it["expect"]]
+    apps = [r for r, it in zip(rows, corpus[:limit], strict=True) if "app" in it["expect"]]
     summary = {"label": label, "load_s": round(load, 1), "passed": passed, "total": len(rows),
                "app_passed": sum(r["ok"] for r in apps), "app_total": len(apps),
                "stt_median_s": stt[len(stt) // 2], "stt_max_s": stt[-1],
@@ -198,6 +225,10 @@ def run(label: str, limit: int | None, ai: bool = False, hotwords: int = 0,
     (d / f"results-{label}.json").write_text(json.dumps({"summary": summary, "rows": rows},
                                                         ensure_ascii=False, indent=1),
                                              encoding="utf-8")
+    all_ok = passed == len(corpus) == len(rows)
+    if phone:
+        print(f"PHONE TEST: {'PASS' if all_ok else 'NOT PASS'} ({passed}/{len(corpus)})")
+    return all_ok
 
 
 def compare(labels: list[str]) -> None:
@@ -208,7 +239,8 @@ def compare(labels: list[str]) -> None:
     d = out_dir()
     runs = {x: json.loads((d / f"results-{x}.json").read_text(encoding="utf-8"))
             for x in labels}
-    ids = [it["id"] for it in items()]
+    phone = all(x.startswith("phone-") for x in labels)
+    ids = [it["id"] for it in (phone_items() if phone else items())]
     print(f"{'run':<22}{'routed ok':>11}{'app names':>11}{'heard':>7}{'stt med':>9}"
           f"{'load':>7}{'RAM+GB':>8}{'VRAM+MB':>9}{'RAM%':>6}")
     for x, r in runs.items():
@@ -242,11 +274,14 @@ def main() -> int:
     ap.add_argument("--hotwords", type=int, default=0, help="installed app names for Whisper")
     ap.add_argument("--model", help="another whisper model folder")
     ap.add_argument("--compare", nargs="+")
+    ap.add_argument("--phone", metavar="SINCE",
+                    help="run on the owner's real phone recordings kept since this local "
+                         "time (ISO, e.g. 2026-10-24T10:00)")
     a = ap.parse_args()
     if a.make:
         asyncio.run(make())
-    if a.run:
-        run(a.label, a.limit, a.ai, a.hotwords, a.model)
+    if a.run and not run(a.label, a.limit, a.ai, a.hotwords, a.model, a.phone) and a.phone:
+        return 1
     if a.compare:
         compare(a.compare)
     return 0

@@ -286,6 +286,8 @@ class UserRequestExecutor:
                     "close": ("বন্ধ হয়েছে ✅", "বন্ধ করা গেল না ❌")}.get(tool)
             if done:
                 answer = f"{app}: {done[0] if result.ok else done[1]}\n({result.summary})"
+            elif tool == "view" and result.ok:
+                answer = str(result.data.get("summary_bn") or result.summary)
         return {"kind": "skill", "skill": f"{skill}.{tool}", "ok": result.ok,
                 "answer": answer, "evidence": result.evidence, "app": params.get("app"),
                 "params": dict(params)}
@@ -466,6 +468,18 @@ class UserRequestExecutor:
                            VerdictStatus.PASS if ok else VerdictStatus.NEEDS_WORK,
                            (f"screen-এ {len(names)}টা app-এর window ✓ ({', '.join(names[:5])})"
                             if bn else f"{len(names)} app window(s) on screen ✓",))
+        if skill == "app-control.view":
+            # PASS only when what was read off the app's windows is in the answer
+            if not ev.get("running"):
+                return Verdict(True, "app not open", VerdictStatus.LIMITED,
+                               ("app-টা খোলা নেই" if bn else "the app is not open",))
+            answer = str(act.get("answer", ""))
+            shown = [str(t) for t in (ev.get("windows") or []) + (ev.get("prompts") or [])]
+            ok = all(t[:80] in answer for t in shown)
+            return Verdict(ok, "" if ok else "window text missing from the answer",
+                           VerdictStatus.PASS if ok else VerdictStatus.NEEDS_WORK,
+                           (f"app-এর {len(shown)}টা window/pop-up পড়া হয়েছে ✓" if bn
+                            else f"read {len(shown)} window(s)/pop-up(s) ✓",))
         if skill in ("app-control.open", "app-control.close"):
             tool = skill.split(".", 1)[1]
             ok, proof = check_effect({"skill": "app-control", "tool": tool,

@@ -1,0 +1,15 @@
+{
+  "about": "V1.1 final test (plan §69-1): the owner says these 10 as Telegram VOICE messages from the phone, in this order. Recordings are kept only while keep_audio is on (workspace/voice, never committed) and deleted after the test. PASS only from those real recordings.",
+  "items": [
+    {"id": "phone-premiere", "say": "প্রিমিয়ার প্রো খোলো", "expect": {"action": "open", "app": "premiere"}},
+    {"id": "phone-aftereffects", "say": "আফটার ইফেক্টস ওপেন করো", "expect": {"action": "open", "app": "after-effects"}},
+    {"id": "phone-vscode", "say": "ভিএস কোড খোলো", "expect": {"action": "open", "app": "vscode"}},
+    {"id": "phone-capcut", "say": "ক্যাপকাট চালু করো", "expect": {"action": "open", "app": "capcut"}},
+    {"id": "phone-obs", "say": "obs open koro", "expect": {"action": "open", "app": "obs"}},
+    {"id": "phone-audacity", "say": "audacity kholo", "expect": {"action": "open", "app": "audacity"}},
+    {"id": "phone-visualstudio", "say": "ভিজুয়াল স্টুডিও খোলো", "expect": {"action": "open", "app": "ask:vscode"}},
+    {"id": "phone-openwindows", "say": "পিসিতে এখন কোন কোন অ্যাপ খোলা আছে", "expect": {"intent": "open_windows", "skill": "windows.open_windows"}},
+    {"id": "phone-status", "say": "pc er obostha ki", "expect": {"intent": "pc_status", "skill": "windows.status"}},
+    {"id": "phone-screenshot", "say": "একটা স্ক্রিনশট পাঠাও", "expect": {"intent": "screenshot", "skill": "screenshot.capture"}}
+  ]
+}

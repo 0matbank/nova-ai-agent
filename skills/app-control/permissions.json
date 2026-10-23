@@ -1,5 +1,6 @@
 {
   "open": ["app.open"],
   "close": ["app.close"],
-  "kill": ["process.kill"]
+  "kill": ["process.kill"],
+  "view": ["ui.read", "app.open"]
 }

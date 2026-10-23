@@ -14,7 +14,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from core.apps.catalog import AppEntry, Catalog, scan
 from core.apps.phonetic import has_bangla, is_acronym, key, normalize, similarity, spelled
@@ -41,6 +41,23 @@ GUARD_RX = re.compile(
     r"\b(file|files|folder|directory|website|site|web\s*page|link|url|project|document|"
     r"pdf|docx?|xlsx|mp4|mp3|jpg|png|zip)\b|[a-z]:\\|https?://|\.[a-z]{2,4}\b|"
     r"ফাইল|ফোল্ডার|ওয়েবসাইট|প্রজেক্ট|লিংক|ডকুমেন্ট", re.IGNORECASE)
+# about an app that is (or should be) open (owner 2026-10-23) — generic words, no app names
+LOOK_RX = re.compile(
+    r"\b(dekh\w*|obostha|abostha|pop\s*-?\s*up|dialog|what\s+do\s+you\s+see|"
+    r"what'?s\s+(in|on)|ki\s+(ache|ase|hocche|cholche))\b|"
+    r"দেখ\S*|অবস্থা|পপ\s*আপ|ডায়ালগ|(কি|কী)\s*(আছে|আসে|তাছে|হচ্ছে|চলছে)",
+    re.IGNORECASE)
+ALREADY_OPEN_RX = re.compile(
+    r"\b(open|khola|chalu)\s+(ache|ase|hoye|hoyeche|hoise)\b|"
+    r"(ওপেন|অপেন|খোলা|চালু)\s*(আছে|আসে|হয়ে|হোয়ে|হয়েছে|হইছে)|"
+    r"তো\s*(ওপেন|অপেন|খোলা|চালু)", re.IGNORECASE)
+# removed before the app name is matched, so "update"/"দেখো" never sound like an app
+INSIDE_WORDS_RX = re.compile(
+    rf"{LOOK_RX.pattern}|"
+    r"\b(update|updates|upgrade|now|ekhon|akhon|tumi|tmi|ami|amake|amk|bolo|janao)\b|"
+    r"আপডেট|অপডেট|আপ্ডেট|অপ্রিট|এখন|তুমি|তুমাকে|তোমাকে|আমি|আমাকে|জানাও|জানা|বলো|চাইছে|চাচ্ছে|"
+    r"চাছে|বলছে",
+    re.IGNORECASE)
 APP_WORD_RX = re.compile(r"\b(app|apps|application|software|program)\b|"
                          r"অ্যাপ|এপ|এপস|অ্যাপস|সফটওয়্যার|সফটওয়ার|প্রোগ্রাম", re.IGNORECASE)
 
@@ -58,6 +75,8 @@ STOP = frozenset((
     "কম্পিউটারে", "টা", "টি", "টাকে", "অ্যাপ", "অ্যাপস", "এপ", "এপস", "এপ্স", "অ্যাপ্লিকেশন",
     "সফটওয়্যার", "সফটওয়ার", "প্রোগ্রাম", "জাস্ট", "তুমি", "একটু", "এখন", "আবার", "এই", "ওই",
     "ওটা", "এটা", "তো", "একটা",
+    # state / filler words of a whole sentence ("আছে" sounded like "edge", 2026-10-23)
+    "ache", "ase", "kora", "and", "আছে", "আসে", "করা", "যে", "সে", "এবং", "হয়ে", "হয়েছে",
 ))
 _GLUED = ("খোলো", "খুলো", "কোলো", "ওপেন", "অপেন", "উপেন", "ওপিন", "ওপন", "পেন", "চালু",
           "করো")
@@ -331,6 +350,41 @@ class AppResolver:
             return self.resolve(text, "open").status == "sure"
         except Exception:  # noqa: BLE001 - unsure → the normal (strict) check
             return False
+
+    def inside_command(self, text: str) -> tuple[str, dict[str, Any]] | None:
+        """A request about an app that is (or should be) open, never a command to open it
+        again (owner 2026-10-23): "OBS-এ কি দেখছ" → ("view", …) reads its windows;
+        "OBS তো open আছে, …করো" → ("operate", …) — work inside it, for the general
+        computer-use agent (plan §71), not a fixed rule per app or button."""
+        if GUARD_RX.search(text) or CLOSE_RX.search(text):
+            return None
+        look = LOOK_RX.search(text)
+        already = ALREADY_OPEN_RX.search(text)
+        if not (look or already):
+            return None
+        try:
+            res = self.resolve(INSIDE_WORDS_RX.sub(" ", text), "view")
+        except Exception:  # noqa: BLE001 - unsure → the other rules
+            return None
+        if res.status != "sure" or res.app is None or res.best is None:
+            return None
+        if res.best.method == "fuzzy" and res.best.score < 0.93:
+            return None              # "error" ≈ "winrar" — only a clearly named app
+        if not look:
+            return "operate", {"app": res.app.id}
+        first = bool(OPEN_RX.search(text)) and not already
+        return "view", {"app": res.app.id, "open_first": first}
+
+    def is_low_risk(self, text: str) -> bool:
+        """Voice: needs no extra ✅ — opening a named app or looking at one (reading
+        only). Work inside an app keeps the strict check."""
+        try:
+            inside = self.inside_command(text)
+        except Exception:  # noqa: BLE001 - unsure → the strict check
+            return False
+        if inside is not None:
+            return inside[0] == "view"
+        return self.is_safe_open(text)
 
     # ------------------------------------------------- questions and corrections
 

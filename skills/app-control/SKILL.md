@@ -8,6 +8,7 @@ Open and close desktop apps **inside the user session** via the Desktop Worker
 | `open` | app.open (BLUE) | the app's process is running afterwards |
 | `close` | app.close (BLUE) | graceful `WM_CLOSE`; reports if the app is still running (e.g. "save?" dialog) |
 | `kill` | process.kill (RED) | process gone — unsaved work is lost, so approval is required |
+| `view` | ui.read (GREEN); app.open (BLUE) with `open_first` | read-only: windows, pop-ups (text + buttons), short main-window text — untrusted |
 
 Only apps listed in `apps.json` can be opened (add new ones there with their
 executable candidates and process names). `explorer` (the Windows shell) can be

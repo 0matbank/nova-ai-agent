@@ -378,7 +378,7 @@ async def run_core_service(
                         lambda m: router.handle(m),
                         corrector=lambda heard, lang: suggest_correction(
                             provider_router, heard, lang, cfg.default.voice.hint_words),
-                        speaker=speaker, low_risk=app_resolver.is_safe_open,
+                        speaker=speaker, low_risk=app_resolver.is_low_risk,
                         send=channel.send)
 
     async def speak_final_answer(chat_id: str, kind: MessageType, task_id: int) -> None:

@@ -317,21 +317,30 @@ def app_intent(res: Any) -> Intent:
 
 QUICK_SKILLS = frozenset({("windows", "status"), ("windows", "processes"),
                           ("windows", "open_windows"), ("screenshot", "capture"),
-                          ("app-control", "open"), ("app-control", "close")})
+                          ("app-control", "open"), ("app-control", "close"),
+                          ("app-control", "view")})
 
 
 def is_quick_request(text: str, apps: Any | None = None) -> bool:
     """V1.1 fast lane: a request a fixed skill answers in seconds, with no AI — it must
     not wait behind a long AI task (live 2026-10-23: "প্রিমিয়ার প্রো খোলো" waited 2 min
     behind one slow answer)."""
+    if (apps is not None and not looks_scheduled(text) and not is_creative(text)
+            and not is_screen_question(text) and not URL_RX.search(text)
+            and (apps.inside_command(text) or ("",))[0] == "view"):
+        return True                      # look at / answer the pop-up of an open app
+    # no resolver here: it may rescan the PC and remembers attempts (not on submit)
     hit = classify_by_rules(text)
-    if hit is not None:
-        return hit.skill is not None and hit.skill[:2] in QUICK_SKILLS
-    return (apps is not None and not STATE_QUESTION.search(text)
-            and apps.is_quick_command(text))
+    if hit is not None and hit.skill is not None:
+        return hit.skill[:2] in QUICK_SKILLS
+    # the rules may only have seen "খোলো" (pc_control, no skill): a known app is quick
+    return ((hit is None or hit.category == "pc_control") and apps is not None
+            and not STATE_QUESTION.search(text) and apps.is_quick_command(text))
 
 
 def classify_by_rules(text: str, apps: Any | None = None, chat_id: str = "") -> Intent | None:
+    inside = (apps.inside_command(text) if apps is not None and not URL_RX.search(text)
+              else None)
     if looks_scheduled(text):
         # Phase 19: "protidin raat 11 tay pc status bolo" is a job for later, not a
         # status request now — the time wins over the action words
@@ -341,6 +350,15 @@ def classify_by_rules(text: str, apps: Any | None = None, chat_id: str = "") -> 
     if is_screen_question(text) and not URL_RX.search(text):
         # plan §57: a question ABOUT the screen → screenshot + vision answer
         return Intent("screenshot", 0.9, "rule", None, matched="screen question")
+    if inside is not None and inside[0] == "view":
+        # owner 2026-10-23: "OBS-এ কি দেখছ" is about an app that is open — look at it,
+        # never open it again
+        return Intent("pc_control", 0.95, "rule", ("app-control", *inside),
+                      matched=inside[1]["app"])
+    if inside is not None:
+        # work inside an open app → the Windows Operator (no fixed skill, no reopening)
+        return Intent("pc_control", 0.9, "rule", None, matched=inside[1]["app"],
+                      meta={"inside_app": inside[1]["app"]})
     if is_open_windows_question(text) and not URL_RX.search(text):
         # V1.1: "what is open" → the visible windows, before any app-name matching
         return Intent("open_windows", 0.9, "rule", READ_ONLY_SKILLS["open_windows"],
