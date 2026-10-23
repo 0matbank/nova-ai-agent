@@ -48,6 +48,9 @@ def check_effect(effect: dict[str, Any], resolve: Resolve) -> tuple[bool, str]:
         return not path.exists(), (f"{path.name} মুছে গেছে (Recycle Bin) ✓" if not path.exists()
                                    else f"{path.name} এখনো আছে ✗")
     if tool == "app-control.open":
+        if ev.get("window_titled") and not ev.get("running_pids"):
+            # V1.1: a Store app has no exe to watch — the worker saw its new window
+            return True, f"{p.get('app')}-এর নতুন window খুলেছে ✓"
         alive = pids_alive([*(ev.get("running_pids") or []), *(ev.get("new_pids") or [])])
         return bool(alive), (f"{p.get('app')} চলছে (pid {alive[0]}) ✓" if alive
                              else f"{p.get('app')} চলছে না ✗")

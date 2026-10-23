@@ -70,6 +70,8 @@ FILE_COND = re.compile(r"([A-Za-z]:\\[^\s\"']+|/[^\s\"']+)\s*(?:file\s*)?"
 REMIND = re.compile(r"\bremind\w*(?:\s+me)?\b|mone\s*kori(?:ye|e|a)?\s*(?:dio|diyo|diben|dao)?|"
                     r"মনে\s*করি(?:য়|য)ে\s*\S*|\b(?:amake|amay|আমাকে)\s*(?:bolo|bolben|janao|"
                     r"janaben|jaaniyo|janiyo|জানাও|বলো|জানাবে)\b|\balarm\b", re.IGNORECASE)
+REMIND_ITSELF = re.compile(r"\bremind\w*(?:\s+me)?\b|mone\s*kori(?:ye|e|a)?\s*(?:dio|diyo|"
+                           r"diben|dao)?|মনে\s*করি(?:য়|য)ে\s*\S*|\balarm\b", re.IGNORECASE)
 FILLER = re.compile(r"\b(please|plz|pls|ekta|schedule\s*koro|set\s*koro|amake|amay|"
                     r"amar\s*jonno|ke|at|on|by|then|tokhon|তখন|আমাকে)\b", re.IGNORECASE)
 
@@ -85,7 +87,9 @@ def looks_scheduled(text: str) -> bool:
     """A request to do something LATER — not a question that merely mentions a time
     ("ajke 5 tay ki match ache?" is a question)."""
     t = text.translate(_DIGITS)
-    if REMIND.search(t) or TASK_DONE.search(t) or FILE_COND.search(t):
+    # "amake janao" alone is just "tell me" (V1.1: "পিসির স্ট্যাটাস আমাকে জানাও" became a
+    # reminder) — it is a schedule only with a time or a condition, checked below
+    if REMIND_ITSELF.search(t) or TASK_DONE.search(t) or FILE_COND.search(t):
         return True
     if DELAY.search(t) or EVERY_N.search(t) or DAILY.search(t) or WEEKLY.search(t):
         return not (_QUESTION.search(t) and not _ACTION_VERB.search(t))

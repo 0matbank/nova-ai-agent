@@ -16,7 +16,7 @@ agents:
   master_orchestrator: { enabled: true, kind: reasoning, task_types: [all, question],
                          provider_task_type: quick_answer, skills: [] }
   windows_operator:    { enabled: true, kind: reasoning,
-                         task_types: [pc_control, pc_status, screenshot, processes],
+                         task_types: [pc_control, pc_status, screenshot, processes, open_windows],
                          provider_task_type: planning,
                          skills: [windows, app-control, desktop-ui, screenshot, clipboard,
                                   powershell, terminal, files.list_dir, files.metadata,

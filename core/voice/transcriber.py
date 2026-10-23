@@ -28,6 +28,7 @@ from core.log import get_logger
 
 _log = get_logger("core")
 OWNER_LANGUAGES = ("bn", "en")
+INDIC = frozenset({"hi", "ur", "as", "ne", "mr", "pa", "or", "gu", "sa", "si"})
 
 
 @dataclass(frozen=True)
@@ -80,7 +81,8 @@ class Transcriber:
     def __init__(self, model_path: Path, device: str = "cuda", compute_type: str = "float16",
                  idle_unload_seconds: float = 300, beam_size: int = 5,
                  factory: ModelFactory = _default_factory, hint_words: list[str] | None = None,
-                 vad_speech_pad_ms: int = 400) -> None:
+                 vad_speech_pad_ms: int = 400,
+                 pressure: Callable[[], str] | None = None) -> None:
         self.model_path = model_path
         self.device = device
         self.compute_type = compute_type
@@ -89,6 +91,12 @@ class Transcriber:
         # Vocabulary bias (faster-whisper initial_prompt) for the owner's usual words.
         self.initial_prompt = ", ".join(hint_words) if hint_words else None
         self.vad_speech_pad_ms = vad_speech_pad_ms
+        # V1.1: installed app names, so "Premiere Pro" is not heard as "প্রিমিয় প্রো"
+        self.hotwords: str | None = None
+        self.pressure = pressure
+        self.last_load_seconds = 0.0      # cold load paid by the last transcription
+        self._load_seconds = 0.0
+        self.decoder: Callable[..., Any] | None = None    # audio file → samples (tests)
         self.factory = factory
         self._model: Any = None
         self._loaded_on = ""
@@ -104,6 +112,7 @@ class Transcriber:
             return self._model
         if not self.model_path.exists():
             raise FileNotFoundError(f"whisper model not found at {self.model_path}")
+        t0 = time.perf_counter()
         try:
             self._model = self.factory(str(self.model_path), self.device, self.compute_type)
             self._loaded_on = f"{self.device}/{self.compute_type}"
@@ -114,21 +123,22 @@ class Transcriber:
                          "falling back to cpu/int8", extra={"action": "voice.load"})
             self._model = self.factory(str(self.model_path), "cpu", "int8")
             self._loaded_on = "cpu/int8"
-        _log.info(f"whisper loaded on {self._loaded_on}", extra={"action": "voice.load",
-                                                                "status": "ok"})
+        self._load_seconds = time.perf_counter() - t0
+        _log.info(f"whisper loaded on {self._loaded_on} in {self._load_seconds:.1f}s",
+                  extra={"action": "voice.load", "status": "ok"})
         return self._model
 
     def unload_if_idle(self, now: float | None = None) -> bool:
         with self._lock:
             if self._model is None:
                 return False
-            if (now or time.time()) - self._last_used < self.idle_unload_seconds:
+            if (now or time.time()) - self._last_used < self.idle_limit():
                 return False
             self._model = None
             _log.info("whisper unloaded (idle)", extra={"action": "voice.unload"})
             return True
 
-    def _run(self, model: Any, audio: str, language: str | None) -> tuple[str, Any, float]:
+    def _run(self, model: Any, audio: Any, language: str | None) -> tuple[str, Any, float]:
         segs, info = self._decode(model, audio, language, vad=True)
         if not segs:
             # VAD can drop a very short command entirely — retry on the raw audio.
@@ -142,20 +152,44 @@ class Transcriber:
             conf = 0.0
         return text, info, conf
 
-    def _decode(self, model: Any, audio: str, language: str | None,
+    def _decode(self, model: Any, audio: Any, language: str | None,
                 vad: bool) -> tuple[list[Any], Any]:
         kwargs: dict[str, Any] = {"language": language, "beam_size": self.beam_size,
                                   "vad_filter": vad, "condition_on_previous_text": False,
                                   "initial_prompt": self.initial_prompt}
+        if self.hotwords:
+            kwargs["hotwords"] = self.hotwords
         if vad:
             kwargs["vad_parameters"] = {"speech_pad_ms": self.vad_speech_pad_ms}
         segments, info = model.transcribe(audio, **kwargs)
         return list(segments), info
 
+    def _owner_language(self, model: Any, audio: Any) -> tuple[str, float] | None:
+        """V1.1: the owner speaks Bangla or English — pick between those two only.
+        Free detection said Hindi for Banglish and wrote Devanagari ("ओपन करो"), and the
+        retry decoded everything twice."""
+        if not hasattr(model, "detect_language"):
+            return None
+        vad = importlib.import_module("faster_whisper.vad").VadOptions(
+            speech_pad_ms=self.vad_speech_pad_ms)
+        lang, prob, ranked = model.detect_language(audio, vad_filter=True, vad_parameters=vad)
+        if lang in OWNER_LANGUAGES:
+            return lang, float(prob)
+        probs = dict(ranked)
+        bn, en = float(probs.get("bn", 0.0)), float(probs.get("en", 0.0))
+        # an Indian-language guess is the owner's Bangla accent, not English
+        if lang in INDIC or bn >= en:
+            return "bn", bn
+        return "en", en
+
     def transcribe_sync(self, audio: Path) -> Transcript:
         t0 = time.perf_counter()
         with self._lock:
             model = self._ensure()
+            self.last_load_seconds = self._load_seconds
+            self._load_seconds = 0.0
+            if hasattr(model, "detect_language"):
+                return self._transcribe_owner(model, audio, t0)
             try:
                 text, info, conf = self._run(model, str(audio), None)
             except RuntimeError as e:
@@ -177,6 +211,55 @@ class Transcriber:
             self._last_used = time.time()
         return Transcript(text, lang, prob, conf, float(info.duration),
                           time.perf_counter() - t0, self._loaded_on)
+
+    def _transcribe_owner(self, model: Any, audio: Path, t0: float) -> Transcript:
+        """Real faster-whisper: decode the audio once, choose Bangla/English, one pass."""
+        decode = self.decoder or importlib.import_module("faster_whisper").decode_audio
+        samples = decode(str(audio), sampling_rate=16000)
+        try:
+            chosen = self._owner_language(model, samples)
+            assert chosen is not None
+            lang, prob = chosen
+            text, info, conf = self._run(model, samples, lang)
+        except RuntimeError as e:
+            if not self._loaded_on.startswith("cuda"):
+                raise
+            _log.warning(f"whisper GPU run failed ({e}); falling back to cpu/int8",
+                         extra={"action": "voice.fallback"})
+            self._model = model = self.factory(str(self.model_path), "cpu", "int8")
+            self._loaded_on = "cpu/int8"
+            lang, prob = self._owner_language(model, samples) or ("bn", 0.0)
+            text, info, conf = self._run(model, samples, lang)
+        self._last_used = time.time()
+        return Transcript(text, lang, prob, conf, float(info.duration),
+                          time.perf_counter() - t0, self._loaded_on)
+
+    def warm_sync(self) -> float:
+        """Load now (seconds it took; 0 when already loaded) — started while the voice
+        note is still downloading."""
+        with self._lock:
+            if self._model is not None:
+                return 0.0
+            self._ensure()
+            self._last_used = time.time()
+            return self._load_seconds
+
+    async def warm(self) -> float:
+        return await asyncio.to_thread(self.warm_sync)
+
+    def idle_limit(self) -> float:
+        """Warm-idle (V1.1): stay loaded between close voice commands, but give the
+        memory back sooner when the PC is short of it (Resource Manager level)."""
+        level = self.pressure() if self.pressure is not None else "normal"
+        if level == "critical":
+            return 0.0
+        if level == "high":
+            return min(self.idle_unload_seconds, 60.0)
+        return self.idle_unload_seconds
+
+    async def relieve(self) -> None:
+        """Resource Manager critical action `unload_idle_whisper`."""
+        await asyncio.to_thread(self.unload_if_idle)
 
     async def transcribe(self, audio: Path) -> Transcript:
         return await asyncio.to_thread(self.transcribe_sync, audio)

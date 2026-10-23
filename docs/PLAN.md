@@ -2996,3 +2996,110 @@ Verification
 - Voice + Vision remote assistant-এর core capability থাকবে
 - কোনো নতুন specialist যোগ করতে core architecture rewrite লাগবে না
 
+
+# REFERENCE AGENT ADDITIONS (2026-10-23) — মূল plan-এর কোনো অংশ বদলানো/বাদ দেওয়া হয়নি
+
+Owner-এর দেওয়া ৯টা open-source agent repository আর ২টা demo video (Stonic AI) দেখে Nova-তে কী নেওয়া যায়, তার তালিকা। নিয়ম: **ধারণা নেওয়া হবে, কোড কপি নয়** (license আলাদা; Agent Zero-র license স্পষ্ট নয়)। Nova-র নিজের approval, verifier, broker আর secret নিয়ম সব জায়গায় আগের মতোই থাকবে। কোনো framework দিয়ে Nova-কে বদলানো হবে না।
+
+## ৬৪. কোন repo থেকে কী শেখার আছে
+
+| Repo / উৎস | কী আছে | Nova-র জন্য কাজের অংশ |
+|---|---|---|
+| Dodaios/Dodaios (Windows, local) | wake phrase, টানা কথোপকথন (Listening → Thinking → Speaking), কথার মাঝে থামানো, "thinking pause", Speech Dictionary, dictation, safe/monitor/ask/block | কণ্ঠের পুরো অভিজ্ঞতা — সবচেয়ে কাছের মডেল |
+| NousResearch/hermes-agent | অভিজ্ঞতা থেকে নিজে skill বানানো ও ব্যবহারের সময় উন্নত করা, পুরনো কথোপকথন খোঁজা (FTS5), memory-তে মাঝে মাঝে মনে করিয়ে রাখা, /retry /undo /usage /insights, personality | শেখার loop + দরকারি command |
+| HKUDS/nanobot | ছোট core, "Dream" — memory একত্র করে USER.md-তে রাখা, দেখার মতো log, temporary chat | memory consolidation, অস্থায়ী কথোপকথন |
+| codeninjavik/myra-ultra (★3, Windows) | Gemini Live দিয়ে হাতমুক্ত কথা, ভাসমান orb + কিনারায় আলো (শুনছে বোঝাতে), camera/screen দেখা | ভাসমান orb, realtime কণ্ঠ ধারণা (কোড মান যাচাই হয়নি — শুধু ধারণা) |
+| Stonic AI (video ২টা) | জীবন্ত অবতার, Memory/Skills/Character/Settings সংযোগ-চিত্র, pixel "agent office" — কোন agent কোন টেবিলে কী করছে, earbud দিয়ে বাইরে কথা | dashboard-এ "Visual Hub", চরিত্র/ব্যক্তিত্ব |
+| citrolabs/ego-lite | agent-এর আলাদা browser Space (owner-এর tab ছোঁয় না), ভালো page snapshot, সফল browser কাজ মনে রেখে পরে দ্রুত করা | browser অভিজ্ঞতা reuse; ego-lite নিজে install নয় (telemetry আছে) |
+| agent0ai/agent-zero | Docker-এ পুরো Linux desktop, browser-এ element দেখিয়ে নির্দেশ, document cowork, project ভিত্তিক memory/secret | element দেখিয়ে নির্দেশ (পরে); Docker desktop নয় (RAM ভারী) |
+| openclaw/openclaw | এক Gateway-তে অনেক channel, অচেনা sender pairing, model/harness plugin | আমাদের channel কাঠামো আগেই এমন — নতুন কিছু লাগবে না |
+| google/artemis (Apache-2.0) | Android phone স্বাভাবিক ভাষায় চালানো, MCP server, প্রতি ধাপ ৩–৫ সেকেন্ড, AndroidWorld ৯৯% | Android Specialist (V2) |
+| droidrun/mobilerun (MIT) | Android/iOS চালানো, Ollama সহ যেকোনো model, accessibility tree + screenshot | Android Specialist (V2) — local model দিয়েও চলে |
+
+## ৬৫. যা নেওয়া হবে — অগ্রাধিকার অনুযায়ী
+
+### V1.1 — Voice Quality + Latency (এখন চলছে, আগে শেষ হবে)
+Telegram voice-এর দেরি মাপা ও কমানো, installed app catalog + নাম মেলানো (exact → normalized → alias → উচ্চারণ → local AI), owner-এর শুধরে দেওয়া নাম শেখা, Whisper শুধু বাংলা/ইংরেজি, warm-idle, `windows.open_windows`। Regression PASS + owner-এর phone test PASS না হওয়া পর্যন্ত নিচের কিছু শুরু হবে না।
+
+### V1.2 — Live Voice (Dodaios + MYRA + Stonic থেকে)
+1. **উত্তর কণ্ঠে দ্রুত শুরু:** পুরো উত্তর তৈরি হওয়ার আগে প্রথম বাক্য বলা শুরু (streaming TTS); ছোট উত্তর আগে থেকে cache।
+2. **Speech Dictionary (সাধারণ):** app-এর মতো project, folder, মানুষের নাম আর owner-এর নিজের শব্দ — routing-এর আগে transcript ঠিক করা; owner-এর correction থেকে শেখা।
+3. **PC-তে wake phrase + টানা কথোপকথন:** "হেই নোভা" (local wake-word, cloud-এ কিছু যায় না) → Listening → Thinking → Speaking → আবার Listening; চুপ থাকলে session শেষ।
+4. **Thinking pause + মাঝপথে থামানো:** কথা শেষ হয়েছে কিনা বোঝার বিরতি; Nova বলার সময় owner কথা বললে Nova থামবে (speaker-এর echo যাচাই করে)।
+5. **ভাসমান orb + শুনছে বোঝানোর আলো:** PC-তে ছোট সবসময়-উপরে window — শুনছে / ভাবছে / বলছে দেখাবে।
+6. **Dictation mode:** বলা কথা সামনে খোলা app-এ লিখে দেওয়া (Desktop Worker UIA typing, BLUE)।
+নিয়ম: কণ্ঠে কোনো password/secret বলা যাবে না; action-এর আগে আগের মতোই risk level + approval।
+
+### V1.3 — শেখা ও স্মৃতি (Hermes + nanobot + Dodaios থেকে)
+1. **অভিজ্ঞতা থেকে recipe:** জটিল কাজ সফল হলে Nova ধাপগুলোর একটা recipe (data, code নয়) খসড়া করবে; owner approve করলে পরের বার একই কাজ AI ছাড়া/কম AI-তে দ্রুত চলবে; ব্যর্থ হলে recipe নিজে update-এর প্রস্তাব দেবে। (Nova নিজের code কখনো বদলাবে না — এই নিয়ম অপরিবর্তিত।)
+2. **পুরনো কথোপকথন খোঁজা:** "গত সপ্তাহে X নিয়ে কী বলেছিলাম" — DB-তে full-text search (SQLite FTS5) + ছোট সারাংশ।
+3. **Memory একত্র করা (Dream):** মাঝে মাঝে owner-এর পছন্দগুলো একত্র করে USER profile; কী বদলাল তার log `/memory`-তে দেখা যাবে।
+4. **Agent-এর নিজের নোট:** প্রতিটা specialist নিজের কাজ থেকে শেখা নোট রাখবে (project-scoped, secret বাদ)।
+5. **নতুন command:** `/retry`, `/undo` (যা উল্টানো যায়), `/usage` (provider/quota হিসাব), `/insights`।
+6. **Temporary chat:** যে কথা memory/history-তে যাবে না।
+
+### V1.4 — দেখার অভিজ্ঞতা (Stonic video থেকে)
+1. **Dashboard "Visual Hub":** প্রতিটা agent একটা আসনে — কে ব্যস্ত, কোন task, শেষ ধাপ (আমাদের task/agent data দিয়েই)।
+2. **Memory / Skills / Character / Settings সংযোগ-চিত্র** dashboard-এ।
+3. **চরিত্র/ব্যক্তিত্ব:** owner বাছাই করা কথার ধরন + কণ্ঠ (এখনকার Gemini "Achernar" কণ্ঠের সাথে মিলিয়ে)।
+
+### V2 — বড় কাজ
+1. **Realtime কণ্ঠ (Gemini Live):** earbud দিয়ে বাইরে হাতমুক্ত কথা; live model নিজে কোনো action করবে না — action Nova-র planner + approval দিয়েই যাবে; খরচ/quota সীমা মেনে।
+2. **Phone থেকে live call:** Telegram voice note push-to-talk; live কথার জন্য HTTPS PWA (Cloudflare tunnel কোড আগেই আছে) — owner অনুমতি দিলে।
+3. **Android Specialist:** mobilerun (MIT, Ollama চলে) বা ARTEMIS (Apache, MCP) দিয়ে owner-এর Android phone — USB debugging owner নিজে চালু করবেন; প্রতিটা action risk level + approval।
+4. **MCP client:** Nova বাইরের MCP server (যেমন ARTEMIS) ব্যবহার করতে পারবে — শুধু owner-এর যাচাই করা server।
+5. **একসাথে কয়েকটা coding কাজ:** প্রতিটা আলাদা git worktree-তে; কণ্ঠে "T1-কে test লিখতে বলো" ধরনের নির্দেশ।
+6. **Browser অভিজ্ঞতা reuse:** সফল site-কাজের ধাপ মনে রেখে পরে দ্রুত (V1.3 recipe-এর browser রূপ)।
+7. **Browser-এ element দেখিয়ে নির্দেশ** (Agent Zero annotate ধারণা)।
+
+## ৬৬. যা নেওয়া হবে না
+- কোনো framework দিয়ে Nova প্রতিস্থাপন বা তাদের code সরাসরি কপি।
+- Docker-এ পুরো Linux desktop (RAM/VRAM ভারী, আমাদের PC-তে প্রয়োজন নেই)।
+- Plugin/Skill marketplace থেকে স্বয়ংক্রিয় install (supply-chain ঝুঁকি) — শুধু owner যাচাই করলে।
+- Telemetry পাঠানো browser/app (ego-lite) owner-এর PC-তে install।
+- MYRA-র licensing/Firebase backend, অনানুষ্ঠানিক WhatsApp পড়া।
+- Paid gateway (Nous Portal ইত্যাদি) বা নিজের নম্বর দিয়ে phone call — খরচ/অনুমতি ছাড়া নয়।
+- Antivirus/Defender-এ exclusion যোগ করার পরামর্শ (Hermes troubleshooting) — নিরাপত্তা কমায়।
+
+## ৬৭. Build order-এর সঙ্গে mapping
+- V1.1 → এখনকার কাজ (Phase 25-এর পরে stabilization)
+- V1.2 → Voice (Phase 9) + Desktop Worker (Phase 6/7) + Resource Manager
+- V1.3 → Project Memory (Phase 17) + Verifier (Phase 18) + Scheduler (Phase 19)
+- V1.4 → Dashboard (Phase 24)
+- V2 → §৪৩ V2 Features + Android/Downloader Specialists (§৫২)
+প্রতিটা ধাপে আগের মতো: test → verify → commit/push → owner-এর phone test → বাংলা summary।
+
+
+## ৬৮. দ্বিতীয় পর্যালোচনা থেকে যোগ (owner-এর দেওয়া ChatGPT তালিকা, 2026-10-23)
+
+§৬৪–৬৭-এর সঙ্গে মিলিয়ে শুধু নতুন বিষয় রাখা হলো। যেগুলো Nova-তে আগে থেকেই আছে, সেগুলো আবার বানানো হবে না: Telegram গ্রহণ আর লম্বা কাজ আলাদা queue-তে (Phase 3), Observe–Act–Verify ও প্রমাণভিত্তিক verifier (Phase 18), pause/cancel (Phase 3), project আলাদা রাখা (Phase 17), connection recovery (Phase 23/25), approval ও permission level (Phase 4/22), dashboard-এ task অবস্থা (Phase 24), Creative software নিয়ন্ত্রণের লক্ষ্য (Phase 20 foundation, §৩৭)।
+
+| নতুন বিষয় | উৎস | কোথায় যাবে |
+|---|---|---|
+| "শুনেছি — এখন X করছি" তাৎক্ষণিক সাড়া (কাজ শেষ হওয়ার আগেই) | MYRA, Dodaios | V1.2 |
+| কথা চলাকালীন আংশিক transcript দেখানো | Dodaios | V1.2 (PC-র live কথায়; Telegram voice note-এ সম্ভব নয়) |
+| Push-to-talk (PC-তে একটা shortcut চেপে কথা) — wake word-এর বিকল্প | Dodaios | V1.2 |
+| Volume / brightness / media নিয়ন্ত্রণের সরাসরি skill (AI ছাড়া) | MYRA | V1.2 |
+| Flash ও Pro mode: সহজ কাজে দ্রুত এক ধাপ, বড় কাজে পরিকল্পনা + পর্যবেক্ষণ + যাচাই — দুটোতেই approval ও শেষ যাচাই থাকবে | ARTEMIS | V1.3 (operator/browser loop) |
+| একসাথে কয়েকটা ধাপ (action batch/burst): একটা form-এর কয়েকটা ঘর এক AI turn-এ | ego-lite, ARTEMIS | V1.3 browser/desktop loop |
+| পুরনো screenshot ও শেষ হওয়া ধাপ ছোট সারাংশে রাখা (history compression) | ARTEMIS, nanobot | V1.3 (§৫৮ token নিয়মের সঙ্গে) |
+| প্রতিটা কাজের ধাপ ও screenshot রেকর্ড, পরে replay করে ভুল খোঁজা | ARTEMIS, Agent Zero | V1.3 (dashboard-এ দেখা যাবে) |
+| দরকার হলে তবেই skill-এর বিবরণ AI-কে দেওয়া (on-demand skill loading) | Hermes | V1.3 |
+| Skill/recipe বদলালে আগে-পরের পার্থক্য দেখানো আর আগের অবস্থায় ফেরা | Hermes | V1.3 (recipe-এর সঙ্গে) |
+| Project-এর ফাইল তালিকা cache (বারবার পুরো scan নয়) | nanobot | V1.3 |
+| একই ফোন একসাথে দুই agent চালাতে পারবে না (device lock) | mobilerun | V2 Android |
+
+সিদ্ধান্ত:
+- ARTEMIS আর mobilerun দুটো একসাথে নয় — V2-তে owner-এর ফোনে ছোট তুলনামূলক পরীক্ষা করে একটা বেছে নেওয়া হবে।
+- Gemini Live কখনো Nova-র বাধ্যতামূলক AI হবে না; ঐচ্ছিক কণ্ঠ-মাধ্যম মাত্র।
+- এই তালিকার কোনো দাবি (গতি, নির্ভুলতা) Nova-তে মাপা ছাড়া সত্য ধরা হবে না।
+
+
+## ৬৯. Owner-এর সিদ্ধান্ত (2026-10-23) — §৬৪–৬৮-এর ওপর প্রযোজ্য
+
+1. **V1.1 পরীক্ষা শক্ত হবে:** পুরোনো (V1) আর নতুন (V1.1) সংস্করণ **একই বাক্য-সংগ্রহ** দিয়ে পাশাপাশি পরীক্ষা হবে — আলাদা সংখ্যার ফল তুলনা করা চলবে না। যন্ত্রের কণ্ঠ ছাড়াও **owner-এর আসল Telegram voice message** দিয়ে পরীক্ষা হবে — বাংলা, বাংলিশ আর software-এর নাম আলাদা করে।
+2. **Whisper model বাধ্যতামূলক বদল নয়:** বর্তমান large-v3, large-v3-turbo এবং দরকার হলে ছোট model (medium) তুলনা হবে — গতি, Premiere Pro / After Effects / VS Code ইত্যাদি নাম ঠিক চেনা, এবং ১৬ GB RAM ও VRAM-এর ওপর চাপ — তিনটাই মেপে তবেই সিদ্ধান্ত।
+3. **V1.2 wake word ও টানা শোনা ঐচ্ছিক:** "হেই নোভা", মাঝপথে থামানো, earbud, dictation — settings থেকে চালু/বন্ধ; microphone সবসময় চালু রাখা বাধ্যতামূলক হবে না (push-to-talk ও Telegram voice আগের মতো থাকবে)।
+4. **V1.3 শেখা নিয়ন্ত্রিত:** কোনো recipe/skill স্থায়ী হবে শুধু **verifier PASS → owner approval** দুই ধাপ পার হলে; ব্যর্থ বা যাচাইহীন পদ্ধতি কখনো শেখা হবে না; প্রতিটা পরিবর্তনের diff ও আগের অবস্থায় ফেরা থাকবে।
+5. **V1.4 (Agent Office, Character) কম অগ্রাধিকার:** মূল কাজের গতি কমাবে না; dashboard বন্ধ থাকলে কোনো RAM/CPU খরচ নয়; animation হালকা।
+6. **পুরোনো V2 কিছুই বাদ নয়:** §৪৩-এর সব (Gmail, Calendar, Google Drive, উন্নত WhatsApp, Facebook/TikTok, Social Selling, Advanced Creative/Video Automation, Wake-on-LAN, Remote File Transfer, Advanced browser profiles, Multiple simultaneous agents, Multi-PC control, Advanced web dashboard) আর §৫৫–৫৬ যেমন ছিল তেমনই থাকবে; §৬৫–৬৮-এর V2 বিষয়গুলো এগুলোর **সঙ্গে যোগ**, বদলে নয়।

@@ -60,6 +60,7 @@ _LEADS: dict[str, tuple[str, str]] = {
     "pc_status": ("windows_operator", "skill"),
     "screenshot": ("windows_operator", "skill"),
     "processes": ("windows_operator", "skill"),
+    "open_windows": ("windows_operator", "skill"),          # V1.1
     "pc_control": ("windows_operator", "operator"),
     "files": ("file_document", "operator"),
     "browser": ("browser", "browser"),

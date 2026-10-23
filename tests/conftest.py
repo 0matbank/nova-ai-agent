@@ -83,6 +83,17 @@ def edit_yaml(config_dir: Path) -> Callable[[str, Callable[[dict[str, Any]], Non
 
 
 @pytest.fixture(autouse=True)
+def _not_under_the_real_supervisor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """V1.1 finding: a shell started from Nova's own process tree carries the
+    supervisor's markers, so a test service thought it was supervised and sent the
+    "back online" notice. Tests that need them set them themselves."""
+    from core import lifecycle as lc
+    for name in (lc.ENV_SUPERVISED, lc.ENV_SUPERVISOR_PID, lc.ENV_STOP_FILE,
+                 lc.ENV_HEALTH_FILE):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _never_the_real_recycle_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Every delete goes to the Recycle Bin now: tests must never touch the owner's."""
     import sys

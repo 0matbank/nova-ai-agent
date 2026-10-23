@@ -29,10 +29,13 @@ from channels.telegram.channel import TelegramChannel
 from channels.whatsapp.channel import PREFIX as WA_PREFIX
 from channels.whatsapp.channel import WhatsAppChannel
 from core.agents import Roster
+from core.apps.resolver import AppResolver
+from core.apps.service import build_app_resolver
 from core.bootstrap import EXIT_INVALID_CONFIG, AppContext, bootstrap
 from core.broker.client import BrokerClient
 from core.broker.watch import BrokerWatch
 from core.config import ConfigError
+from core.config.schema import AppConfig
 from core.dashboard.api import DashboardDeps, dashboard_token, ollama_loaded, start_dashboard
 from core.db.engine import make_sessionmaker
 from core.db.migrate import MigrationError, check_and_migrate
@@ -339,13 +342,16 @@ async def run_core_service(
     project_memory = ProjectMemory(db_sessions) if db_sessions is not None else None
     # Phase 19 scheduler: jobs in the DB, so they survive a restart (plan §39)
     schedule_store = ScheduleStore(db_sessions) if db_sessions is not None else None
+    # V1.1: installed apps by spoken / misheard / learned name (catalog in data/)
+    app_resolver = build_app_resolver(cfg, db_sessions)
     if engine is not None and security is not None and approvals is not None:
         # plan §9.1: side effects go through the idempotency ledger
         skill_runner = (SkillRunner(registry, ToolEnv(cfg, PathPolicy(cfg), tool_workers),
                                     approvals.audit, SideEffectLedger(db_sessions))
                         if registry is not None and db_sessions is not None else None)
         engine.register("user_request", UserRequestExecutor(
-            IntentRouter(provider_router), provider_router, skill_runner, roster,
+            IntentRouter(provider_router, apps=app_resolver), provider_router, skill_runner,
+            roster,
             project_memory, schedule_store))
 
     exiting = exit_request or ExitRequest()
@@ -361,25 +367,21 @@ async def run_core_service(
         engine.register(SELF_UPDATE, SelfUpdateExecutor(cfg, request_exit))
 
     # Voice (plan §7): transcript → the same path as typed text.
-    wcfg = cfg.models.whisper
-    whisper_path = wcfg.path if wcfg.path.is_absolute() else cfg.root / wcfg.path
-    transcriber = Transcriber(whisper_path, wcfg.device, wcfg.compute_type,
-                              cfg.resources.idle_unload_seconds.whisper,
-                              cfg.default.voice.beam_size,
-                              hint_words=cfg.default.voice.hint_words,
-                              vad_speech_pad_ms=cfg.default.voice.vad_speech_pad_ms)
+    transcriber = build_transcriber(cfg)
+    transcriber.pressure = pressure                 # V1.1 warm-idle follows memory pressure
+    pressure.relievers.append(transcriber.relieve)  # plan §17H unload_idle_whisper
     speaker = build_speaker(ctx)
     voice = VoiceIntake(transcriber, cfg.default.voice, cfg.path("workspace_dir") / "voice",
                         lambda m: router.handle(m),
                         corrector=lambda heard, lang: suggest_correction(
                             provider_router, heard, lang, cfg.default.voice.hint_words),
-                        speaker=speaker)
+                        speaker=speaker, low_risk=app_resolver.is_safe_open,
+                        send=channel.send)
 
     async def speak_final_answer(chat_id: str, kind: MessageType, task_id: int) -> None:
         """Voice mode (plan §57): a task started by voice gets its answer spoken."""
-        if task_id not in voice.voice_tasks or store is None:
+        if voice.finish(task_id) is None or store is None:
             return
-        voice.voice_tasks.discard(task_id)
         task = store.get(task_id)
         done = kind is MessageType.TASK_COMPLETED and task is not None and task.result_summary
         say = task.result_summary if done and task else "দুঃখিত, কাজটা শেষ করা যায়নি।"
@@ -465,6 +467,7 @@ async def run_core_service(
         asyncio.create_task(monitor.run(stop)),
         asyncio.create_task(_provider_health_loop(providers, stop, provider_router)),
         asyncio.create_task(transcriber.idle_loop(stop)),
+        asyncio.create_task(refresh_apps(app_resolver, transcriber, cfg)),
         asyncio.create_task(pressure.run(stop)),
         asyncio.create_task(broker_watch.run(
             stop, lambda text: channel.broadcast(OutgoingMessage(text))))]
@@ -510,6 +513,30 @@ async def run_core_service(
         if db_engine is not None:
             db_engine.dispose()
         _log.info("core service stopped", extra={"action": "service.stop", "status": "ok"})
+
+
+async def refresh_apps(resolver: AppResolver, transcriber: Transcriber,
+                       cfg: AppConfig) -> None:
+    """V1.1: scan the installed apps in the background at start (a day-old catalog is
+    rescanned; a missing name rescans on demand too), then give Whisper their names."""
+    try:
+        cat = await asyncio.to_thread(lambda: resolver.catalog)
+        if time.time() - cat.scanned_at > 24 * 3600:
+            await asyncio.to_thread(resolver.rescan)
+        if cfg.default.voice.app_hotwords:
+            transcriber.hotwords = ", ".join(resolver.names(cfg.default.voice.app_hotwords))
+    except Exception:  # noqa: BLE001 - app names are a help, never a reason to stop
+        _log.exception("app catalog scan failed", extra={"action": "apps.scan"})
+
+
+def build_transcriber(cfg: AppConfig) -> Transcriber:
+    wcfg = cfg.models.whisper
+    whisper_path = wcfg.path if wcfg.path.is_absolute() else cfg.root / wcfg.path
+    return Transcriber(whisper_path, wcfg.device, wcfg.compute_type,
+                       cfg.resources.idle_unload_seconds.whisper,
+                       cfg.default.voice.beam_size,
+                       hint_words=cfg.default.voice.hint_words,
+                       vad_speech_pad_ms=cfg.default.voice.vad_speech_pad_ms)
 
 
 def build_speaker(ctx: AppContext) -> Speaker:

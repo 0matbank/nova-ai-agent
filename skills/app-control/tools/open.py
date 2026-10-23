@@ -14,9 +14,15 @@ async def run(p: P, env: ToolEnv) -> ToolResult:
     if isinstance(r, ToolResult):
         return r
     ok = bool(r.get("verified"))
-    return ToolResult(ok, f"{r['app']} {'is running' if ok else 'did not start'} "
-                          f"(pids {r.get('running_pids')})", r,
-                      {"running_pids": r.get("running_pids"), "new_pids": r.get("new_pids")})
+    if r.get("window_titled"):
+        state = "window is open"            # a Store app: its own window, no exe to watch
+    elif r.get("still_starting"):
+        state = "is starting (window not shown yet)"
+    else:
+        state = "is running" if ok else "did not start"
+    return ToolResult(ok, f"{r['app']} {state} (pids {r.get('running_pids')})", r,
+                      {"running_pids": r.get("running_pids"), "new_pids": r.get("new_pids"),
+                       "window_titled": bool(r.get("window_titled"))})
 
 
 TOOL = Tool(name="open", params=P, run=run, action="app.open", target=lambda p: p.app,

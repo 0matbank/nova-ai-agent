@@ -14,7 +14,10 @@ vram_percent:
 disk_free_gb_min: 20
 
 idle_unload_seconds:
-  whisper: 300
+  # V1.1 warm-idle: a cold Whisper load costs ~25 s, so it stays loaded 20 min after the
+  # last voice note — but only 60 s at "high" memory pressure and not at all at
+  # "critical" (core/voice/transcriber.py idle_limit)
+  whisper: 1200
   ollama: 600
 
 actions:

@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import time
 from collections.abc import Awaitable, Callable
@@ -63,6 +64,20 @@ class Notifier:
         self._errors: dict[str, tuple[float, int]] = {}   # key -> (last_sent_at, severity)
         # Called after a task's final message is delivered (e.g. spoken reply).
         self.on_task_final: list[Callable[[str, MessageType, int], Awaitable[None]]] = []
+        self._hooks: set[asyncio.Task[None]] = set()
+
+    @staticmethod
+    async def _run_hook(hook: Callable[[str, MessageType, int], Awaitable[None]],
+                        chat_id: str, kind: MessageType, task_id: int) -> None:
+        try:
+            await hook(chat_id, kind, task_id)
+        except Exception:
+            _log.exception("task-final hook failed", extra={"action": "notify"})
+
+    async def wait_hooks(self) -> None:
+        """Wait for the task-final hooks still running (tests, shutdown)."""
+        while self._hooks:
+            await asyncio.gather(*list(self._hooks), return_exceptions=True)
 
     async def notify(self, chat_id: str, kind: MessageType, text: str, *,
                      task_id: int | None = None, error_key: str | None = None,
@@ -91,10 +106,11 @@ class Notifier:
             sent = await self._deliver(chat_id, text, buttons, photo, video)
             if final_task is not None and sent:
                 for hook in self.on_task_final:
-                    try:
-                        await hook(chat_id, kind, final_task)
-                    except Exception:
-                        _log.exception("task-final hook failed", extra={"action": "notify"})
+                    # V1.1: in the background — a spoken answer (TTS can take 10–30 s)
+                    # held the task engine, so the next voice command waited for it
+                    job = asyncio.create_task(self._run_hook(hook, chat_id, kind, final_task))
+                    self._hooks.add(job)
+                    job.add_done_callback(self._hooks.discard)
             return sent
         if kind is MessageType.PROGRESS:
             return await self._progress_update(chat_id, text, task_id)

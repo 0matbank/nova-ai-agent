@@ -97,11 +97,38 @@ def test_notifier_final_hook_only_for_final_messages() -> None:
         repeated_error_cooldown_seconds=300, batch_small_results=True,
         exempt_message_types=list(EXEMPT_MESSAGE_TYPES)), send)
     n.on_task_final.append(hook)
-    asyncio.run(n.notify("c", MessageType.INFO, "x", task_id=1))
-    asyncio.run(n.notify("c", MessageType.TASK_COMPLETED, "done", task_id=1))
-    asyncio.run(n.notify("c", MessageType.TASK_FAILED_PERMANENTLY, "no", task_id=2))
+
+    async def go() -> None:
+        await n.notify("c", MessageType.INFO, "x", task_id=1)
+        await n.notify("c", MessageType.TASK_COMPLETED, "done", task_id=1)
+        await n.notify("c", MessageType.TASK_FAILED_PERMANENTLY, "no", task_id=2)
+        await n.wait_hooks()
+    asyncio.run(go())
     assert calls == [("c", MessageType.TASK_COMPLETED, 1),
                      ("c", MessageType.TASK_FAILED_PERMANENTLY, 2)]
+
+
+def test_slow_final_hook_does_not_hold_the_next_task() -> None:
+    """V1.1: a spoken answer (slow TTS) must not delay the next message."""
+    async def send(chat_id: str, msg: OutgoingMessage) -> None:
+        pass
+
+    gate = asyncio.Event()
+
+    async def slow_hook(chat_id: str, kind: MessageType, task_id: int) -> None:
+        await gate.wait()
+    n = Notifier(NotificationThrottle(
+        min_progress_interval_seconds=30, soft_max_progress_updates_per_task=5,
+        repeated_error_cooldown_seconds=300, batch_small_results=True,
+        exempt_message_types=list(EXEMPT_MESSAGE_TYPES)), send)
+    n.on_task_final.append(slow_hook)
+
+    async def go() -> None:
+        await asyncio.wait_for(n.notify("c", MessageType.TASK_COMPLETED, "done", task_id=1),
+                               timeout=1)                   # returns while the hook waits
+        gate.set()
+        await n.wait_hooks()
+    asyncio.run(go())
 
 
 def test_channel_sends_voice_then_text(tmp_path: Path) -> None:

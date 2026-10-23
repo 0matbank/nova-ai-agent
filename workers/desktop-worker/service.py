@@ -19,6 +19,7 @@ import desktop_apps  # noqa: E402
 import desktop_clipboard  # noqa: E402
 import desktop_screen  # noqa: E402
 import desktop_ui  # noqa: E402
+import desktop_windows  # noqa: E402
 
 from core.bootstrap import AppContext  # noqa: E402
 
@@ -91,6 +92,10 @@ async def _call(fn: Any, *args: Any, **kwargs: Any) -> Any:
 def register(app: FastAPI, ctx: AppContext | None = None) -> None:
     shots_dir = (ctx.config.path("workspace_dir") if ctx else Path.home() / "nova-shots") \
         / "screenshots"
+    if ctx is not None:
+        # V1.1: installed apps (written by the core) — names + what may be opened
+        catalog = ctx.config.path("data_dir") / "app_catalog.json"
+        desktop_windows.CATALOG_FILE = desktop_apps.CATALOG_FILE = catalog
 
     @app.get("/v1/session")
     async def session() -> dict[str, Any]:
@@ -113,6 +118,11 @@ def register(app: FastAPI, ctx: AppContext | None = None) -> None:
     @app.post("/v1/apps/close")
     async def close_app(req: AppRequest) -> Any:
         return await _call(desktop_apps.close_app, req.app)
+
+    @app.post("/v1/apps/visible")
+    async def visible_apps() -> Any:
+        # V1.1: what is open on screen (windows grouped by app), not the process list
+        return await _call(desktop_windows.visible_apps)
 
     @app.post("/v1/apps/kill")
     async def kill_app(req: AppRequest) -> Any:

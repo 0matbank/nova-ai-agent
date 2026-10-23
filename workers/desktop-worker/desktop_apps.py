@@ -17,6 +17,9 @@ from typing import Any
 import psutil
 
 APPS_FILE = Path(__file__).resolve().parents[2] / "skills" / "app-control" / "apps.json"
+# V1.1: the PC's installed apps, scanned by the core (data/app_catalog.json). Only an
+# app listed there can be opened, and only by its id — the core never sends a path.
+CATALOG_FILE: Path | None = None
 
 
 class AppError(Exception):
@@ -28,13 +31,29 @@ def load_apps() -> dict[str, Any]:
     return data
 
 
+def catalog_app(app_id: str) -> dict[str, Any] | None:
+    """An installed app from the catalog, in the shape the open/close code uses."""
+    if CATALOG_FILE is None:
+        return None
+    try:
+        data = json.loads(CATALOG_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    for a in data.get("apps", []):
+        if a.get("id") == app_id and a.get("installed", True) and a.get("kind") in (
+                "lnk", "uwp", "exe"):
+            return {"kind": a["kind"], "launch": a["launch"], "name": a["name"],
+                    "process": list(a.get("process") or [])}
+    return None
+
+
 def canonical(name: str) -> tuple[str, dict[str, Any]]:
     data = load_apps()
     key = name.strip().lower()
     key = data["aliases"].get(key, key)
-    app = data["apps"].get(key)
+    app = data["apps"].get(key) or catalog_app(name.strip())
     if app is None:
-        raise AppError(f"unknown app {name!r} (known: {', '.join(sorted(data['apps']))})")
+        raise AppError(f"unknown app {name!r} (not in the installed app list)")
     return key, app
 
 
@@ -74,16 +93,64 @@ def running(process_names: list[str]) -> list[psutil.Process]:
     return out
 
 
-def open_app(name: str, args: list[str], wait_seconds: float = 10.0) -> dict[str, Any]:
-    key, app = canonical(name)
-    exe = resolve_exe(app)
-    before = {p.pid for p in running(app["process"])}
+def _launch(app: dict[str, Any], args: list[str]) -> str:
+    kind = app.get("kind")
+    if kind == "lnk":
+        # the Start Menu shortcut knows the right exe, arguments and folder
+        if args:
+            raise AppError("arguments are not supported for this app")
+        os.startfile(app["launch"])  # type: ignore[attr-defined]  # noqa: S606
+        return str(app["launch"])
+    if kind == "uwp":
+        if args:
+            raise AppError("arguments are not supported for this app")
+        subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{app['launch']}"],  # noqa: S603,S607
+                         close_fds=True)
+        return f"shell:AppsFolder\\{app['launch']}"
+    exe = app["launch"] if kind == "exe" else resolve_exe(app)
     flags = 0
     if sys.platform == "win32":
         flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
     subprocess.Popen([exe, *args], creationflags=flags, close_fds=True,  # noqa: S603
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL)
+    return str(exe)
+
+
+def _titled(name: str) -> list[int]:
+    """Visible windows whose title names the app (Store apps: no known exe)."""
+    if sys.platform != "win32":
+        return []
+    import win32gui
+
+    word = name.split()[0].lower() if name.split() else name.lower()
+    found: list[int] = []
+
+    def cb(hwnd: int, _: Any) -> bool:
+        if win32gui.IsWindowVisible(hwnd) and word in win32gui.GetWindowText(hwnd).lower():
+            found.append(hwnd)
+        return True
+
+    win32gui.EnumWindows(cb, None)
+    return found
+
+
+def open_app(name: str, args: list[str], wait_seconds: float = 10.0) -> dict[str, Any]:
+    key, app = canonical(name)
+    if not app["process"]:
+        # no exe to watch (Store app / shell shortcut): a new window with its name
+        before_w = set(_titled(app.get("name", key)))
+        exe = _launch(app, args)
+        deadline = time.monotonic() + wait_seconds
+        new_w: list[int] = []
+        while time.monotonic() < deadline and not new_w:
+            new_w = [h for h in _titled(app.get("name", key)) if h not in before_w]
+            time.sleep(0.25)
+        return {"app": key, "exe": exe, "new_pids": [], "running_pids": [],
+                "visible_windows": len(new_w), "verified": bool(new_w),
+                "window_titled": bool(new_w)}
+    before = {p.pid for p in running(app["process"])}
+    exe = _launch(app, args)
     # Verified = the app's process exists AND it shows a visible window
     # (a process alone may still be starting up, plan §54).
     deadline = time.monotonic() + wait_seconds
@@ -97,8 +164,12 @@ def open_app(name: str, args: list[str], wait_seconds: float = 10.0) -> dict[str
             break
         time.sleep(0.25)
     now_pids = [p.pid for p in running(app["process"])]
+    # V1.1: big apps (Premiere, After Effects) show their window long after starting —
+    # a NEW process of the app counts as opened (else a retry would start it twice)
+    started = bool(set(now_pids) - before)
     return {"app": key, "exe": exe, "new_pids": new, "running_pids": now_pids,
-            "visible_windows": len(windows), "verified": bool(now_pids and windows)}
+            "visible_windows": len(windows), "verified": bool(now_pids and (windows or started)),
+            "still_starting": bool(started and not windows)}
 
 
 def visible_windows(pids: set[int]) -> list[int]:
@@ -131,6 +202,8 @@ def _signal_close(hwnd: int) -> None:
 
 def close_app(name: str, wait_seconds: float = 8.0) -> dict[str, Any]:
     key, app = canonical(name)
+    if not app["process"]:
+        raise AppError(f"{key}: Nova does not know which program to close for this app")
     if app.get("no_close"):
         raise AppError(f"{key} is the Windows shell — closing it is not allowed")
     procs = running(app["process"])
@@ -158,6 +231,8 @@ def close_app(name: str, wait_seconds: float = 8.0) -> dict[str, Any]:
 
 def kill_app(name: str) -> dict[str, Any]:
     key, app = canonical(name)
+    if not app["process"]:
+        raise AppError(f"{key}: Nova does not know which program to stop for this app")
     if app.get("no_close"):
         raise AppError(f"{key} is the Windows shell — killing it is not allowed")
     procs = running(app["process"])

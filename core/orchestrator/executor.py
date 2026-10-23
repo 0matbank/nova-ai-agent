@@ -34,7 +34,7 @@ from core.orchestrator.lang import reply_language
 from core.orchestrator.operator import OperatorAgent
 from core.orchestrator.schedule_route import schedule_request
 from core.queue.engine import TaskContext, Verdict, VerdictStatus
-from core.router.intent import Intent, IntentRouter, is_screen_question
+from core.router.intent import Intent, IntentRouter, is_open_windows_question, is_screen_question
 from core.scheduler import ScheduleStore
 from core.skills.runner import SkillRunner
 from core.verifier import check_effect
@@ -69,6 +69,37 @@ NOT_YET = {
 }
 
 
+def app_question(ask: dict[str, Any], lang: str) -> str:
+    """V1.1: a short question instead of "not found" — the owner answers with a number,
+    yes, or the name (core/apps/resolver.py remembers the choice)."""
+    choices = list(ask.get("choices") or [])
+    listing = "\n".join(f"{i + 1}) {n}" for i, n in enumerate(choices))
+    verb = {"open": ("খুলব", "open"), "close": ("বন্ধ করব", "close")}[
+        "close" if ask.get("action") == "close" else "open"]
+    phrase = ask.get("phrase") or ""
+    if lang == "bn":
+        if ask.get("missing"):
+            head = f"«{ask['missing']}» এই PC-তে ইনস্টল করা নেই।"
+            if not choices:
+                return head
+            if len(choices) == 1:
+                return f"{head} {choices[0]} {verb[0]}? «হ্যাঁ» বলুন বা লিখুন।"
+            return f"{head} কাছাকাছি আছে:\n{listing}\nকোনটা {verb[0]}? নম্বর বা নাম বলুন।"
+        if not choices:
+            return f"«{phrase}» নামে কোনো app এই PC-তে পাইনি। নামটা আরেকবার বলবেন বা লিখবেন?"
+        return (f"🤔 «{phrase}» বলতে কোনটা বোঝালেন?\n{listing}\n"
+                f"নম্বর, «হ্যাঁ» (প্রথমটা) বা নাম বলুন — {verb[0]}।")
+    if ask.get("missing"):
+        head = f"{ask['missing']} is not installed on this PC."
+        if not choices:
+            return head
+        return f"{head} Closest:\n{listing}\nWhich one should I {verb[1]}? Say the number."
+    if not choices:
+        return f"I couldn't find an app called \"{phrase}\" on this PC. Could you say it again?"
+    return (f"🤔 Which app did you mean by \"{phrase}\"?\n{listing}\n"
+            f"Say the number, yes (first one) or the name.")
+
+
 class ActionFailed(RuntimeError):
     """The skill/browser action did not achieve its result — retry, then fail."""
 
@@ -92,10 +123,17 @@ class UserRequestExecutor:
 
     async def run(self, ctx: TaskContext) -> str:
         async def understand(prev: dict[str, Any] | None) -> dict[str, Any]:
-            intent = await self.intents.classify(ctx.task.request_text, ctx.task.id)
+            intent = await self.intents.classify(ctx.task.request_text, ctx.task.id,
+                                                 ctx.task.chat_id)
             out: dict[str, Any] = {"category": intent.category, "source": intent.source,
                                    "confidence": intent.confidence,
                                    "skill": list(intent.skill) if intent.skill else None}
+            if intent.meta.get("app_ask"):
+                # V1.1: unclear / not installed app → Nova asks, nothing runs
+                out["app_ask"] = intent.meta["app_ask"]
+                return out
+            if intent.meta.get("app_learned"):
+                out["app_learned"] = intent.meta.get("app_phrase")
             if self.roster is not None and self.skills is not None:
                 # plan §10 steps 5–7: the specialist(s), the kind of AI work, the skills
                 a = assign(intent, ctx.task.request_text, self.skills.env.config, self.roster)
@@ -119,6 +157,9 @@ class UserRequestExecutor:
         lang = reply_language(ctx.task.request_text)
 
         async def act(prev: dict[str, Any] | None) -> dict[str, Any]:
+            if cp.get("app_ask"):
+                return {"kind": "answer", "answer": app_question(cp["app_ask"], lang),
+                        "needs_input": True}
             if (intent.category == "screenshot" and is_screen_question(ctx.task.request_text)
                     and self.skills is not None
                     and "screenshot" in self.skills.registry.skills):
@@ -129,7 +170,14 @@ class UserRequestExecutor:
                     return routed
             if intent.skill is not None:
                 if self.skills is not None and intent.skill[0] in self.skills.registry.skills:
-                    return await self._run_skill(ctx, intent)
+                    done = await self._run_skill(ctx, intent)
+                    if cp.get("app_learned"):
+                        app = str(intent.skill[2].get("app", ""))
+                        done["answer"] += (
+                            f"\n🧠 মনে রাখলাম: «{cp['app_learned']}» মানে {app}"
+                            if lang == "bn" else
+                            f"\n🧠 Learned: \"{cp['app_learned']}\" means {app}")
+                    return done
                 return {"kind": "not_yet", "answer": (
                     f"'{intent.skill[0]}' skill এই মুহূর্তে চালু নেই (disabled বা এই "
                     "platform-এ নেই), তাই কাজটা করা গেল না।" if lang == "bn" else
@@ -339,7 +387,7 @@ class UserRequestExecutor:
                 f"Nova-র নিজের test run: {ev.get('command')} → "
                 f"{'pass ✓' if ev.get('tests_passed') else 'fail (জানানো হয়েছে)'}",))
         if kind == "skill":
-            return self._check_skill(act, ev, bn)
+            return self._check_skill(act, ev, bn, ctx.task.request_text)
         if kind == "coding":
             return await self._check_coding(ev)
         if kind == "browser":
@@ -391,7 +439,8 @@ class UserRequestExecutor:
                            VerdictStatus.NEEDS_WORK, tuple(proofs), redo_from=2)
         return Verdict(True, "", VerdictStatus.PASS, tuple(proofs))
 
-    def _check_skill(self, act: dict[str, Any], ev: dict[str, Any], bn: bool) -> Verdict:
+    def _check_skill(self, act: dict[str, Any], ev: dict[str, Any], bn: bool,
+                     ctx_text: str = "") -> Verdict:
         skill = str(act.get("skill"))
         if not act.get("ok"):
             return Verdict(False, f"{skill}: {str(act.get('answer', ''))[:300]}",
@@ -402,6 +451,21 @@ class UserRequestExecutor:
                            if ev.get("exists") else VerdictStatus.NEEDS_WORK, (
                 f"{exists}", f"{ev.get('size', 0) / 1024:.1f} KB",
                 f"SHA-256 {str(ev.get('sha256', ''))[:12]}…"))
+        if skill == "windows.processes" and is_open_windows_question(ctx_text):
+            # V1.1: a process list does not answer "which apps are open"
+            return Verdict(False, "process list ≠ open apps", VerdictStatus.NEEDS_WORK)
+        if skill == "windows.open_windows":
+            # V1.1: PASS only with real app names from the screen, each in the answer
+            names = [str(n) for n in ev.get("apps") or []]
+            answer = str(act.get("answer", ""))
+            if not names:
+                return Verdict(True, "no app window open", VerdictStatus.LIMITED,
+                               ("খোলা কোনো app window পাইনি" if bn else "no app window found",))
+            ok = all(n in answer for n in names)
+            return Verdict(ok, "" if ok else "app names missing from the answer",
+                           VerdictStatus.PASS if ok else VerdictStatus.NEEDS_WORK,
+                           (f"screen-এ {len(names)}টা app-এর window ✓ ({', '.join(names[:5])})"
+                            if bn else f"{len(names)} app window(s) on screen ✓",))
         if skill in ("app-control.open", "app-control.close"):
             tool = skill.split(".", 1)[1]
             ok, proof = check_effect({"skill": "app-control", "tool": tool,

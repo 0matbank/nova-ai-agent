@@ -1,0 +1,183 @@
+# V1.1 — how the owner says app names. The PC's installed apps are found by a scan
+# (Start Menu shortcuts + Store apps, data/app_catalog.json); this file adds the
+# spoken names (Bangla / Banglish / English) and ties them to the scanned app.
+#
+#   <id>:
+#     names:   written names (English)
+#     spoken:  how it sounds / how Whisper writes it in Bangla script
+#     match:   regex on the scanned display name or exe file (case-insensitive)
+#     process: exe names to check that it runs (when the shortcut does not say)
+#
+# An id here with no installed match is a known app that is NOT on this PC — Nova
+# then says so honestly instead of opening something else.
+# Owner corrections ("আমি Premiere Pro বলেছি") are learned in the DB, not here.
+
+apps:
+  vscode:
+    names: [Visual Studio Code, VS Code, vscode, code editor]
+    spoken: [ভিএস কোড, ভি এস কোড, বিএস কোড, ভিসকোড]
+    match: ['^visual studio code', '^code\.exe$']
+  visual-studio:
+    names: [Visual Studio]
+    spoken: [ভিজুয়াল স্টুডিও]
+    match: ['^visual studio 20\d\d', '^devenv\.exe$']
+  premiere-pro:
+    names: [Adobe Premiere Pro, Premiere Pro, Premiere, Premier Pro]
+    spoken: [প্রিমিয়ার প্রো, প্রিমিয়ার, প্রিমিয়ার প্রো]
+    match: ['premiere pro']
+  after-effects:
+    names: [Adobe After Effects, After Effects, After Effect]
+    spoken: [আফটার ইফেক্টস, আফটার ইফেক্ট, আফটার এফেক্ট]
+    match: ['after effects']
+  media-encoder:
+    names: [Adobe Media Encoder, Media Encoder]
+    spoken: [মিডিয়া এনকোডার]
+    match: ['media encoder']
+  photoshop:
+    names: [Adobe Photoshop, Photoshop]
+    spoken: [ফটোশপ]
+    match: ['photoshop']
+  illustrator:
+    names: [Adobe Illustrator, Illustrator]
+    spoken: [ইলাস্ট্রেটর, ইলাস্ট্রেটর]
+    match: ['illustrator']
+  audition:
+    names: [Adobe Audition, Audition]
+    spoken: [অডিশন]
+    match: ['audition']
+  creative-cloud:
+    names: [Adobe Creative Cloud, Creative Cloud]
+    spoken: [ক্রিয়েটিভ ক্লাউড]
+    match: ['creative cloud']
+  capcut:
+    names: [CapCut, Cap Cut]
+    spoken: [ক্যাপকাট, ক্যাপ কাট, কেপকাট]
+    match: ['^capcut']
+  chrome:
+    names: [Google Chrome, Chrome]
+    spoken: [ক্রোম, গুগল ক্রোম]
+    match: ['^google chrome$', '^chrome\.exe$']
+  edge:
+    names: [Microsoft Edge, Edge]
+    spoken: [এজ, মাইক্রোসফট এজ]
+    match: ['^microsoft edge$']
+  brave:
+    names: [Brave, Brave Browser]
+    spoken: [ব্রেভ]
+    match: ['^brave']
+  firefox:
+    names: [Firefox, Mozilla Firefox]
+    spoken: [ফায়ারফক্স]
+    match: ['firefox']
+  obs:
+    names: [OBS Studio, OBS]
+    spoken: [ওবিএস, ও বি এস, ওবিএস স্টুডিও]
+    match: ['^obs studio', '^obs64\.exe$']
+  audacity:
+    names: [Audacity]
+    spoken: [অডাসিটি, অডেসিটি]
+    match: ['^audacity']
+  vlc:
+    names: [VLC, VLC media player, VLC player]
+    spoken: [ভিএলসি, ভি এল সি]
+    match: ['^vlc media player$']
+  kmplayer:
+    names: [KMPlayer, KM Player]
+    spoken: [কেএম প্লেয়ার]
+    match: ['^kmplayer']
+  word:
+    names: [Microsoft Word, Word, MS Word]
+    spoken: [ওয়ার্ড, এমএস ওয়ার্ড]
+    match: ['^word$', '^microsoft word']
+    process: [WINWORD.EXE]
+  excel:
+    names: [Microsoft Excel, Excel, MS Excel]
+    spoken: [এক্সেল]
+    match: ['^excel$', '^microsoft excel']
+    process: [EXCEL.EXE]
+  powerpoint:
+    names: [Microsoft PowerPoint, PowerPoint, Power Point]
+    spoken: [পাওয়ারপয়েন্ট, পাওয়ার পয়েন্ট]
+    match: ['^powerpoint$', '^microsoft powerpoint']
+    process: [POWERPNT.EXE]
+  steam:
+    names: [Steam]
+    spoken: [স্টিম]
+    match: ['^steam$']
+  zoom:
+    names: [Zoom, Zoom Workplace]
+    spoken: [জুম]
+    match: ['^zoom']
+  telegram:
+    names: [Telegram, Telegram Desktop]
+    spoken: [টেলিগ্রাম]
+    match: ['^telegram']
+  whatsapp:
+    names: [WhatsApp]
+    spoken: [হোয়াটসঅ্যাপ]
+    match: ['^whatsapp']
+  discord:
+    names: [Discord]
+    spoken: [ডিসকর্ড]
+    match: ['^discord']
+  spotify:
+    names: [Spotify]
+    spoken: [স্পটিফাই]
+    match: ['^spotify']
+  winrar:
+    names: [WinRAR]
+    spoken: [উইনরার]
+    match: ['^winrar$']
+  cinema-4d:
+    names: [Cinema 4D, Maxon Cinema 4D]
+    spoken: [সিনেমা ফোর ডি]
+    match: ['cinema 4d 20\d\d$']
+  task-manager:
+    names: [Task Manager]
+    spoken: [টাস্ক ম্যানেজার]
+    match: ['^task manager$']
+    process: [Taskmgr.exe]
+  explorer:
+    names: [File Explorer]
+    spoken: [ফাইল এক্সপ্লোরার]
+    match: ['^file explorer$']
+  settings:
+    names: [Settings, Windows Settings]
+    spoken: [সেটিংস]
+    match: ['^settings$']
+  control-panel:
+    names: [Control Panel]
+    spoken: [কন্ট্রোল প্যানেল]
+    match: ['^control panel$']
+  powershell:
+    names: [PowerShell, Windows PowerShell]
+    spoken: [পাওয়ারশেল]
+    match: ['^windows powershell$']
+  terminal:
+    names: [Terminal, Windows Terminal]
+    spoken: [টার্মিনাল]
+    match: ['^terminal$']
+  cmd:
+    names: [Command Prompt, CMD]
+    spoken: [কমান্ড প্রম্পট]
+    match: ['^command prompt$']
+  notepad:
+    names: [Notepad]
+    spoken: [নোটপ্যাড]
+    match: []
+  calculator:
+    names: [Calculator, Calc]
+    spoken: [ক্যালকুলেটর]
+    match: []
+  paint:
+    names: [Paint, MS Paint]
+    spoken: [পেইন্ট]
+    match: []
+  antigravity:
+    names: [Antigravity, Antigravity IDE]
+    spoken: [অ্যান্টিগ্র্যাভিটি]
+    match: ['^antigravity']
+  ollama:
+    names: [Ollama]
+    spoken: [ওলামা]
+    match: ['^ollama$']

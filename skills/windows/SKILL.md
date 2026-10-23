@@ -7,5 +7,6 @@ Read-only PC information (all GREEN). Works while the PC is locked.
 | `status` | pc.status | CPU %, RAM, disk free, GPU util/VRAM/temperature, uptime |
 | `processes` | process.list | top processes by memory or CPU, optional name filter |
 | `system_info` | pc.status | OS version, machine name, user, CPU count, uptime |
+| `open_windows` | ui.read | apps open on screen: visible windows grouped by app, via the Desktop Worker (needs an unlocked desktop) — not the process list |
 
 Opening/closing apps is the `app-control` skill (runs through the Desktop Worker).

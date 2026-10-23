@@ -141,6 +141,8 @@ class VoiceSection(Strict):
     beam_size: Annotated[int, Field(ge=1, le=10)]
     vad_speech_pad_ms: Annotated[int, Field(ge=0, le=2000)] = 400
     hint_words: list[str] = []
+    # V1.1: give Whisper this many installed app names as hotwords (0 = off)
+    app_hotwords: Annotated[int, Field(ge=0, le=80)] = 0
     tts: TTSSection = TTSSection()
 
 

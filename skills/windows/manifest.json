@@ -1,8 +1,17 @@
 {
   "name": "windows",
   "version": "1.0.0",
-  "description": "PC status (CPU/GPU/RAM/disk), processes and system information.",
+  "description": "PC status (CPU/GPU/RAM/disk), processes, system information and the app windows open on screen.",
   "worker": "core",
-  "platforms": ["win32", "linux", "darwin"],
-  "tools": ["status", "processes", "system_info"]
+  "platforms": [
+    "win32",
+    "linux",
+    "darwin"
+  ],
+  "tools": [
+    "status",
+    "processes",
+    "system_info",
+    "open_windows"
+  ]
 }

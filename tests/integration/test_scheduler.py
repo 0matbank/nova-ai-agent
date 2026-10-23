@@ -67,9 +67,12 @@ def test_jobs_survive_a_restart_and_run_on_time(tmp_path: Path) -> None:
     sched = restart(s)                                    # ---- the service restarts
     delayed = next(j for j in store.active() if j.kind == "delayed" and j.action == "task")
     rem = next(j for j in store.active() if j.action == "remind")
+    daily = next(j for j in store.active() if j.kind == "recurring")   # before any tick
     assert delayed.next_run_at is not None
-    # nothing is due yet
-    assert asyncio.run(sched.tick(delayed.next_run_at - timedelta(minutes=1))) == []
+    # the delayed job and the reminder are not due yet (the 23:00 daily job may be when
+    # the test runs between 22:30 and 23:00 — it failed then)
+    early = asyncio.run(sched.tick(delayed.next_run_at - timedelta(minutes=1)))
+    assert delayed.id not in early and rem.id not in early
     # the delayed job's time comes → it runs as a normal task through the engine
     fired = asyncio.run(sched.tick(delayed.next_run_at + timedelta(seconds=5)))
     assert fired == [delayed.id]
@@ -79,7 +82,6 @@ def test_jobs_survive_a_restart_and_run_on_time(tmp_path: Path) -> None:
     ran = s.tasks.store.get(after.last_task_id)
     assert ran.state is TaskState.COMPLETED and "CPU:" in ran.result_summary
     # the recurring job runs at 23:00 and comes back for the next day
-    daily = next(j for j in store.active() if j.kind == "recurring")
     assert daily.next_run_at is not None
     # tick when BOTH the 23:00 job and the 2-hours-later reminder are due (run between
     # 21:00 and 23:00 the reminder comes after 23:00 — the test used to fail then)

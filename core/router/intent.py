@@ -5,6 +5,7 @@ Commands never go through an LLM (plan §45)."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass, field
@@ -15,7 +16,8 @@ from core.skills.urls import URL_RX
 from providers.provider_base import Limits, ProviderRequest
 
 # Categories from plan §49.1.
-CATEGORIES = ("question", "pc_status", "screenshot", "processes", "pc_control", "creative",
+CATEGORIES = ("question", "pc_status", "screenshot", "processes", "open_windows",
+              "pc_control", "creative",
               "media",
               "files", "coding", "browser", "research", "project", "reminder", "social",
               "document", "communication")
@@ -40,20 +42,48 @@ READ_ONLY_SKILLS: dict[str, tuple[str, str, dict[str, Any]]] = {
     "pc_status": ("windows", "status", {}),
     "screenshot": ("screenshot", "capture", {}),
     "processes": ("windows", "processes", {}),
+    "open_windows": ("windows", "open_windows", {}),
 }
+
+# V1.1 (owner 2026-10-16): "কোন কোন app/software/window খোলা আছে" asks what is on the
+# screen — the open windows, not the process list (llama-server.exe is no "app").
+_WHICH = (r"(\b(ki\s*ki|kii\s*ki+|kon\s*kon|konkon|which|what|ki)\b|কী\s*কী|কি\s*কি|কিকি|"
+          r"কোন\s*কোন|কোনো\s*কোনো|কন[ুো]?\s*কন[ুো]?|কোনগুলো|কোন)")
+_APPWORD = (r"(\b(apps?|software|softwares|programs?|windows?|tabs?)\b|অ্যাপ\S*|এপ\S*|"
+            r"সফ\S*ও?য়্?ার|সফটওয়্যার|সফটওয়ার|প্রোগ্রাম|উইন্ডো)")
+_OPENNESS = (r"(\b(open|khola|chalu|running|cholche|chole)\b|ওপেন|অপেন|খোলা|চালু|চালো|"
+             r"চলছে)")
+_THERE = r"(\b(ache|asa|ase|are|is)\b|আছে|আসে|রয়েছে)"
+# "X খোলা আছে?" asks about a state — it is never a command to open X
+STATE_QUESTION = re.compile(rf"{_OPENNESS}\s*{_THERE}", re.IGNORECASE)
+OPEN_WINDOWS_RX = re.compile(
+    rf"{_WHICH}.{{0,40}}?{_APPWORD}.{{0,30}}?{_OPENNESS}|"
+    rf"{_WHICH}\s*(ki\s*)?{_OPENNESS}\s*{_THERE}|"
+    rf"{_APPWORD}.{{0,20}}?{_OPENNESS}\s*{_THERE}.{{0,10}}?({_WHICH}|\?)|"
+    r"\bopen\s+(windows|apps)\b|\bwhat('?s| is)\s+open\b|"
+    r"(কী|কি)\s*(কী|কি)?\s*(খোলা|ওপেন)\s*(আছে|আসে)",
+    re.IGNORECASE)
+_PROCESS_WORD = re.compile(r"\bprocess(es)?\b|প্রসেস|প্রোসেস|background|ব্যাকগ্রাউন্ড",
+                           re.IGNORECASE)
+
+
+def is_open_windows_question(text: str) -> bool:
+    return bool(OPEN_WINDOWS_RX.search(text)) and not _PROCESS_WORD.search(text)
 
 RULES: list[tuple[str, re.Pattern[str], tuple[str, str, dict[str, Any]] | None]] = [
     # An explicit web address wins: "prothomalo.com খোলো" is browser work.
     ("browser", URL_RX, None),
-    ("screenshot", _rx(r"screen\s*shot", r"\bskin\s*shot\b", r"স্ক্রিনশট", r"স্ক্রিন\s*শট",
+    ("screenshot", _rx(r"screen\s*shot", r"\bskin\s*shot\b", r"স্ক্রিনশট", r"স্ক্রি?ন\s*শ্?ট",
                        r"\bscreen\s*(ta\s*)?(dekhao|dekhaw|"
                        r"dikhao|pathao)\b", r"স্ক্রিন\s*দেখাও"),
      ("screenshot", "capture", {})),
     ("processes", _rx(r"\bprocess(es)?\s*(list|gula|গুলো)?\b.*\b(dekhao|bolo|show|list)\b",
                       r"\bki\s*ki\s*(app|program|process)?\s*chol(che|ce)\b", r"কী কী চলছে",
                       r"\btask\s*manager\b", r"\bwhat.*running\b",
-                      r"(কি|কী)\s*(কি|কী\s*)?(কাজ|কাস|app|অ্যাপ|প্রোগ্রাম)?\s*(চলছে|চলতেছে|তলছে)",
-                      r"(কি|কী)\s*(অপেন|ওপেন|খোলা)\s*(আছে|আসে)"),
+                      r"(কি|কী)\s*(কি|কী\s*)?(কাজ|কাস|app|অ্যাপ|প্রোগ্রাম|process|প্রসেস)?\s*"
+                      r"(চলছে|চলতেছে|তলছে)",
+                      r"\b(process|প্রসেস)\S*.*(চলছে|cholche|running)",
+                      r"(কিকি|কি\s*কি|কী\s*কী)\s*(চল|চোল)\S*"),
      ("windows", "processes", {})),
     ("pc_status", _rx(r"\bpc\s*(er\s*)?(status|obostha|condition|health)\b",
                       # up to two words in between; tolerant of Whisper spellings
@@ -178,10 +208,11 @@ _SVC_OP = [("restart", re.compile(r"\b(restart|reboot)\b|রিস্টার�
            ("start", re.compile(r"\b(start|chalu|on)\b|চালু", re.IGNORECASE)),
            ("query", re.compile(r"\b(status|obostha|cholche|running|check)\b|অবস্থা|চলছে",
                                 re.IGNORECASE))]
-_POWER = re.compile(r"\b(restart|reboot|shut\s*down|shutdown)\b|রিস্টার্ট|শাটডাউন",
+_POWER = re.compile(r"\b(restart|reboot|shut\s*down|shutdown)\b|রিস্টার্ট|রিস্টাট|শাটডাউন",
                     re.IGNORECASE)
 _PC = re.compile(r"\b(pc|computer|windows|laptop)\b|পিসি|কম্পিউটার", re.IGNORECASE)
-_CANCEL = re.compile(r"\b(cancel|thamao|batil|abort)\b|বাতিল|থামাও", re.IGNORECASE)
+_CANCEL = re.compile(r"\b(cancel|thamao|batil|abort)\b|বাতিল|থামাও|ক্যান্?সেল|কান্সল|ক্যানসল",
+                     re.IGNORECASE)
 _MINUTES = re.compile(r"(\d{1,2})\s*(min|minute|minit|মিনিট)", re.IGNORECASE)
 _PORT = re.compile(r"\b(\d{1,5}(?:-\d{1,5})?)\s*(no\.?\s*|number\s*)?(port|পোর্ট)|"
                    r"(port|পোর্ট)\s*(\d{1,5}(?:-\d{1,5})?)\b", re.IGNORECASE)
@@ -268,7 +299,23 @@ _STYLE_NOTE = re.compile(r"\b(edit|editing)\s*style\b.*(mone\s*rakh|remember|bha
                          r"এডিট\S*\s*স্টাইল.*(মনে\s*রাখ|ভালো\s*লেগেছে)", re.IGNORECASE)
 
 
-def classify_by_rules(text: str) -> Intent | None:
+def app_intent(res: Any) -> Intent:
+    """V1.1: an app resolution (core/apps/resolver.py) as an intent — sure → the
+    app-control skill; unclear / not installed → Nova asks (no skill runs)."""
+    if res.status == "sure":
+        return Intent("pc_control", 0.95, "rule", ("app-control", res.action,
+                                                    {"app": res.app.id}),
+                      matched=res.app.id, meta={"app_method": res.best.method,
+                                                "app_score": round(res.best.score, 2)})
+    return Intent("pc_control", 0.7, "rule", None, matched=res.phrase, meta={
+        "app_ask": {"action": res.action, "status": res.status, "phrase": res.phrase,
+                    "missing": res.best.app.name if res.status == "missing" and res.best
+                    else None,
+                    "choices": [m.app.name for m in res.candidates]},
+        "app_choices": [m.app.id for m in res.candidates]})
+
+
+def classify_by_rules(text: str, apps: Any | None = None, chat_id: str = "") -> Intent | None:
     if looks_scheduled(text):
         # Phase 19: "protidin raat 11 tay pc status bolo" is a job for later, not a
         # status request now — the time wins over the action words
@@ -278,6 +325,10 @@ def classify_by_rules(text: str) -> Intent | None:
     if is_screen_question(text) and not URL_RX.search(text):
         # plan §57: a question ABOUT the screen → screenshot + vision answer
         return Intent("screenshot", 0.9, "rule", None, matched="screen question")
+    if is_open_windows_question(text) and not URL_RX.search(text):
+        # V1.1: "what is open" → the visible windows, before any app-name matching
+        return Intent("open_windows", 0.9, "rule", READ_ONLY_SKILLS["open_windows"],
+                      matched="open windows")
     if not URL_RX.search(text):
         app = app_command(text)
         if app is not None:
@@ -285,6 +336,11 @@ def classify_by_rules(text: str) -> Intent | None:
         admin = admin_command(text)
         if admin is not None:
             return Intent("pc_control", 0.95, "rule", admin, matched=f"admin.{admin[1]}")
+        if apps is not None and not STATE_QUESTION.search(text):
+            # V1.1: any installed app, by spoken / misheard / learned name
+            res = apps.resolve_command(text, chat_id)
+            if res is not None:
+                return app_intent(res)
     for category, rx, skill in RULES:
         m = rx.search(text)
         if m:
@@ -293,12 +349,28 @@ def classify_by_rules(text: str) -> Intent | None:
 
 
 class IntentRouter:
-    def __init__(self, provider_router: Any | None = None) -> None:
+    def __init__(self, provider_router: Any | None = None, apps: Any | None = None) -> None:
         self.providers = provider_router          # models.router.ProviderRouter
+        self.apps = apps                          # core.apps.resolver.AppResolver (V1.1)
 
-    async def classify(self, text: str, task_id: int | str = "system") -> Intent:
-        hit = classify_by_rules(text)
+    async def classify(self, text: str, task_id: int | str = "system",
+                       chat_id: str = "") -> Intent:
+        if self.apps is not None:
+            # the owner answering "which app?" or correcting a misheard name
+            choice = await asyncio.to_thread(self._owner_choice, text, chat_id)
+            if choice is not None:
+                return Intent("pc_control", 0.95, "rule",
+                              ("app-control", choice.action, {"app": choice.app.id}),
+                              matched=choice.app.id,
+                              meta={"app_method": "owner", "app_learned": choice.learned,
+                                    "app_phrase": choice.phrase})
+            # off the event loop: a name not found may rescan the installed apps
+            hit = await asyncio.to_thread(classify_by_rules, text, self.apps, chat_id)
+        else:
+            hit = classify_by_rules(text)
         if hit is not None:
+            if hit.meta.get("app_ask") and hit.meta["app_ask"]["status"] == "ask":
+                return await self._app_ai_fallback(text, hit, task_id, chat_id)
             return hit
         if self.providers is not None:
             result = await self.providers.complete(ProviderRequest(
@@ -319,3 +391,45 @@ class IntentRouter:
                                   READ_ONLY_SKILLS.get(cat),
                                   meta={"provider": result.provider, "model": result.model})
         return Intent("question", 0.3, "default")
+
+    def _owner_choice(self, text: str, chat_id: str) -> Any:
+        assert self.apps is not None
+        return self.apps.answer(chat_id, text) or self.apps.correction(chat_id, text)
+
+    async def _app_ai_fallback(self, text: str, hit: Intent, task_id: int | str,
+                               chat_id: str) -> Intent:
+        """Only the unclear app name goes to the local model, with the few candidate
+        apps — not the whole request to several models. It may only pick one of them."""
+        ask, ids = hit.meta["app_ask"], hit.meta.get("app_choices") or []
+        if self.providers is None or not ids:
+            return hit
+        listing = "\n".join(f"{i + 1}. {n}" for i, n in enumerate(ask["choices"]))
+        result = await self.providers.complete(ProviderRequest(
+            task_id=task_id, task_type="simple",
+            user_request=f"Heard: {ask['phrase']}\nFull command: {text}\nApps:\n{listing}",
+            system=APP_PICK_PROMPT, limits=Limits(timeout_seconds=20, max_output_tokens=8)))
+        if not result.ok:
+            return hit
+        m = re.search(r"\d+", result.answer)
+        pick = int(m.group(0)) - 1 if m else -1
+        if not 0 <= pick < len(ids):
+            return hit
+        if pick == 0 and self.apps is not None:
+            # AI agrees with the closest sound-alike → act; otherwise still ask
+            self.apps.note_picked(chat_id, ask["action"], ask["phrase"], ids[0])
+            return Intent("pc_control", 0.85, "ai", ("app-control", ask["action"],
+                                                     {"app": ids[0]}), matched=ids[0],
+                          meta={"app_method": "ai", "provider": result.provider})
+        order = [ids[pick], *[i for i in ids if i != ids[pick]]]
+        names = dict(zip(ids, ask["choices"], strict=True))
+        if self.apps is not None:
+            self.apps.reorder_pending(chat_id, order)
+        return Intent("pc_control", 0.7, "rule", None, matched=ask["phrase"], meta={
+            "app_ask": {**ask, "choices": [names[i] for i in order]}, "app_choices": order})
+
+
+APP_PICK_PROMPT = (
+    "A voice command was transcribed by speech recognition and an app name in it may be "
+    "misheard (it may be written in Bangla script). Which app from the numbered list did "
+    "the speaker mean? Reply with ONLY the number, or 0 if none of them fits."
+)
