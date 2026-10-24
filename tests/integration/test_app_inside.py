@@ -150,3 +150,46 @@ def test_verifier() -> None:
     assert bad.status is VerdictStatus.NEEDS_WORK
     closed = _verdict("app-control.view", "OBS এখন খোলা নেই।", {"running": False})
     assert closed.status is VerdictStatus.LIMITED
+
+
+# ------------------------------------------------------------ CU-5: compound requests
+
+@pytest.mark.parametrize(("text", "app"), [
+    ("OBS খোলো তারপর recording শুরু করো", "obs"),
+    ("audacity kholo tarpor ekta notun project banao", "audacity"),
+    ("open capcut and then import the clip", "capcut"),
+    ("প্রিমিয়ার প্রো খোলো, এরপর নতুন project বানাও", "premiere-pro"),
+])
+def test_open_then_more_keeps_the_whole_goal(tmp_path: Path, text: str, app: str) -> None:
+    apps = resolver(tmp_path)
+    hit = classify_by_rules(text, apps, "c")
+    assert hit is not None and hit.skill is None, hit             # not just "open"
+    assert hit.meta == {"inside_app": app, "compound": True}
+    assert not is_quick_request(text, apps)                        # multi-step: normal lane
+
+
+def test_plain_open_is_still_the_fast_path(tmp_path: Path) -> None:
+    apps = resolver(tmp_path)
+    for text in ("obs open koro", "audacity kholo", "OBS খোলো তারপর"):   # nothing after
+        hit = classify_by_rules(text, apps, "c")
+        assert hit is not None and hit.skill is not None and hit.skill[1] == "open", text
+
+
+def test_exact_app_commands_use_no_ai_at_all(tmp_path: Path) -> None:
+    """CU-5 (Report F phase 4): after speech recognition, an exact installed-app command
+    is decided by rules — zero AI calls (fast, and nothing leaves the PC)."""
+    import asyncio
+
+    from core.config import load_config
+    from core.router.intent import IntentRouter
+    from models.router import ProviderRouter
+    from providers.provider_base import HealthState
+    from tests.mocks.providers import FakeAdapter
+    cfg = load_config()
+    ad = {n: FakeAdapter(n, state=HealthState.HEALTHY) for n in cfg.providers.providers}
+    router = IntentRouter(ProviderRouter(cfg.providers, ad), resolver(tmp_path))
+    for text in ("প্রিমিয়ার প্রো খোলো", "obs open koro", "audacity bondho koro",
+                 "OBS খোলো তারপর recording শুরু করো", "কোন কোন অ্যাপ খোলা আছে"):
+        hit = asyncio.run(router.classify(text, "t", "c"))
+        assert hit.source == "rule", (text, hit)
+    assert not any(a.requests for a in ad.values())

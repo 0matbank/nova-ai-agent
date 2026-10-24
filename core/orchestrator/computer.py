@@ -391,6 +391,9 @@ class ComputerUseAgent:
         title to work in; neither: the window in front."""
         system = SYSTEM.format(goal=goal[:500])
         window = window or await self._window_of(ctx, app)
+        # a true acknowledgement: the work has really started, in this window
+        await ctx.progress(f"🖱️ শুরু করছি — «{(window or 'সামনের জানালা')[:50]}»" if lang == "bn"
+                           else f"🖱️ starting — «{(window or 'the front window')[:50]}»")
         history: list[dict[str, Any]] = []
         effects: list[dict[str, Any]] = []
         seen: dict[str, int] = {}

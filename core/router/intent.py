@@ -325,6 +325,8 @@ def is_quick_request(text: str, apps: Any | None = None) -> bool:
     """V1.1 fast lane: a request a fixed skill answers in seconds, with no AI — it must
     not wait behind a long AI task (live 2026-10-23: "প্রিমিয়ার প্রো খোলো" waited 2 min
     behind one slow answer)."""
+    if split_compound(text) is not None:
+        return False                     # "X খোলো তারপর Y": multi-step work, normal lane
     if (apps is not None and not looks_scheduled(text) and not is_creative(text)
             and not is_screen_question(text) and not URL_RX.search(text)
             and (apps.inside_command(text) or ("",))[0] == "view"):
@@ -336,6 +338,52 @@ def is_quick_request(text: str, apps: Any | None = None) -> bool:
     # the rules may only have seen "খোলো" (pc_control, no skill): a known app is quick
     return ((hit is None or hit.category == "pc_control") and apps is not None
             and not STATE_QUESTION.search(text) and apps.is_quick_command(text))
+
+
+# CU-5 (plan §72): "X খোলো তারপর Y করো" — open X, then do Y inside it; the simple open
+# fast path must not drop the rest of the goal
+THEN_RX = re.compile(r"\b(then|and then|after that|tarpor|tarpore|erpor|tar\s+por)\b|"
+                     r"তারপর|তার\s*পর|এরপর|এর\s*পর|তারপরে", re.IGNORECASE)
+
+
+OWNER_NEXT_RX = re.compile(r"\b(i|i'll|i will|ami|amii|ame)\b|আমি|যামি|আমরা",
+                           re.IGNORECASE)
+
+
+def split_compound(text: str) -> tuple[str, str] | None:
+    """(first part, the rest) when the request goes on after "then"."""
+    m = THEN_RX.search(text)
+    if m is None:
+        return None
+    head, tail = text[:m.start()].strip(" ,।."), text[m.end():].strip(" ,।.")
+    if len(head.split()) < 2 or len(tail.split()) < 2:
+        return None
+    if OWNER_NEXT_RX.search(tail):
+        # "…open X, then I will tell you the command" — the rest is the owner's turn,
+        # not more work for Nova (owner's own phone sentence, 2026-10-16)
+        return None
+    return head, tail
+
+
+def compound_app_task(text: str, apps: Any | None = None) -> Intent | None:
+    """Opening an app is only the first step: the whole request goes to the computer-use
+    loop, which opens the app and works inside it."""
+    parts = split_compound(text)
+    if parts is None or URL_RX.search(text):
+        return None
+    head = parts[0]
+    fixed = app_command(head)
+    if fixed is not None and fixed[1] == "open":
+        app_id = str(fixed[2]["app"])
+    elif apps is not None:
+        res = apps.resolve_command(head)
+        if res is None or res.status != "sure" or res.action != "open" or res.app is None:
+            return None
+        app_id = res.app.id
+    else:
+        return None
+    return Intent("pc_control", 0.9, "rule", None, matched=app_id,
+                  meta={"inside_app": app_id, "compound": True})
 
 
 def classify_by_rules(text: str, apps: Any | None = None, chat_id: str = "") -> Intent | None:
@@ -364,6 +412,9 @@ def classify_by_rules(text: str, apps: Any | None = None, chat_id: str = "") -> 
         return Intent("open_windows", 0.9, "rule", READ_ONLY_SKILLS["open_windows"],
                       matched="open windows")
     if not URL_RX.search(text):
+        compound = compound_app_task(text, apps)
+        if compound is not None:
+            return compound
         app = app_command(text)
         if app is not None:
             return Intent("pc_control", 0.95, "rule", app, matched=app[2]["app"])
