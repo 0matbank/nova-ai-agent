@@ -20,7 +20,8 @@ DANGER_WORDS = (
     "dont save", "overwrite", "replace all", "clear all", "empty", "reset", "send", "submit",
     "post", "publish", "share", "pay", "purchase", "buy", "order", "checkout", "transfer",
     "confirm", "sign out", "log out", "logout", "shut down", "shutdown", "restart",
-    "মুছুন", "মুছে", "ডিলিট", "পাঠান", "পাঠাও", "পেমেন্ট", "কিনুন", "নিশ্চিত",
+    "upload",            # sends the owner's data out (CU-4 real run, 2026-10-24)
+    "মুছুন", "মুছে", "ডিলিট", "পাঠান", "পাঠাও", "পেমেন্ট", "কিনুন", "নিশ্চিত", "আপলোড",
 )
 # On a web page these change the owner's account or settings (audit 2026-10-15). On the
 # desktop "Save" is harmless (it is "Don't save" that loses work), so they are web-only.

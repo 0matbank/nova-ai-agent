@@ -167,7 +167,11 @@ def test_act_permissions_are_decided_on_what_is_there_now(
     def run(coro: Any) -> Any:
         return asyncio.run(coro)
     click = mod.P(observation_id="o", element=3, op="click")
-    seen["reply"] = ToolResult(False, "stale_target")            # cannot tell → RED
+    from core.skills.registry import SkillError
+    seen["reply"] = ToolResult(False, "stale_target: moved")     # changed → look again,
+    with pytest.raises(SkillError, match="stale_target"):        # not an approval
+        run(mod.action(click, env))
+    seen["reply"] = ToolResult(False, "desktop worker: timeout")  # cannot tell → RED
     assert run(mod.action(click, env)) == "ui.shell_input"
     seen["reply"] = target("Save")
     assert run(mod.action(click, env)) == "ui.click"

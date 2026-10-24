@@ -16,6 +16,7 @@ from typing import Literal
 
 from core.skills.api import Params, Tool, ToolEnv, ToolResult
 from core.skills.desktop import desktop_call
+from core.skills.registry import SkillError
 from core.skills.ui_policy import dangerous_label
 
 Op = Literal["click", "set_text", "focus", "toggle", "select", "expand", "collapse",
@@ -38,6 +39,9 @@ async def _target(p: P, env: ToolEnv) -> dict | ToolResult:  # type: ignore[type
 async def action(p: P, env: ToolEnv) -> str:
     t = await _target(p, env)
     if isinstance(t, ToolResult):
+        if "stale_target" in t.summary:
+            # the screen changed since the observation: nothing to approve — look again
+            raise SkillError(t.summary)
         return "ui.shell_input"               # cannot tell what it is: fail closed (RED)
     if t["window"]["is_shell"] and p.op in ("click", "set_text"):
         return "ui.shell_input"

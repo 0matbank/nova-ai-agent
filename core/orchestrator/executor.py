@@ -28,6 +28,7 @@ from core.orchestrator import project_agent
 from core.orchestrator.answer import answer
 from core.orchestrator.browse import BrowserFlow
 from core.orchestrator.coding import CodingFlow, git
+from core.orchestrator.computer import ComputerUseAgent
 from core.orchestrator.context import for_request
 from core.orchestrator.creative import CreativeFlow
 from core.orchestrator.lang import reply_language
@@ -234,6 +235,10 @@ class UserRequestExecutor:
         cfg = self.skills.env.config
         rules = project_agent.project_rules(cfg.root, self.roster, a)
         remembered, decisions = project_agent.memory_context(self.memory, a)
+        if a.route == "operator" and intent.meta.get("inside_app"):
+            # plan §72 CU-4: work inside an open app → the general computer-use loop
+            return await ComputerUseAgent(self.skills, self.providers).run(
+                ctx, ctx.task.request_text, str(intent.meta["inside_app"]), lang)
         if a.route == "operator":
             memo = "\n\n".join(x for x in (
                 f"Earlier decisions:\n{decisions}" if decisions else "",
@@ -390,6 +395,17 @@ class UserRequestExecutor:
                 f"{'pass ✓' if ev.get('tests_passed') else 'fail (জানানো হয়েছে)'}",))
         if kind == "skill":
             return self._check_skill(act, ev, bn, ctx.task.request_text)
+        if kind == "computer":
+            # CU-4: "done" was checked on a fresh look at the window; nothing checkable
+            # → unverified, never a PASS
+            proofs = tuple(str(x) for x in ev.get("checks") or ())
+            if ev.get("verified") is True:
+                return Verdict(True, "", VerdictStatus.PASS, proofs)
+            if ev.get("verified") is False:
+                return Verdict(False, "goal not visible on screen", VerdictStatus.BLOCKED,
+                               proofs)
+            return Verdict(False, "যাচাই করা যায়নি" if bn else "could not verify",
+                           VerdictStatus.INCONCLUSIVE, proofs)
         if kind == "coding":
             return await self._check_coding(ev)
         if kind == "browser":

@@ -77,7 +77,9 @@ def _collect(auto: Any, window: Any, keep: bool = False) -> list[dict[str, Any]]
     cache = iuia.CreateCacheRequest()
     for prop in (p.ControlTypeProperty, p.NameProperty, p.BoundingRectangleProperty,
                  p.AutomationIdProperty, p.IsEnabledProperty, p.HasKeyboardFocusProperty,
-                 p.ClassNameProperty, p.ValueValueProperty, p.RuntimeIdProperty):
+                 p.ClassNameProperty, p.ValueValueProperty, p.RuntimeIdProperty,
+                 p.ToggleToggleStateProperty, p.SelectionItemIsSelectedProperty,
+                 *(getattr(p, f"Is{name}PatternAvailableProperty") for name, _ in PATTERN_OPS)):
         cache.AddProperty(prop)
     cond = iuia.CreateAndConditionFromArray([
         iuia.CreatePropertyCondition(p.IsOffscreenProperty, False),
@@ -97,6 +99,9 @@ def _collect(auto: Any, window: Any, keep: bool = False) -> list[dict[str, Any]]
                         "enabled": bool(e.CachedIsEnabled),
                         "focused": bool(e.CachedHasKeyboardFocus),
                         "value": _cached_value(e, p.ValueValueProperty),
+                        "checked": _cached_toggle(e, p.ToggleToggleStateProperty),
+                        "selected": _cached_bool(e, p.SelectionItemIsSelectedProperty),
+                        "ops": _ops(e, p),
                         "runtime_id": _runtime_id(e, p.RuntimeIdProperty),
                         "rect": _rect(e.CachedBoundingRectangle),
                         **({"_el": e} if keep else {})})
@@ -114,6 +119,35 @@ def _runtime_id(e: Any, prop: int) -> tuple[int, ...]:
         return tuple(int(x) for x in v)
     except TypeError:
         return ()
+
+
+# what Windows says a control can really do → the operations Nova may use on it
+PATTERN_OPS = (("Invoke", "click"), ("Toggle", "toggle"), ("SelectionItem", "select"),
+               ("ExpandCollapse", "expand"), ("Value", "set_text"),
+               ("ScrollItem", "scroll_into_view"))
+
+
+def _cached_bool(e: Any, prop: int) -> bool | None:
+    try:
+        v = e.GetCachedPropertyValue(prop)
+    except Exception:  # noqa: BLE001
+        return None
+    return bool(v) if isinstance(v, (bool, int)) else None
+
+
+def _ops(e: Any, p: Any) -> list[str]:
+    """The operations this control supports (from UIA pattern availability)."""
+    return [op for name, op in PATTERN_OPS
+            if _cached_bool(e, getattr(p, f"Is{name}PatternAvailableProperty"))]
+
+
+def _cached_toggle(e: Any, prop: int) -> bool | None:
+    """Check box / toggle state: True on, False off, None when it has no such state."""
+    try:
+        v = e.GetCachedPropertyValue(prop)
+    except Exception:  # noqa: BLE001 - no Toggle pattern
+        return None
+    return {0: False, 1: True}.get(v) if isinstance(v, int) else None
 
 
 def _cached_value(e: Any, prop: int) -> str:
@@ -163,7 +197,8 @@ def number(elements: list[dict[str, Any]], win: tuple[int, int, int, int]
     keep.sort(key=lambda e: (e["rect"][1] // 8, e["rect"][0]))
     for n, el in enumerate(keep, 1):
         el["id"] = n
-        el["actionable"] = el["type"] in ACTIONABLE
+        el["actionable"] = el["type"] in ACTIONABLE and (
+            bool(el.get("ops")) or "ops" not in el)
         el["chrome"] = any(_in_strip(el["rect"], b, win) for b in bars) or (
             # apps that draw their own title bar (Chromium/Electron) expose no TitleBar:
             # Windows' standard frame buttons at the very top of the window
@@ -268,6 +303,7 @@ def _remember(window: dict[str, Any], elements: list[dict[str, Any]]) -> str:
                        "elements": {e["id"]: {
                            **{k: e[k] for k in ("rect", "name", "type", "automation_id",
                                                 "value")},
+                           "hwnd": e.get("hwnd", window["hwnd"]),
                            "runtime_id": e.get("runtime_id", ())} for e in elements}}
         while len(_STORE) > KEEP_OBSERVATIONS:
             _STORE.popitem(last=False)
@@ -298,6 +334,39 @@ def _target(auto: Any, window: str | None, hwnd: int | None) -> Any:
     return fg.GetTopLevelControl()
 
 
+WS_POPUP = 0x80000000
+
+
+def _popups(auto: Any, main: Any) -> list[Any]:
+    """Visible pop-up windows of the same program (a drop-down list, a context menu):
+    they are separate top-level windows in Windows, but part of what the user sees."""
+    if sys.platform != "win32":
+        return []
+    import win32con
+    import win32gui
+    import win32process
+    pid, me = main.ProcessId, int(main.NativeWindowHandle)
+    found: list[int] = []
+
+    def cb(hwnd: int, _: Any) -> bool:
+        if hwnd != me and win32gui.IsWindowVisible(hwnd) and \
+                win32process.GetWindowThreadProcessId(hwnd)[1] == pid and \
+                win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE) & WS_POPUP:
+            left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+            if right - left > 4 and bottom - top > 4:
+                found.append(hwnd)
+        return True
+
+    win32gui.EnumWindows(cb, None)
+    out = []
+    for h in found[:4]:
+        try:
+            out.append(auto.ControlFromHandle(h))
+        except Exception:  # noqa: BLE001 - it closed meanwhile
+            continue
+    return out
+
+
 def _is_front(auto: Any, w: Any) -> bool:
     fg = auto.GetForegroundControl()
     top = fg.GetTopLevelControl() if fg else None
@@ -326,6 +395,15 @@ def observe(out_dir: Path, window: str | None = None, hwnd: int | None = None,
             again = number(_collect(auto, w), win)
             if len(again) > len(elements):
                 elements = again
+        for el in elements:
+            el["hwnd"] = info["hwnd"]
+        for pw in _popups(auto, w):
+            extra = number(_collect(auto, pw), _rect(pw.BoundingRectangle))
+            for el in extra:
+                el.update(hwnd=int(pw.NativeWindowHandle), popup=True)
+            elements += extra
+        for n, el in enumerate(elements, 1):
+            el["id"] = n
     t1 = time.perf_counter()
     oid = _remember(info, elements)
     for el in elements:

@@ -3195,3 +3195,5 @@ Telegram voice-এর দেরি মাপা ও কমানো, installed a
 **যা বদলাবে না:** §১–§৭১-এর সব feature, V1.2–V2, WhatsApp deferred। নতুন paid service / remote server নয়। প্রতিটি ধাপ: ছোট diff, feature flag যেখানে আচরণ বদলায়, focused + পুরো regression (pytest-এর নিজের exit code), আসল যাচাই, commit (owner-এর নির্দেশে প্রতি milestone-এ)।
 
 **খোলা বিষয় (owner জানবেন):** Nova repo-তে root LICENSE নেই (public repo) — owner-এর সিদ্ধান্ত।
+
+**অবস্থা (2026-10-24):** CU-0 ✓ · CU-1 Observer ✓ · CU-2 Verifier ✓ · CU-3 লক্ষ্য-পরিচয় + owner নিয়ন্ত্রণ ✓ · CU-4 সাধারণ loop ✓ — নিজের PC-র local model (qwen3 8B, cloud নয়) দিয়ে আগে-না-দেখা ৪টা lab কাজ, প্রতিটা ৩ বার: শেষ সংস্করণে ১২/১২ যাচাই-সহ সফল (WPF ৩/৩, একই-নামের-বোতাম ৩/৩, web ৩/৩, dialog ৩/৩; ৫–২৬০ সে.)। আগের দফাগুলোয় পাওয়া ভুল (না-চাওয়া Save/Upload, দ্বিতীয় Save, বারবার toggle) সাধারণ নিয়মে বন্ধ: একই-নামের বোতামে ক্রম, goal-এ যতবার নাম ততবারই চাপ, না-বলা commit/confirm বোতাম কখনো নয়। সীমা: ছোট local model কখনো আটকে যায় (no-progress-এ নিরাপদে থামে); একটা task-এ ৫–২৬০ সে.; vision grounding (canvas) এখনো শুধু scripted test-এ — আসল vision model মাপা CU-8-এ।

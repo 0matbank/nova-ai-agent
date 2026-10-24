@@ -18,7 +18,7 @@ from typing import Any
 from desktop_lock import input_lease
 from desktop_observe import _collect, process_signature, recall
 from desktop_screen import require_unlocked
-from desktop_ui import UIError, _proc_name, _uia, is_shell_window
+from desktop_ui import UIError, _proc_name, _uia, is_shell_window, win32_class
 
 MOVE_TOLERANCE = 4         # px a control may shift (re-layout) and still be "the same"
 OPS = ("click", "set_text", "focus", "toggle", "select", "expand", "collapse",
@@ -129,19 +129,21 @@ def target(observation_id: str, element: int) -> dict[str, Any]:
     if want is None:
         raise UIError(f"stale_target: observation has no element {element}")
     with _uia() as auto:
-        w, now = _window_now(auto, obs)
+        w, now = _window_now(auto, obs, want.get("hwnd"))
         c = find_again(want, now)
         proc = _proc_name(obs["pid"])
         return {"element": {k: c[k] for k in ("type", "name", "automation_id", "value",
                                                "enabled")},
-                "window": {"title": w.Name, "process": proc, "class": w.ClassName,
-                           "is_shell": is_shell_window(proc, w.ClassName, w.Name,
+                "window": {"title": w.Name, "process": proc, "class": win32_class(w),
+                           "is_shell": is_shell_window(proc, win32_class(w), w.Name,
                                                        f"{c['name']} {c['automation_id']}")}}
 
 
-def _window_now(auto: Any, obs: dict[str, Any]) -> tuple[Any, list[dict[str, Any]]]:
+def _window_now(auto: Any, obs: dict[str, Any], hwnd: int | None = None
+                ) -> tuple[Any, list[dict[str, Any]]]:
+    """The element's window now (its own pop-up, or the main window) and its controls."""
     try:
-        w = auto.ControlFromHandle(obs["hwnd"])
+        w = auto.ControlFromHandle(hwnd or obs["hwnd"])
         alive = w is not None and w.Exists(0, 0)
     except Exception:  # noqa: BLE001 - a destroyed window raises COMError
         alive = False
@@ -163,13 +165,13 @@ def act(observation_id: str, element: int, op: str, text: str | None = None
     if want is None:
         raise UIError(f"stale_target: observation has no element {element}")
     with input_lease(), _uia() as auto:
-        w, now = _window_now(auto, obs)
+        w, now = _window_now(auto, obs, want.get("hwnd"))
         c = find_again(want, now)            # the last check, right before the input
         if not c["enabled"] and op not in ("focus", "scroll_into_view"):
             raise UIError(f"disabled: {c['name']!r} is disabled")
         proc = _proc_name(obs["pid"])
         if op in ("set_text", "click") and is_shell_window(
-                proc, w.ClassName, w.Name, f"{c['name']} {c['automation_id']}"):
+                proc, win32_class(w), w.Name, f"{c['name']} {c['automation_id']}"):
             raise UIError("shell_target: this window runs what is typed — refused here")
         el = auto.Control.CreateControlFromElement(c["_el"])
         before = {**_state(el), **_window_state(auto, w)}

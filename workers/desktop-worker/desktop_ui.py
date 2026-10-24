@@ -34,7 +34,8 @@ CONSOLE_CLASSES = {"consolewindowclass", "cascadia_hosting_window_class",
                    "pseudoconsolewindow", "mintty", "virtualconsoleclass"}
 # GUI framework windows hosted by a shell process (e.g. a WinForms form run
 # from PowerShell) take no commands — they are not command sinks.
-GUI_CLASS_PREFIXES = ("windowsforms10.", "hwndwrapper[")
+GUI_CLASS_PREFIXES = ("windowsforms10.", "hwndwrapper[",
+                      "#32770")   # a standard dialog box (MessageBox): buttons, no prompt
 MAX_NODES = 3000
 
 
@@ -60,9 +61,20 @@ def _proc_name(pid: int) -> str:
         return ""
 
 
+def win32_class(w: Any) -> str:
+    """The real Windows class name (e.g. "HwndWrapper[…]" for WPF, "ConsoleWindowClass").
+    UI Automation's ClassName can be a framework name ("Window" for WPF) — the shell
+    checks need the Win32 one (found 2026-10-24: a WPF window counted as a terminal)."""
+    try:
+        import win32gui
+        return str(win32gui.GetClassName(int(w.NativeWindowHandle)))
+    except Exception:  # noqa: BLE001 - no handle: fall back to what UIA says
+        return str(w.ClassName or "")
+
+
 def _describe_window(w: Any) -> dict[str, Any]:
     return {"title": w.Name, "hwnd": w.NativeWindowHandle, "pid": w.ProcessId,
-            "process": _proc_name(w.ProcessId), "class": w.ClassName}
+            "process": _proc_name(w.ProcessId), "class": win32_class(w)}
 
 
 def _top_windows(auto: Any) -> list[Any]:
@@ -166,7 +178,7 @@ def resolve(window: str, name: str | None = None, automation_id: str | None = No
             # no control named: text/keys go to the focused control — judge that one
             control = auto.GetFocusedControl()
         out["window"]["is_shell"] = is_shell_window(
-            out["window"]["process"], w.ClassName, w.Name,
+            out["window"]["process"], win32_class(w), w.Name,
             " ".join(filter(None, [control.Name, control.AutomationId,
                                    getattr(control, "ClassName", "")])) if control else "",
             control_known=control is not None)
@@ -251,6 +263,13 @@ def _force_foreground(hwnd: int) -> None:
             desktop_guard.nudge_input()
             with contextlib.suppress(Exception):
                 win32gui.SetForegroundWindow(hwnd)
+            if win32gui.GetForegroundWindow() != hwnd:
+                # last resort (2026-10-24: a hidden GameInputSvc window held the
+                # foreground and every other way failed): minimize + restore the TARGET
+                # window — Windows activates a window it restores
+                with contextlib.suppress(Exception):
+                    win32gui.ShowWindow(hwnd, win32con.SW_MINIMIZE)
+                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
 
 
 def _activate(w: Any) -> None:
