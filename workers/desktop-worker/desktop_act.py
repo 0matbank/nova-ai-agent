@@ -12,6 +12,7 @@ transport ok ≠ effect)."""
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
@@ -90,10 +91,35 @@ def _window_state(auto: Any, w: Any) -> dict[str, Any]:
             "foreground": top.Name if top is not None else None}
 
 
-def _type_keys(auto: Any, w: Any, el: Any, text: str, at: str = "end") -> str:
-    """Keyboard typing into a surface without a Value pattern: appended at the end
-    (Ctrl+End first), or at the cursor the planner placed. Never blind: the keys go out
-    only when the focus is inside THIS window."""
+AT_RX = re.compile(r"^(end|new_line|cursor|line_(end|start):(\d{1,6}))$")
+
+
+def place_keys(at: str, tail: str = "") -> str:
+    """The key sequence that puts the cursor where `at` says (any editor: standard
+    Windows editing keys only)."""
+    m = AT_RX.match(at)
+    if not m:
+        raise UIError(f"invalid place {at!r} — use end, new_line, cursor, line_end:N or "
+                      "line_start:N")
+    if at == "cursor":
+        return ""
+    if at == "end":
+        return "{Ctrl}{End}"
+    if at == "new_line":           # a new line after the last one — never an empty line
+        # skip the line break only when the text is KNOWN to end with one (a surface
+        # that tells nothing gets the break: a new line is what was asked for)
+        return "{Ctrl}{End}" + ("" if tail.endswith(("\n", "\r")) else "{Enter}")
+    line = int(m.group(3))
+    if line < 1:
+        raise UIError("line numbers start at 1")
+    return "{Ctrl}{Home}" + "{Down}" * (line - 1) + ("{End}" if m.group(2) == "end"
+                                                     else "{Home}")
+
+
+def _type_keys(auto: Any, w: Any, el: Any, text: str, at: str = "end",
+               tail: str = "") -> str:
+    """Keyboard typing into a surface without a Value pattern, at the place `at` names.
+    Never blind: the keys go out only when the focus is inside THIS window."""
     _activate(w)
     el.SetFocus()
     time.sleep(0.1)
@@ -101,20 +127,21 @@ def _type_keys(auto: Any, w: Any, el: Any, text: str, at: str = "end") -> str:
         raise UIError("could not move keyboard focus into the target window — refusing "
                       "to type")
     lines = text.replace("\r\n", "\n").split("\n")
-    auto.SendKeys(("{Ctrl}{End}" if at == "end" else "")
-                  + "{Enter}".join(_escape_sendkeys(x) for x in lines), interval=0.005,
-                  waitTime=0.1)
-    return "SendKeys(at end)" if at == "end" else "SendKeys(at cursor)"
+    if at == "new_line" and lines and lines[0] == "":
+        lines = lines[1:]                   # the new line is made by the place itself
+    auto.SendKeys(place_keys(at, tail) + "{Enter}".join(_escape_sendkeys(x) for x in lines),
+                  interval=0.005, waitTime=0.1)
+    return f"SendKeys(at {at})"
 
 
 def _perform(auto: Any, c: Any, op: str, text: str | None, w: Any = None,
-             at: str = "end") -> str:
+             at: str = "end", tail: str = "") -> str:
     """Run one op through UIA patterns; returns the method used."""
     el = auto.Control.CreateControlFromElement(c)
     if op == "type":
         if not text:
             raise UIError("type needs text")
-        return _type_keys(auto, w, el, text, at)
+        return _type_keys(auto, w, el, text, at, tail)
     if op == "click":
         for pattern, method in (("GetInvokePattern", "Invoke"), ("GetTogglePattern", "Toggle"),
                                 ("GetSelectionItemPattern", "Select"),
@@ -209,7 +236,7 @@ def act(observation_id: str, element: int, op: str, text: str | None = None,
         el = auto.Control.CreateControlFromElement(c["_el"])
         before = {**_state(el), **_window_state(auto, w)}
         content_before = content_signature(now)
-        method = _perform(auto, c["_el"], op, text, w, at)
+        method = _perform(auto, c["_el"], op, text, w, at, str(c.get("tail") or ""))
         time.sleep(SETTLE_SECONDS)
         after = {**_state(el), **_window_state(auto, w)}
         content_changed = w.Exists(0, 0) and content_signature(

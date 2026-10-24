@@ -243,3 +243,46 @@ def test_a_password_field_is_seen_in_a_real_app(tmp_path: Path) -> None:
         assert not pin.get("value")                       # the secret is never read out
         t = da.target(obs["observation_id"], pin["id"])
         assert t["element"]["password"] is True
+
+
+def test_the_place_to_type_is_a_fixed_key_sequence() -> None:
+    """Fix 1 (CU-9 Notepad++ 0/6): the planner only names the place; Nova moves the
+    cursor with standard editing keys — any editor."""
+    import desktop_act as da
+    assert da.place_keys("end") == "{Ctrl}{End}"
+    assert da.place_keys("cursor") == ""
+    assert da.place_keys("new_line", "first line") == "{Ctrl}{End}{Enter}"
+    assert da.place_keys("new_line", "first line\n") == "{Ctrl}{End}"     # no empty line
+    assert da.place_keys("new_line", "") == "{Ctrl}{End}{Enter}"          # unknown text
+    assert da.place_keys("line_end:1") == "{Ctrl}{Home}{End}"
+    assert da.place_keys("line_start:3") == "{Ctrl}{Home}{Down}{Down}{Home}"
+    for bad in ("line_end:0", "line_end:x", "top", "end; rm"):
+        with pytest.raises(da.UIError):
+            da.place_keys(bad)
+
+
+@WIN
+@pytest.mark.parametrize(("at", "text", "want"), [
+    ("new_line", "Nova done", "first line\nsecond line\nNova done"),
+    ("line_end:1", ", eggs", "first line, eggs\nsecond line"),
+    ("line_start:2", "> ", "first line\n> second line"),
+])
+def test_typing_lands_at_the_named_place(tmp_path: Path, at: str, text: str,
+                                         want: str) -> None:
+    pytest.importorskip("uiautomation")
+    import tempfile
+    import time
+
+    import desktop_act as da
+    import desktop_observe as ob
+
+    from tests.mocks.cu_lab import lab_app
+    with lab_app("editor") as title:
+        r = ob.observe(tmp_path, window=title, image=False, focus=True)
+        pane = next(e for e in r["elements"] if e["type"] == "Pane")
+        da.act(r["observation_id"], pane["id"], "type", text, at)
+        time.sleep(0.5)
+        mirror = Path(tempfile.gettempdir()) / f"{title}.txt"
+        got = mirror.read_text(encoding="utf-8")
+        mirror.unlink()
+    assert got == want

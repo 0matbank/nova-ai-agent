@@ -52,6 +52,7 @@ RETRY_SECONDS = 0.6
 # a focusable pane at least this big is an editing/drawing surface (Scintilla editors,
 # canvases, terminals) — other panes are only layout and are left out (CU-9 2026-10-24)
 SURFACE_MIN = (120, 60)
+SURFACE_TEXT_MAX = 20000
 MIN_ACTIONABLE = 3         # fewer named actionable controls → the tree is "sparse"
 PREVIEW_WIDTH = 1280
 _COLORS = {"Button": (255, 196, 0), "Edit": (0, 170, 90), "MenuItem": (0, 120, 255),
@@ -120,6 +121,10 @@ def _collect(auto: Any, window: Any, keep: bool = False) -> list[dict[str, Any]]
                     and bottom - top >= SURFACE_MIN[1]):
                 continue                              # layout, not something to use
             item["ops"] = ["type", "focus"]           # keyboard at its cursor
+            full = e.CachedName or ""
+            item["name"] = full[:SURFACE_TEXT_MAX]    # an editor's whole text (proofs)
+            item["tail"] = full[-200:]                # how the text ends
+            item["length"] = len(full)
             if out and out[-1]["type"] == "Pane" and out[-1]["rect"] == item["rect"]:
                 out.pop()                             # a frame around it: keep the inner one
         out.append(item)

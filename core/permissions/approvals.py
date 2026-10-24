@@ -71,7 +71,7 @@ def fingerprint(action: str, target: str, details: dict[str, Any] | None) -> str
 
 # Actions whose typed text is a secret: the approval binds to it through the fingerprint
 # (a hash), but the stored row only says that something was typed.
-SECRET_ACTIONS = frozenset({"browser.fill_secret"})
+SECRET_ACTIONS = frozenset({"browser.fill_secret", "ui.type_secret"})
 SECRET_KEYS = frozenset({"text", "value", "password", "secret", "token"})
 
 

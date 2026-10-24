@@ -357,11 +357,37 @@ def test_a_password_from_the_goal_needs_approval_in_any_field(tmp_path: Path) ->
     description field. A value the goal gives as a password is RED wherever it goes."""
     from core.queue.engine import ApprovalPending
     from tests.mocks.cu_lab import lab_app
-    goal = "Notes ঘরে লেখো, password 'Lab-Test-2468'"
-    s, agent, _ = setup(tmp_path, [
-        lambda r: act(number_of(r, "Notes"), "set_text", text="Lab-Test-2468")])
+    secret = "Lab-Test-2468"
+    goal = f"Notes ঘরে লেখো, password '{secret}'"
+    s, agent, ad = setup(tmp_path, [
+        lambda r: act(number_of(r, "Notes"), "set_text", text=secret)])
+    ctx = ctx_of(s, "write the password into Notes")      # the stored request: no secret
     with lab_app("dup") as title, pytest.raises(ApprovalPending):
-        asyncio.run(agent.run(ctx_of(s, goal), goal, None, "bn", window=title))
+        asyncio.run(agent.run(ctx, goal, None, "bn", window=title))
+    # Fix 2: the approval message, the task database and the model route never carry it
+    assert s.tasks.sent and not any(secret in text for _, text in s.tasks.sent)
+    assert secret.encode() not in s.tasks.db_path.read_bytes()
+    assert all(r.privacy == "local_only" for r in ad["ollama_local"].requests)
+
+
+@pytest.mark.parametrize(("goal", "found"), [
+    ("password 'Lab-Test-2468'", ["Lab-Test-2468"]), ("PIN 4821 দিয়ে খোলো", ["4821"]),
+    ("পাসওয়ার্ড হলো abc123", ["abc123"]), ("OTP: 778899", ["778899"]),
+    ("typing in the spinner", []), ("pin the tab", []), ("reset the password field", []),
+])
+def test_secrets_named_in_a_goal(goal: str, found: list[str]) -> None:
+    from core.orchestrator.computer import secrets_in
+    assert secrets_in(goal) == found
+
+
+def test_sensitive_text_is_found_and_masked() -> None:
+    from core.orchestrator.computer import mask, sensitive
+    assert sensitive("4111 1111 1111 1111", "")                  # a real card shape
+    assert not sensitive("1234 5678 9012 3456", "")              # fails the card check
+    assert sensitive("sk-ant-" + "b" * 30, "")                     # a key shape
+    assert not sensitive("meeting at 5", "password 'x9-y7z'")
+    assert mask("typed x9-y7z and 4111-1111-1111-1111", "password 'x9-y7z'") == \
+        "typed ••• and •••"
 
 
 @pytest.mark.parametrize(("goal", "text", "refused"), [
@@ -371,6 +397,8 @@ def test_a_password_from_the_goal_needs_approval_in_any_field(tmp_path: Path) ->
     ("শেষে নতুন লাইনে 'Nova done' লেখো", "Nova done", False),
     ("শেষে নতুন লাইনে 'Nova done' লেখো", "Nova done Nova done", True),
     ("Title ঘরে 'Nova demo' লেখো আর Public চালু করো", "Nova demo", False),
+    ("প্রথম লাইনের শেষে ', eggs' যোগ করো", "eggs", True),          # a part: real run
+    ("প্রথম লাইনের শেষে ', eggs' যোগ করো", ", eggs", False),
 ])
 def test_only_the_owners_words_are_typed(goal: str, text: str, refused: bool) -> None:
     from core.orchestrator.computer import text_problem
@@ -384,3 +412,189 @@ def test_the_judge_sees_an_unticked_box_as_unchecked() -> None:
         {"type": "CheckBox", "name": "Spell check", "checked": True},
         {"type": "Button", "name": "Close", "chrome": True}]})
     assert lines == ["CheckBox «Advanced view» unchecked", "CheckBox «Spell check» checked"]
+
+
+
+@pytest.mark.parametrize(("goal", "place"), [
+    ("এই লেখার একদম শেষে নতুন লাইনে 'Nova done' লেখো", "new_line"),
+    ("প্রথম লাইনের শেষে ', eggs' যোগ করো", "line_end:1"),
+    ("add 'x' at the end of line 3", "line_end:3"),
+    ("দ্বিতীয় লাইনের শুরুতে '> ' দাও", "line_start:2"),
+    ("শেষ লাইনের শেষে ok লেখো", "end"),
+    ("Notes ঘরে hello লেখো", None),
+])
+def test_the_place_comes_from_the_owners_words(goal: str, place: str | None) -> None:
+    """Fix 1b (real Notepad++: the planner forgot "at" and the text joined the last
+    line): when the planner names no place, the owner's own words decide."""
+    from core.orchestrator.computer import place_from_goal, unquote
+    assert place_from_goal(goal) == place
+    assert unquote("', eggs'") == ", eggs" and unquote("«hi»") == "hi"
+
+
+def test_locate_never_clicks_to_check_text_that_is_readable(tmp_path: Path) -> None:
+    """Fix 1b (real Notepad++: locate used to 'check' text became a raw click → RED):
+    text already in the control list needs no click at all."""
+    from tests.mocks.cu_lab import lab_app
+    s, agent, _ = setup(tmp_path, [
+        json.dumps({"action": "locate", "target": "'idle'", "why": "check it"}),
+        json.dumps({"action": "done", "summary": "seen", "expect": []}),
+    ])
+    calls: list[str] = []
+    real = agent._invoke
+
+    async def spy(ctx: Any, skill: str, tool: str, params: dict[str, Any]) -> Any:
+        calls.append(tool)
+        return await real(ctx, skill, tool, params)
+    agent._invoke = spy
+    with lab_app("dup") as title:
+        asyncio.run(agent.run(ctx_of(s, "is it idle?"), "is it idle?", None, "en",
+                              window=title))
+    assert "click_xy" not in calls and "act" not in calls
+
+
+
+def _screen(text: str) -> dict[str, Any]:
+    return {"window": {"title": "w"}, "elements": [
+        {"type": "Pane", "name": text, "tail": text[-200:], "length": len(text)}]}
+
+
+def test_fixed_proofs_of_what_nova_typed() -> None:
+    """Fix 3: proofs that do not depend on any model — the typed text is there, not
+    more often than asked, on its own line when a new line was asked."""
+    from core.orchestrator.computer import typed_proofs
+    goal = "শেষে নতুন লাইনে 'Nova done' লেখো"
+    before = _screen("first line\r\nsecond line")
+    typed = [{"did": "type [5]", "ok": True, "typed": "Nova done", "at": "new_line"}]
+    ok, _ = typed_proofs(typed, _screen("first line\r\nsecond line\r\nNova done"),
+                         before, goal)
+    assert ok is True
+    ok, why = typed_proofs(typed, _screen("first line\r\nsecond lineNova done"), before, goal)
+    assert ok is False and any("নতুন লাইনে" in w for w in why)          # joined the line
+    ok, why = typed_proofs(typed, _screen("first line\nsecond line\nNova done\nNova done"),
+                           before, goal)
+    assert ok is False and any("2 বার" in w for w in why)               # a duplicate
+    ok, _ = typed_proofs(typed, before, before, goal)
+    assert ok is False                                                  # not there at all
+    assert typed_proofs([], before, before, goal) == (None, [])
+    secret = [{"did": "set_text [3]", "ok": True, "typed": "•••"}]
+    assert typed_proofs(secret, before, before, goal) == (None, [])     # never compared
+    # the judge said yes 3/3 to ', eggs' at the END of the file when line 1 was asked
+    goal = "প্রথম লাইনের শেষে ', eggs' যোগ করো"
+    before = _screen("Shopping list: milk\r\n\r\nNOTE")
+    eggs = [{"did": "type [5]", "ok": True, "typed": ", eggs", "at": "line_end:1"}]
+    assert typed_proofs(eggs, _screen("Shopping list: milk, eggs\r\n\r\nNOTE"), before,
+                        goal)[0] is True
+    assert typed_proofs(eggs, _screen("Shopping list: milk\r\n\r\nNOTE, eggs"), before,
+                        goal)[0] is False
+    # a set_text that was replaced later: only the last value counts
+    fixed = [{"did": "set_text [4]", "ok": True, "typed": "hello there", "label": "Notes"},
+             {"did": "set_text [4]", "ok": True, "typed": "hello", "label": "Notes"}]
+    notes = {"window": {"title": "w"}, "elements": [
+        {"type": "Edit", "name": "Notes", "value": "hello"}]}
+    assert typed_proofs(fixed, notes, None, "Notes ঘরে hello লেখো")[0] is True
+
+
+
+def test_ui_tars_flag_is_off_by_default_and_parses_points() -> None:
+    """Fix 4: UI-TARS is optional — the shipped config keeps the existing vision path."""
+    from core.orchestrator.grounders import grounder_for, point_from_answer
+    cfg = load_config()
+    assert cfg.models.grounding.engine == "vision" and grounder_for(cfg) is None
+    assert point_from_answer("(120,45)", (400, 300)) == (120, 45)
+    assert point_from_answer("click(start_box='(10,20,30,40)')", (400, 300)) == (20, 30)
+    assert point_from_answer("(999,45)", (400, 300)) is None        # outside: no guess
+    assert point_from_answer("There are none.", (400, 300)) is None
+
+
+@pytest.mark.parametrize("grounder_answers", [True, False])
+def test_ui_tars_first_then_the_vision_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                            grounder_answers: bool) -> None:
+    """With the flag on, locate asks UI-TARS first; no answer → the vision model (the
+    existing path) still finds it. Either way the raw click stays RED (spied here)."""
+    from PIL import Image
+
+    from tests.mocks.cu_lab import lab_app
+
+    def render_box(png: bytes) -> tuple[int, int, int, int]:
+        import io
+        img = Image.open(io.BytesIO(png)).convert("RGB")
+        w, h = img.size
+        xs, ys = [], []
+        for y in range(0, h, 2):
+            for x in range(0, w // 3, 2):
+                red, green, blue = img.getpixel((x, y))
+                if abs(red - 0x3B) < 12 and abs(green - 0x82) < 12 and abs(blue - 0xF6) < 12:
+                    xs.append(x)
+                    ys.append(y)
+        return min(xs), min(ys), max(xs), max(ys)
+
+    class FakeTars:
+        calls = 0
+
+        async def locate(self, png: bytes, size: tuple[int, int], target: str) -> Any:
+            FakeTars.calls += 1
+            if not grounder_answers:
+                return None
+            x1, y1, x2, y2 = render_box(png)
+            return (x1 + x2) / 2, (y1 + y2) / 2
+
+    def ground(r: ProviderRequest) -> str:
+        import io
+        x1, y1, x2, y2 = render_box(r.images[0])
+        w, h = Image.open(io.BytesIO(r.images[0])).size
+        return json.dumps({"bbox_2d": [x1 * 1000 / w, y1 * 1000 / h, x2 * 1000 / w,
+                                       y2 * 1000 / h]})
+    plan = json.dumps({"action": "locate", "target": "the blue Render button"})
+    s, agent, ad = setup(tmp_path, [plan, ground])
+    agent.grounder = FakeTars()
+    clicks: list[dict[str, Any]] = []
+    real_invoke = agent._invoke
+
+    async def spy(ctx: Any, skill: str, tool: str, params: dict[str, Any]) -> Any:
+        if tool == "click_xy":
+            clicks.append(params)
+            raise TaskBlocked("stop here: a raw click needs the owner's approval")
+        return await real_invoke(ctx, skill, tool, params)
+    monkeypatch.setattr(agent, "_invoke", spy)
+    with lab_app("canvas") as title:
+        with pytest.raises(TaskBlocked, match="approval"):
+            asyncio.run(agent.run(ctx_of(s, "press Render"), "press Render", None, "en",
+                                  window=title))
+        import desktop_observe as ob
+        o = ob.observe(tmp_path, window=title, image=True)
+    x1, y1, x2, y2 = render_box(Path(o["image"]).read_bytes())
+    ox, oy = o["origin"]
+    assert FakeTars.calls == 1 and len(clicks) == 1
+    assert ox + x1 <= clicks[0]["x"] <= ox + x2 and oy + y1 <= clicks[0]["y"] <= oy + y2
+    vision_calls = [r for r in ad["ollama_local"].requests if "bbox_2d" in r.user_request]
+    assert len(vision_calls) == (0 if grounder_answers else 1)
+
+
+def test_a_menu_item_named_in_the_goal_is_recognised() -> None:
+    """Regression found on real Notepad++ (Find 3/3 → 0/2): 'Find...\tCtrl+F' is the
+    'Find' the owner named — the mnemonic, ellipsis and shortcut are not its name."""
+    from core.orchestrator.computer import menu_words
+    assert menu_words("&Find...\tCtrl+F") == "find"
+    assert menu_words("Export PDF…") == "export pdf"
+    assert menu_words("Save") == "save"
+
+
+def test_a_drawing_surface_is_not_clicked_like_a_button(tmp_path: Path) -> None:
+    """Real canvas run: the planner 'clicked' the drawing surface itself forever. An op a
+    control does not take is refused at once with the way forward (locate). (A click on
+    a dropdown still expands it: checked on the real Character Map font task.)"""
+    from tests.mocks.cu_lab import lab_app
+    calls: list[str] = []
+    s, agent, _ = setup(tmp_path, [
+        lambda r: act(int(re.findall(r"\[(\d+)\] Pane", r.user_request)[0]), "click"),
+        json.dumps({"action": "fail", "reason": "stop"})])
+    real = agent._invoke
+
+    async def spy(ctx: Any, skill: str, tool: str, params: dict[str, Any]) -> Any:
+        calls.append(tool)
+        return await real(ctx, skill, tool, params)
+    agent._invoke = spy
+    with lab_app("canvas") as title, pytest.raises(TaskBlocked):
+        asyncio.run(agent.run(ctx_of(s, "press Render"), "press Render", None, "en",
+                              window=title))
+    assert "act" not in calls                       # refused before reaching the worker

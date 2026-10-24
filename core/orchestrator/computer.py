@@ -60,8 +60,9 @@ USABLE_TYPES = {"Button", "ListItem", "MenuItem", "TreeItem", "Hyperlink", "Chec
 
 # a value the owner gives as a password / PIN in the goal is a secret wherever it is typed
 # (real run 2026-10-24: one landed in a plain "description" field)
-SECRET_RX = re.compile(r"(?:password|passcode|passwd|pin|otp|পাসওয়ার্ড|পিন)\s*(?:is|:|=|হলো|হচ্ছে)?"
-                       r"\s*['\"«‘“]?([^\s'\"»’”,;]+)", re.IGNORECASE)
+SECRET_RX = re.compile(r"(?<![^\W\d_])(?:password|passcode|passwd|pin|otp|পাসওয়ার্ড|পিন)"
+                       r"(?![^\W\d_])\s*(?P<sep>is|:|=|হলো|হচ্ছে)?"
+                       r"\s*(?P<quote>['\"«‘“])?(?P<value>[^\s'\"»’”,;]+)", re.IGNORECASE)
 
 JUDGE = (
     "You check someone else's work on a computer. Answer only JSON "
@@ -89,7 +90,7 @@ def text_problem(goal: str, text: str) -> str | None:
         return None
     quoted = [_squash(q) for q in QUOTED_RX.findall(goal) if q.strip()]
     if quoted:
-        if any(body == q or body in q for q in quoted):
+        if body in quoted:            # whole: a part of it ("eggs" of ", eggs") is wrong
             return None
         return ("type exactly the words the owner quoted ("
                 + " / ".join(repr(q) for q in quoted[:3]) + ") — nothing around them")
@@ -101,8 +102,83 @@ def text_problem(goal: str, text: str) -> str | None:
     return None
 
 
+QUOTES = "'\"‘’“”«»`"
+ORDINALS = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "last": -1,
+            "প্রথম": 1, "দ্বিতীয়": 2, "তৃতীয়": 3, "চতুর্থ": 4, "পঞ্চম": 5, "শেষ": -1}
+NEW_LINE_RX = re.compile(r"new line|next line|নতুন লাইন|পরের লাইন", re.IGNORECASE)
+LINE_NUM_RX = re.compile(r"(?:line|লাইন)\s*(\d{1,6})", re.IGNORECASE)
+LINE_WORD_RX = re.compile(r"(\S+)\s+(?:line|লাইন)", re.IGNORECASE)
+
+
+def menu_words(label: str) -> str:
+    """'&Find...\tCtrl+F' → 'find': Windows menu labels carry a mnemonic, an ellipsis and
+    the shortcut after a tab — none of that is the control's name."""
+    return label.split("\t")[0].replace("&", "").strip().rstrip(".…").strip().lower()
+
+
+def unquote(text: str) -> str:
+    """'«, eggs»' → ', eggs': the quotes around the owner's words are not the words."""
+    t = text.strip()
+    while len(t) >= 2 and t[0] in QUOTES and t[-1] in QUOTES:
+        t = t[1:-1]
+    return t if t.strip() else text
+
+
+def place_from_goal(goal: str) -> str | None:
+    """Where the owner asked the text to go, when the planner did not say (a language
+    rule, like the instruction words — not any app's): "new line" → new_line,
+    "end of line 2" / "প্রথম লাইনের শেষে" → line_end:N."""
+    if NEW_LINE_RX.search(goal):
+        return "new_line"
+    found = [(m, int(m.group(1))) for m in LINE_NUM_RX.finditer(goal)] or [
+        (m, ORDINALS[w]) for m in LINE_WORD_RX.finditer(goal)
+        if (w := m.group(1).lower()) in ORDINALS]
+    for m, n in found:
+        near = goal[max(0, m.start() - 15):m.end() + 15].lower()
+        start = "শুরু" in near or "start" in near or "beginning" in near
+        if n == -1:                                   # the last line
+            return None if start else "end"
+        return f"line_{'start' if start else 'end'}:{n}"
+    return None
+
+
 def secrets_in(goal: str) -> list[str]:
-    return [m.group(1) for m in SECRET_RX.finditer(goal) if len(m.group(1)) >= 3]
+    """Values the goal gives as a password/PIN: quoted, after "is / : / =", or shaped
+    like one (a digit or symbol) — "pin the tab" names no secret."""
+    return [m["value"] for m in SECRET_RX.finditer(goal) if len(m["value"]) >= 3
+            and (m["quote"] or m["sep"] or re.search(r"[\d\W_]", m["value"]))]
+
+
+CARD_RX = re.compile(r"(?<!\d)(?:\d[ -]?){13,19}(?!\d)")
+
+
+def _luhn(digits: str) -> bool:
+    total, odd = 0, False
+    for ch in reversed(digits):
+        n = int(ch) * (2 if odd else 1)
+        total += n - 9 if n > 9 else n
+        odd = not odd
+    return total % 10 == 0
+
+
+def sensitive(text: str, goal: str) -> bool:
+    """A password/PIN the owner gave, a known key/token shape, or a card number."""
+    from core.log.redaction import PATTERNS
+    if any(s in text for s in secrets_in(goal)) or any(rx.search(text) for rx in PATTERNS):
+        return True
+    return any(_luhn(re.sub(r"\D", "", m.group(0)))
+               for m in CARD_RX.finditer(text))
+
+
+def mask(text: str, goal: str) -> str:
+    """The same text with every secret replaced — for logs, history, events."""
+    from core.log.redaction import PATTERNS
+    for s in sorted(secrets_in(goal), key=len, reverse=True):
+        text = text.replace(s, "•••")
+    for rx in PATTERNS:
+        text = rx.sub("•••", text)
+    return CARD_RX.sub(lambda m: "•••" if _luhn(re.sub(r"\D", "", m.group(0)))
+                       else m.group(0), text)
 
 
 def _squash(text: str) -> str:
@@ -119,7 +195,10 @@ def judge_lines(obs: dict[str, Any], limit: int = MAX_LISTED) -> list[str]:
         state = ({True: " checked", False: " unchecked"}.get(e.get("checked"), "")
                  + (" selected" if e.get("selected") else ""))
         value = str(e.get("value") or "")
-        out.append(f"{e.get('type')} «{str(e.get('name') or '')[:400]}»"
+        name = str(e.get("name") or "")
+        if e.get("tail") and e.get("length", 0) > len(name):
+            name = name[:200] + " … " + str(e["tail"])       # its start and its end
+        out.append(f"{e.get('type')} «{name[:420]}»"
                    + (f" value «{value[:400]}»" if value else "") + state)
         if len(out) >= limit:
             break
@@ -137,12 +216,14 @@ Reply with exactly ONE JSON object, nothing else:
 - {{"action": "act", "element": n, "op": "<op>", "text": "<only for set_text / type>",
    "why": "<short>"}}  where op is one of: click, set_text, toggle, select, expand,
    collapse, focus, scroll_into_view, type (= keyboard typing into an editing area that
-   lists "type": it ADDS the text at the END; to insert somewhere else, first move the
-   cursor with keys and add "at": "cursor"; "\\n" in the text = a new line, so text
-   that must go on a NEW line starts with "\\n")
+   lists "type"; add "at" to say WHERE: "end" (default, right after the last character),
+   "new_line" (on a new line after the last line), "line_end:N" / "line_start:N" (end /
+   start of line N, counting from 1), "cursor"; Nova moves the cursor itself; "\\n" in
+   the text = a line break)
 - {{"action": "keys", "keys": "ctrl+s", "why": "<short>"}}
-- {{"action": "locate", "target": "<what it looks like>", "why": "<short>"}}  — only when the
-  thing to press is NOT in the list (a picture or a drawn button)
+- {{"action": "locate", "target": "<what it looks like>", "why": "<short>"}}  — only to
+  PRESS a thing that is NOT in the list (a picture or a drawn button); never to check or
+  find text — text on screen is already in the list
 - {{"action": "batch", "steps": [{{"element": n, "op": "set_text", "text": "..."}},
    {{"element": m, "op": "toggle"}}]}}  — up to 4 field edits at once (set_text, toggle,
    select, expand, collapse, focus); never a button press; stops at the first problem
@@ -218,6 +299,9 @@ def element_lines(obs: dict[str, Any], limit: int = MAX_LISTED) -> list[str]:
         extra = []
         if value and value != label:
             extra.append(f"value «{value[:60]}»")
+        if e.get("tail") and e.get("length", 0) > 60:
+            tail = " ".join(str(e["tail"]).split()) or "(line break)"
+            extra.append(f"ends with «…{tail[-60:]}»")
         if e.get("checked") is not None:
             extra.append("checked" if e["checked"] else "unchecked")
         if e.get("selected"):
@@ -249,7 +333,7 @@ def screen_key(obs: dict[str, Any]) -> str:
 def _texts(obs: dict[str, Any]) -> list[str]:
     out = [obs.get("window", {}).get("title", "")]
     for e in obs.get("elements") or []:
-        out += [e.get("name") or "", e.get("value") or ""]
+        out += [e.get("name") or "", e.get("value") or "", e.get("tail") or ""]
     return [t.lower() for t in out if t]
 
 
@@ -291,6 +375,75 @@ def label_of(decision: dict[str, Any], obs: dict[str, Any]) -> str:
                  if e.get("id") == n), "")
 
 
+def _norm(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n").lower()
+
+
+def typed_proofs(history: list[dict[str, Any]], obs: dict[str, Any],
+                 before: dict[str, Any] | None, goal: str) -> tuple[bool | None, list[str]]:
+    """Fixed proofs from what Nova typed itself (never from the planner's claims):
+    each text is on screen, not more often than the goal asks, and on its own line when
+    a new line was asked. False = a proof failed; None = nothing to prove (nothing typed,
+    or only into an editor that does not tell its text)."""
+    latest: dict[str, dict[str, Any]] = {}
+    typed: list[dict[str, Any]] = []
+    for h in history:
+        if not (h.get("ok") and h.get("typed")) or "•••" in str(h["typed"]):
+            continue
+        if str(h.get("did", "")).startswith("set_text"):
+            latest[str(h.get("label") or h.get("did"))] = h   # replaced: the last one counts
+        else:
+            typed.append(h)
+    typed += latest.values()
+    if not typed:
+        return None, []
+    now = [_norm(t) for t in _texts(obs)[1:]]
+    earlier = [_norm(t) for t in _texts(before)[1:]] if before is not None else []
+    # an editing surface that tells nobody its text: absence there proves nothing
+    unreadable = any(e.get("type") == "Pane" and not e.get("name")
+                     for e in obs.get("elements") or [])
+    proofs: list[str] = []
+    ok_all: bool | None = True
+    for text in dict.fromkeys(_norm(str(h["typed"])).strip() for h in typed):
+        if not text:
+            continue
+        count = max((t.count(text) for t in now), default=0)
+        had = max((t.count(text) for t in earlier), default=0)
+        asked = max(1, _norm(goal).count(text))
+        if count == 0 and unreadable:
+            ok_all = None if ok_all is not False else False
+            proofs.append(f"«{text[:40]}» — এই লেখার জায়গা নিজের লেখা জানায় না (যাচাই হয়নি)")
+        elif count == 0:
+            ok_all = False
+            proofs.append(f"«{text[:40]}» লেখা হয়নি / দেখা যাচ্ছে না ✗")
+        elif count - had > asked:
+            ok_all = False
+            proofs.append(f"«{text[:40]}» {count - had} বার বসেছে (চাওয়া {asked}) ✗")
+        else:
+            proofs.append(f"«{text[:40]}» বসেছে ✓")
+    for h in typed:
+        if h.get("at") == "new_line":
+            text = _norm(str(h["typed"])).strip()
+            if text and any(text in t for t in now) and not any(f"\n{text}" in t for t in now):
+                ok_all = False
+                proofs.append(f"«{text[:40]}» নতুন লাইনে শুরু হয়নি ✗")
+        m = re.match(r"line_(end|start):(\d+)$", str(h.get("at") or ""))
+        text = _norm(str(h["typed"])).strip()
+        if m and text and any(text in t for t in now):
+            # the named line itself must end / start with it (the judge misses this)
+            n, end = int(m.group(2)), m.group(1) == "end"
+            fits = any(len(lines := t.split("\n")) >= n and (
+                lines[n - 1].rstrip().endswith(text) if end
+                else lines[n - 1].lstrip().startswith(text)) for t in now)
+            if fits:
+                proofs.append(f"«{text[:40]}» {n} নম্বর লাইনের {'শেষে' if end else 'শুরুতে'} ✓")
+            else:
+                ok_all = False
+                proofs.append(f"«{text[:40]}» {n} নম্বর লাইনের {'শেষে' if end else 'শুরুতে'} "
+                              "নেই ✗")
+    return ok_all, proofs
+
+
 def check_expect(expect: Any, obs: dict[str, Any], before: dict[str, Any] | None = None
                  ) -> tuple[bool | None, list[str]]:
     """The goal's expected state against a fresh observation: True all hold, False one
@@ -306,7 +459,7 @@ def check_expect(expect: Any, obs: dict[str, Any], before: dict[str, Any] | None
         if not isinstance(item, dict):
             continue
         if "text" in item:
-            words = str(item["text"]).strip().lower()
+            words = unquote(str(item["text"])).strip().lower()
             if not words:
                 continue
             seen = any(words in t for t in texts)
@@ -351,9 +504,11 @@ def check_expect(expect: Any, obs: dict[str, Any], before: dict[str, Any] | None
 
 
 class ComputerUseAgent:
-    def __init__(self, skills: SkillRunner, providers: ProviderRouter) -> None:
+    def __init__(self, skills: SkillRunner, providers: ProviderRouter,
+                 grounder: Any = None) -> None:
         self.skills = skills
         self.providers = providers
+        self.grounder = grounder         # optional UI-TARS (models.yaml grounding.engine)
 
     # ------------------------------------------------------------- the window
 
@@ -403,7 +558,10 @@ class ComputerUseAgent:
         result = await self.providers.complete(ProviderRequest(
             task_id=ctx.task.id, task_type="vision" if images else "planning",
             user_request=body, system=system, json_output=True, images=images, think=think,
-            limits=Limits(timeout_seconds=120, max_output_tokens=600)))
+            privacy="local_only" if mask(system, system) != system else "any",
+            # qwen3-vl spends ~600 tokens even with thinking off (CU-8 measurement): with a
+            # screenshot the budget is the vision budget (providers.yaml), not 600
+            limits=Limits(timeout_seconds=120, max_output_tokens=2000 if images else 600)))
         if not result.ok:
             raise TaskBlocked(f"AI unavailable: {result.error}")
         return parse_decision(result.answer or "")
@@ -443,7 +601,9 @@ class ComputerUseAgent:
         label = (el.get("name") or "").strip()
         times = sum(1 for h in history if h.get("ok") and h.get("label") == label
                     and str(h.get("did", "")).startswith(("click", "select")))
-        named = goal.lower().count(label.lower()) if label else 0
+        words = menu_words(label)
+        named = len(re.findall(rf"(?<!\w){re.escape(words)}(?!\w)", goal.lower())) \
+            if words else 0
         if named:
             # the goal names this control: press it as often as it is named, no more
             return times < named
@@ -462,7 +622,6 @@ class ComputerUseAgent:
                     "the goal itself asks to save, upload, submit, send or confirm."),
             user_request=(f"Goal: {goal[:300]}\nAlready done: {done}\nControl: "
                           f"{el.get('type')} «{label or '(no label)'}»"),
-            think=False,                     # a yes/no: thinking only burns the budget
             limits=Limits(timeout_seconds=60, max_output_tokens=40)))
         if not r.ok:
             return True                      # cannot ask: the normal checks still apply
@@ -487,6 +646,15 @@ class ComputerUseAgent:
         if not path or not Path(str(path)).is_file():
             return None
         png = Path(str(path)).read_bytes()
+        ox, oy = obs.get("origin") or (obs["window"]["rect"][0], obs["window"]["rect"][1])
+        w, h = obs.get("size") or (obs["window"]["rect"][2] - obs["window"]["rect"][0],
+                                   obs["window"]["rect"][3] - obs["window"]["rect"][1])
+        if self.grounder is not None:
+            pt = await self.grounder.locate(png, (int(w), int(h)), target)
+            if pt is not None:
+                ctx.event("target_grounded", f"ui-tars: {target[:60]} at {pt}",
+                          engine="ui-tars")
+                return int(ox + pt[0]), int(oy + pt[1])
         result = await self.providers.complete(ProviderRequest(
             task_id=ctx.task.id, task_type="vision", images=(png,), json_output=True,
             user_request=(f'The owner wants: "{goal[:200]}". Locate {target} in the image. '
@@ -497,9 +665,6 @@ class ComputerUseAgent:
         box = parse_box(result.answer or "") if result.ok else None
         if box is None:
             return None
-        ox, oy = obs.get("origin") or (obs["window"]["rect"][0], obs["window"]["rect"][1])
-        w, h = obs.get("size") or (obs["window"]["rect"][2] - obs["window"]["rect"][0],
-                                   obs["window"]["rect"][3] - obs["window"]["rect"][1])
         cx, cy = (box[0] + box[2]) / 2 / 1000, (box[1] + box[3]) / 2 / 1000
         return int(ox + cx * w), int(oy + cy * h)
 
@@ -562,7 +727,8 @@ class ComputerUseAgent:
             action = str(decision.get("action", ""))
             key = f"{screen_key(obs)}|{json.dumps(decision, sort_keys=True)}"
             seen[key] = seen.get(key, 0) + 1
-            _log.info(f"computer-use step {n}: {json.dumps(decision, ensure_ascii=False)[:300]}",
+            _log.info(f"computer-use step {n}: "
+                      f"{mask(json.dumps(decision, ensure_ascii=False), goal)[:300]}",
                       extra={"task_id": ctx.task.id, "action": "computer.step"})
             if seen[key] >= 3 and action != "done":
                 raise TaskBlocked("the same step on the same screen keeps repeating — stopped "
@@ -574,6 +740,12 @@ class ComputerUseAgent:
 
             if action == "done":
                 verified, proofs = check_expect(decision.get("expect"), obs, first)
+                fixed, more = typed_proofs(history, obs, first, goal)
+                proofs += more
+                if fixed is False:
+                    verified = False
+                elif fixed is True and verified is None:
+                    verified = True                   # what Nova typed is provably there
                 if verified is not False:
                     # the planner's own expectations can be wrong too (it typed the
                     # instruction words and then "expected" them): no PASS without the
@@ -609,21 +781,27 @@ class ComputerUseAgent:
                 await asyncio.sleep(secs)
                 history.append({"did": f"wait {secs:.0f}s", "result": "waited"})
                 continue
+            if decision.get("op") in ("set_text", "type") and decision.get("text"):
+                decision["text"] = unquote(str(decision["text"]))
+            if decision.get("op") == "type" and not decision.get("at"):
+                decision["at"] = place_from_goal(goal) or "end"
             text = str(decision.get("text") or "")
             if decision.get("op") == "type" and text.strip() and sum(
-                    1 for h in history if h.get("ok")
-                    and _squash(str(h.get("typed") or "")) == _squash(text)
+                    1 for h in history if h.get("ok") and str(h.get("did", "")).startswith("type")
+                    and _squash(str(h.get("typed") or "")) == _squash(mask(text, goal))
             ) >= max(1, _squash(goal).count(_squash(text))):
                 # typing adds text: the same words twice is a duplicate, not progress
-                history.append({"did": f"skip typing {text[:40]!r} again", "result": (
-                    "NOT typed — this exact text was already typed here. Look at the "
-                    "screen: if it is there, answer done")})
+                history.append({"did": f"skip typing {mask(text, goal)[:40]!r} again",
+                                "result": (
+                    "NOT typed — it is ALREADY typed (see the screen). Do not type it "
+                    "again: do the NEXT part of the goal (e.g. save) — or, if nothing is "
+                    "left, answer done")})
                 continue
             problem = (text_problem(goal, text)
                        if decision.get("op") in ("set_text", "type") else None)
             if problem:
-                history.append({"did": f"skip writing {text[:40]!r}", "result": "NOT typed — "
-                                + problem})
+                history.append({"did": f"skip writing {mask(text, goal)[:40]!r}",
+                                "result": "NOT typed — " + mask(problem, goal)})
                 continue
             if not await self._needed(ctx, decision, obs, goal, history):
                 history.append({"did": f"skip {label_of(decision, obs)!r}", "result": (
@@ -653,7 +831,8 @@ class ComputerUseAgent:
             stale = 0
             history.append({"did": did, "result": result[:300], "ok": ok,
                             "label": label_of(decision, obs),
-                            **({"typed": text} if decision.get("op") == "type" else {})})
+                            **({"typed": mask(text, goal), "at": decision.get("at")}
+                               if decision.get("op") in ("type", "set_text") else {})})
             ctx.event("action_delivered" if ok else "failed", f"{did} → {result[:200]}",
                       effect=(ev or {}).get("effect"))
             ctx.remember({"history": history[-30:]})
@@ -689,7 +868,7 @@ class ComputerUseAgent:
                                       "element": element, "op": op}
             if op == "set_text":
                 params["text"] = str(item.get("text") or "")
-                if any(s in params["text"] for s in secrets_in(goal)):
+                if sensitive(params["text"], goal):
                     params["secret"] = True
             ok, res, ev = await self._invoke(ctx, "desktop-ui", "act", params)
             if not ok:
@@ -713,14 +892,23 @@ class ComputerUseAgent:
             ids = {e["id"] for e in obs.get("elements") or []}
             if element not in ids:
                 return f"{op} [{element}]", False, "invalid: no such number in the list", {}
+            ops = next((e.get("ops") for e in obs.get("elements") or []
+                        if e["id"] == element), None)
+            clickish = {"click", "toggle", "select", "expand"}   # the worker's click ladder
+            if ops and op not in ops and op != "focus" and not (
+                    op == "click" and clickish & set(ops)):
+                # e.g. a drawing surface clicked as if it were a button (real canvas run)
+                return (f"{op} [{element}]", False,
+                        f"[{element}] does not take {op!r} (it takes: {'/'.join(ops)}). To "
+                        "press something DRAWN inside it, use locate", {})
             params: dict[str, Any] = {"observation_id": obs["observation_id"],
                                       "element": element, "op": op}
             if op in ("set_text", "type"):
                 params["text"] = str(d.get("text") or "")
-                if any(s in params["text"] for s in secrets_in(goal)):
-                    params["secret"] = True         # the owner's password: RED anywhere
-            if op == "type" and str(d.get("at") or "") == "cursor":
-                params["at"] = "cursor"
+                if sensitive(params["text"], goal):
+                    params["secret"] = True         # a password / key / card: RED anywhere
+            if op == "type" and d.get("at"):
+                params["at"] = str(d.get("at")).strip().lower().replace(" ", "")
             ok, res, ev = await self._invoke(ctx, "desktop-ui", "act", params)
             return f"{op} [{element}]", ok, res, ev
         if action == "batch":
@@ -732,6 +920,10 @@ class ComputerUseAgent:
             return f"keys {keys}", ok, res, ev
         if action == "locate":
             target = str(d.get("target") or "").strip()
+            if target and any(unquote(target).lower() in t for t in _texts(obs)[1:]):
+                return (f"locate {target[:40]}", True, "it is already readable in the list "
+                        "above — nothing pressed (locate is only for pressing a thing that "
+                        "is not in the list)", {})
             point = await self._locate(ctx, obs, target, goal)
             if point is None:
                 return f"locate {target[:40]}", False, "not found on screen — do not guess", {}

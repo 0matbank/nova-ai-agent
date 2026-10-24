@@ -15,6 +15,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Literal
 
+from pydantic import Field
+
 from core.skills.api import Params, Tool, ToolEnv, ToolResult
 from core.skills.desktop import desktop_call
 from core.skills.registry import SkillError
@@ -30,7 +32,9 @@ class P(Params):
     element: int
     op: Op = "click"
     text: str | None = None
-    at: Literal["end", "cursor"] = "end"         # "type" only: append, or at the cursor
+    # "type" only: where — end, new_line (after the last line), line_end:N, line_start:N,
+    # cursor
+    at: str = Field(default="end", pattern=r"^(end|new_line|cursor|line_(end|start):\d{1,6})$")
     # the caller knows this text is the owner's password/PIN: RED in any field
     secret: bool = False
 

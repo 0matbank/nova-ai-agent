@@ -25,6 +25,13 @@ ollama_policy:
                      coding, review, summarization]
   num_ctx: 16384        # Ollama defaults to 4096 and silently truncates longer prompts
 
+# Visual grounding for computer use (plan §72 CU-8): "vision" = qwen3-vl through the
+# providers (default, unchanged); "ui-tars" = UI-TARS-1.5-7B via llama.cpp first, the
+# vision path as fallback. Owner 2026-10-24: optional, default only changes after a
+# real benchmark.
+grounding:
+  engine: vision
+
 # Speech-to-text (plan §7). Loaded on demand, unloaded when idle (resources.yaml).
 whisper:
   model: large-v3

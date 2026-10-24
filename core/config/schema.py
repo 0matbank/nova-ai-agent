@@ -272,10 +272,25 @@ class WhisperConfig(Strict):
     compute_type: Literal["float16", "int8_float16", "int8", "float32"]
 
 
+class UiTarsConfig(Strict):
+    server: Path = Path("models/llama.cpp/llama-server.exe")      # relative to the root
+    model: Path = Path("models/ui-tars/UI-TARS-1.5-7B.Q4_K_M.gguf")
+    mmproj: Path = Path("models/ui-tars/UI-TARS-1.5-7B.mmproj-f16.gguf")
+    port: Annotated[int, Field(ge=1024, le=65535)] = 8091
+    idle_unload_seconds: Annotated[int, Field(ge=10)] = 120
+
+
+class GroundingConfig(Strict):
+    # "vision" = the existing qwen3-vl path (default); "ui-tars" = UI-TARS first, then it
+    engine: Literal["vision", "ui-tars"] = "vision"
+    ui_tars: UiTarsConfig = Field(default_factory=UiTarsConfig)
+
+
 class ModelsConfig(Strict):
     alias_sets: dict[str, dict[str, str | None]]
     ollama_policy: OllamaPolicy
     whisper: WhisperConfig
+    grounding: GroundingConfig = Field(default_factory=GroundingConfig)
 
     @model_validator(mode="before")
     @classmethod
@@ -285,7 +300,9 @@ class ModelsConfig(Strict):
             data = dict(data)
             policy = data.pop("ollama_policy", None)
             whisper = data.pop("whisper", None)
-            return {"alias_sets": data, "ollama_policy": policy, "whisper": whisper}
+            grounding = data.pop("grounding", None) or {}
+            return {"alias_sets": data, "ollama_policy": policy, "whisper": whisper,
+                    "grounding": grounding}
         return data
 
     @model_validator(mode="after")

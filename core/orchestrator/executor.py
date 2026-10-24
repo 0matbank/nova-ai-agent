@@ -237,7 +237,9 @@ class UserRequestExecutor:
         remembered, decisions = project_agent.memory_context(self.memory, a)
         if a.route == "operator" and intent.meta.get("inside_app"):
             # plan §72 CU-4: work inside an open app → the general computer-use loop
-            return await ComputerUseAgent(self.skills, self.providers).run(
+            from core.orchestrator.grounders import grounder_for
+            grounder = grounder_for(self.skills.env.config)
+            return await ComputerUseAgent(self.skills, self.providers, grounder).run(
                 ctx, ctx.task.request_text, str(intent.meta["inside_app"]), lang)
         if a.route == "operator":
             memo = "\n\n".join(x for x in (

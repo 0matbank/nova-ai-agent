@@ -12,6 +12,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from core.log import get_logger, redact
+from core.permissions.approvals import SECRET_ACTIONS, SECRET_KEYS
 from core.permissions.audit import AuditTrail
 from core.queue.engine import TaskBlocked, TaskContext
 from core.skills.api import PolicyDenied, ToolEnv, ToolResult
@@ -82,7 +83,13 @@ class SkillRunner:
             async def check() -> tuple[bool, str]:
                 assert t.safety_check is not None
                 return await t.safety_check(p, env)
-        await ctx.require(action, target=t.target(p), summary=t.summary(p),
+        summary = t.summary(p)
+        if action in SECRET_ACTIONS:
+            # the approval message names the step, never the secret itself
+            for k, v in p.model_dump(mode="json").items():
+                if k.lower() in SECRET_KEYS and isinstance(v, str) and v:
+                    summary = summary.replace(v, "•••")
+        await ctx.require(action, target=t.target(p), summary=summary,
                           details=p.model_dump(mode="json"), safety_check=check)
         if key and self.ledger is not None:
             entry_id = self.ledger.begin(ctx.task.id, key, action, t.target(p))
