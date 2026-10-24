@@ -231,3 +231,57 @@ def test_presses_only_what_the_goal_asks(tmp_path: Path) -> None:
     assert needed(6, "press Save, then Save again", pressed)   # named twice: yes
     assert not needed(7, "turn on backup", [])              # unnamed confirm: never
     assert not needed(6, "turn on backup", [])
+
+
+# ------------------------------------------------------------ CU-6
+
+def test_safe_batch_does_several_field_edits_in_one_step(tmp_path: Path) -> None:
+    from tests.mocks.cu_lab import lab_app
+    s, agent, ad = setup(tmp_path, [
+        lambda r: json.dumps({"action": "batch", "steps": [
+            {"element": number_of(r, "Notes"), "op": "set_text", "text": "batch ok"},
+            {"element": number_of(r, "Save"), "op": "click"}]}),   # a press: refused
+        lambda r: json.dumps({"action": "batch", "steps": [
+            {"element": number_of(r, "Notes"), "op": "set_text", "text": "batch ok"}]}),
+        json.dumps({"action": "done", "summary": "typed",
+                    "expect": [{"label": "Notes", "value": "batch ok"}]}),
+    ])
+    with lab_app("dup") as title:
+        out = asyncio.run(agent.run(ctx_of(s, "write batch ok in Notes"),
+                                    "write batch ok in Notes", None, "en", window=title))
+        import desktop_observe as ob
+        status = next(e["name"] for e in ob.observe(tmp_path, window=title, image=False)[
+            "elements"] if e["automation_id"] == "Status")
+    assert out["evidence"]["verified"] is True
+    assert status == "idle"                         # the Save in the batch never ran
+
+
+def test_after_a_restart_a_done_press_is_not_repeated(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.mocks.cu_lab import lab_app
+    s, agent, _ = setup(tmp_path, [
+        lambda r: act(number_of(r, "Save")),          # the model wants to press it again
+        json.dumps({"action": "done", "summary": "saved",
+                    "expect": [{"text": "idle", "present": True}]}),
+    ])
+    before = [{"did": "click [6]", "result": "ok", "ok": True, "label": "Save"}]
+    monkeypatch.setattr(TaskContext, "recalled", lambda self: {"history": before})
+    with lab_app("dup") as title:
+        out = asyncio.run(agent.run(ctx_of(s, "press Save"), "press Save", None, "en",
+                                    window=title))
+    assert out["evidence"]["verified"] is True        # status still "idle": no 2nd press
+
+
+def test_text_that_was_already_there_proves_nothing() -> None:
+    from core.orchestrator.computer import check_expect
+    before = {"window": {"title": "w"}, "elements": [
+        {"type": "CheckBox", "name": "Keep a backup", "checked": False}]}
+    after = {"window": {"title": "w"}, "elements": [
+        {"type": "CheckBox", "name": "Keep a backup", "checked": False}]}
+    ok, _ = check_expect([{"text": "Keep a backup", "present": True}], after, before)
+    assert ok is None                                   # always visible: not a proof
+    ok, _ = check_expect([{"label": "Keep a backup", "checked": True}], after, before)
+    assert ok is False                                  # the real state: not ticked
+    ok, _ = check_expect([{"text": "saved", "present": True}],
+                         {"window": {"title": "w"}, "elements": [{"name": "saved"}]}, before)
+    assert ok is True                                   # new on screen: a proof

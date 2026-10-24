@@ -38,6 +38,9 @@ from providers.provider_base import Limits, ProviderRequest
 _log = get_logger("core")
 
 MAX_STEPS = 15
+BATCH_OPS = ("set_text", "toggle", "select", "expand", "collapse", "focus", "scroll_into_view")
+MAX_BATCH = 4
+BUSY_WAIT_SECONDS = 1.0
 MAX_LISTED = 80
 OWNER_WAITS = 5                 # times to wait for the owner to stop typing/moving
 OWNER_WAIT_SECONDS = 2.0
@@ -68,6 +71,9 @@ Reply with exactly ONE JSON object, nothing else:
 - {{"action": "keys", "keys": "ctrl+s", "why": "<short>"}}
 - {{"action": "locate", "target": "<what it looks like>", "why": "<short>"}}  — only when the
   thing to press is NOT in the list (a picture or a drawn button)
+- {{"action": "batch", "steps": [{{"element": n, "op": "set_text", "text": "..."}},
+   {{"element": m, "op": "toggle"}}]}}  — up to 4 field edits at once (set_text, toggle,
+   select, expand, collapse, focus); never a button press; stops at the first problem
 - {{"action": "wait", "seconds": 2}}
 - {{"action": "done", "summary": "<what was done>", "expect": [ ... ]}}  — expect = what must
   be true on screen now, each one of:
@@ -197,12 +203,16 @@ def label_of(decision: dict[str, Any], obs: dict[str, Any]) -> str:
                  if e.get("id") == n), "")
 
 
-def check_expect(expect: Any, obs: dict[str, Any]) -> tuple[bool | None, list[str]]:
+def check_expect(expect: Any, obs: dict[str, Any], before: dict[str, Any] | None = None
+                 ) -> tuple[bool | None, list[str]]:
     """The goal's expected state against a fresh observation: True all hold, False one
-    fails, None nothing checkable was given."""
+    fails, None nothing checkable was given. `before` = the screen before Nova acted: a
+    text that was already (in)visible then proves nothing about what Nova did (a check
+    box's label is always visible, ticked or not — found in a real run 2026-10-24)."""
     if not isinstance(expect, list) or not expect:
         return None, ["no checkable result was named"]
     texts = _texts(obs)
+    earlier = _texts(before) if before is not None else None
     proofs, ok_all, checked = [], True, 0
     for item in expect[:8]:
         if not isinstance(item, dict):
@@ -213,6 +223,8 @@ def check_expect(expect: Any, obs: dict[str, Any]) -> tuple[bool | None, list[st
                 continue
             seen = any(words in t for t in texts)
             want = bool(item.get("present", True))
+            if earlier is not None and any(words in t for t in earlier) == want:
+                continue                      # already so before Nova acted: no proof
             ok = seen == want
             proofs.append(f"«{item['text']}» {'দেখা যাচ্ছে' if seen else 'দেখা যাচ্ছে না'}"
                           f" {'✓' if ok else '✗'}")
@@ -394,11 +406,19 @@ class ComputerUseAgent:
         # a true acknowledgement: the work has really started, in this window
         await ctx.progress(f"🖱️ শুরু করছি — «{(window or 'সামনের জানালা')[:50]}»" if lang == "bn"
                            else f"🖱️ starting — «{(window or 'the front window')[:50]}»")
-        history: list[dict[str, Any]] = []
+        # after a restart / retry the loop continues from what was already done — the
+        # press-count rules then still stop a second press (Report F phase 5)
+        saved = ctx.recalled() or {}
+        history: list[dict[str, Any]] = [dict(h) for h in saved.get("history") or []]
+        if history:
+            history.append({"did": "(Nova restarted here)", "result": (
+                "the steps above were ALREADY done before a restart — do not repeat them; "
+                "look at the screen and continue"), "noted": True})
         effects: list[dict[str, Any]] = []
         seen: dict[str, int] = {}
         bad_done = 0
         stale = 0
+        first: dict[str, Any] | None = None
         for n in range(1, MAX_STEPS + 1):
             await ctx.checkpoint()                 # /cancel and /pause between steps
             try:
@@ -409,6 +429,8 @@ class ComputerUseAgent:
                     raise
                 return closed
             window = window or obs["window"]["title"]
+            if first is None and not history:
+                first = obs                    # the screen before Nova did anything
             note_state(history, obs)
             vision = bool(obs.get("sparse"))
             decision = normalize(await self._plan(ctx, system, obs, history, vision))
@@ -435,7 +457,7 @@ class ComputerUseAgent:
                 await ctx.progress(f"🖱️ {n} ধাপ — {obs['window']['title'][:40]}" if lang == "bn"
                                    else f"🖱️ step {n} — {obs['window']['title'][:40]}")
             if action == "done":
-                verified, proofs = check_expect(decision.get("expect"), obs)
+                verified, proofs = check_expect(decision.get("expect"), obs, first)
                 if verified is False:
                     bad_done += 1
                     history.append({"did": "done", "result": "NOT done — the screen shows: "
@@ -466,6 +488,9 @@ class ComputerUseAgent:
                     "reached, answer done; if it really needs this, ask the owner")})
                 continue
             did, ok, result, ev = await self._do(ctx, decision, obs, goal, window)
+            if "desktop_busy" in result:
+                await asyncio.sleep(BUSY_WAIT_SECONDS)
+                did, ok, result, ev = await self._do(ctx, decision, obs, goal, window)
             if result.startswith("error: user_cancelled") or "user_cancelled" in result:
                 raise TaskBlocked("the owner pressed Escape — Nova stopped")
             if "user_active" in result:
@@ -484,10 +509,46 @@ class ComputerUseAgent:
             stale = 0
             history.append({"did": did, "result": result[:300], "ok": ok,
                             "label": label_of(decision, obs)})
+            ctx.remember({"history": history[-30:]})
             if ok and ev:
                 effects.append({"did": did, "evidence": ev})
         raise TaskBlocked(f"not finished after {MAX_STEPS} steps; last: "
                           + "; ".join(f"{h['did']} → {h['result'][:80]}" for h in history[-3:]))
+
+    async def _batch(self, ctx: TaskContext, d: dict[str, Any], obs: dict[str, Any]
+                     ) -> tuple[str, bool, str, dict[str, Any]]:
+        """Several field edits on one observation, in order. Each is still re-checked by
+        the worker before its input; the batch stops at the first problem (a changed
+        screen, a refusal) so nothing runs on stale information."""
+        raw = d.get("steps")
+        steps: list[Any] = raw if isinstance(raw, list) else []
+        ids = {e["id"] for e in obs.get("elements") or []}
+        done: list[str] = []
+        evidence: dict[str, Any] = {}
+        for item in steps[:MAX_BATCH]:
+            if not isinstance(item, dict):
+                return "batch", False, "invalid batch step", evidence
+            op = str(item.get("op") or "")
+            try:
+                element = int(item.get("element"))          # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return f"batch {done}", False, "invalid: element must be a number", evidence
+            if op not in BATCH_OPS:
+                return (f"batch {done}", False, f"{op!r} is not allowed in a batch — do it "
+                        "as its own step", evidence)
+            if element not in ids:
+                return f"batch {done}", False, f"invalid: no number {element}", evidence
+            params: dict[str, Any] = {"observation_id": obs["observation_id"],
+                                      "element": element, "op": op}
+            if op == "set_text":
+                params["text"] = str(item.get("text") or "")
+            ok, res, ev = await self._invoke(ctx, "desktop-ui", "act", params)
+            if not ok:
+                return (f"batch {done} then {op} [{element}]", bool(done),
+                        f"stopped: {res}", evidence)
+            done.append(f"{op} [{element}]")
+            evidence[f"{op} [{element}]"] = ev
+        return f"batch {', '.join(done)}", bool(done), f"{len(done)} edit(s) done", evidence
 
     async def _do(self, ctx: TaskContext, d: dict[str, Any], obs: dict[str, Any], goal: str,
                   window: str | None) -> tuple[str, bool, str, dict[str, Any]]:
@@ -509,6 +570,8 @@ class ComputerUseAgent:
                 params["text"] = str(d.get("text") or "")
             ok, res, ev = await self._invoke(ctx, "desktop-ui", "act", params)
             return f"{op} [{element}]", ok, res, ev
+        if action == "batch":
+            return await self._batch(ctx, d, obs)
         if action == "keys":
             keys = str(d.get("keys") or "").strip()
             ok, res, ev = await self._invoke(ctx, "desktop-ui", "keys",
