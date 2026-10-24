@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import desktop_act  # noqa: E402
 import desktop_apps  # noqa: E402
 import desktop_clipboard  # noqa: E402
+import desktop_guard  # noqa: E402
 import desktop_inside  # noqa: E402
 import desktop_lock  # noqa: E402
 import desktop_observe  # noqa: E402
@@ -174,6 +175,18 @@ def register(app: FastAPI, ctx: AppContext | None = None) -> None:
         # plan §71 CU-1: one window's controls + screenshot + numbered marks, any app
         return await _call(desktop_observe.observe, shots_dir.parent / "observe", r.window,
                            r.hwnd, r.image, r.focus)
+
+    @app.get("/v1/ui/halt")
+    async def halt_state() -> Any:
+        # CU-3b: has the owner pressed Escape (Nova stopped)? is Escape watched?
+        return {"ok": True, "halted": desktop_guard.halted(),
+                "armed": desktop_guard.ESCAPE.armed(),
+                "owner_active": desktop_guard.owner_active()}
+
+    @app.post("/v1/ui/halt/clear")
+    async def halt_clear() -> Any:
+        desktop_guard.clear_halt()
+        return {"ok": True, "halted": False}
 
     @app.post("/v1/ui/target")
     async def act_target(r: ElementRef) -> Any:

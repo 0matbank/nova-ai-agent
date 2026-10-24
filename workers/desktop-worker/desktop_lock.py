@@ -16,6 +16,8 @@ WAIT_SECONDS = 5.0
 
 @contextmanager
 def input_lease(wait: float = WAIT_SECONDS) -> Iterator[None]:
+    import desktop_guard
+    desktop_guard.acting()       # a real Escape / the owner's own input stops Nova
     if not _INPUT.acquire(timeout=wait):
         raise UIError("desktop_busy: another action is using the keyboard/mouse")
     try:

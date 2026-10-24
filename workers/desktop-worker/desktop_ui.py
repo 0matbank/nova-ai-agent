@@ -242,9 +242,20 @@ def _force_foreground(hwnd: int) -> None:
         if attached:
             with contextlib.suppress(Exception):
                 win32process.AttachThreadInput(me, fg_thread, False)
+    if win32gui.GetForegroundWindow() != hwnd:
+        # CU-3b: a background worker may set the foreground only if it sent the last
+        # input. A zero-distance mouse move (nothing moves, nothing is clicked) does
+        # that — never while the owner is using the PC.
+        import desktop_guard
+        if not desktop_guard.owner_active():
+            desktop_guard.nudge_input()
+            with contextlib.suppress(Exception):
+                win32gui.SetForegroundWindow(hwnd)
 
 
 def _activate(w: Any) -> None:
+    import desktop_guard
+    desktop_guard.require_owner_idle()       # never take the front while the owner works
     try:
         w.SetActive()
     except Exception:
@@ -346,6 +357,8 @@ def type_text(window: str, text: str, name: str | None, automation_id: str | Non
                               "refusing to type")
             keys = ("{Ctrl}a" if replace else "{Ctrl}{End}") + _escape_sendkeys(text)
             auto.SendKeys(keys, interval=0.005, waitTime=0.1)
+            import desktop_guard
+            desktop_guard.note_injected()
             method = "SendKeys(replace)" if replace else "SendKeys(append)"
         time.sleep(0.2)
         after = _text_of(c)
@@ -396,6 +409,8 @@ def send_keys(window: str, combo: str) -> dict[str, Any]:
             raise UIError("could not bring the target window to the front — refusing to "
                           "send keys")
         auto.SendKeys(keys, waitTime=0.2)
+        import desktop_guard
+        desktop_guard.note_injected()
         fg = auto.GetForegroundControl()
         return {"keys": combo, "window_still_open": w.Exists(0, 0),
                 "foreground_title": fg.GetTopLevelControl().Name if fg else None}
@@ -415,5 +430,7 @@ def click_xy(x: int, y: int) -> dict[str, Any]:
     require_unlocked()
     with _uia() as auto:
         auto.Click(x, y, waitTime=0.3)
+        import desktop_guard
+        desktop_guard.note_injected()
         under = auto.ControlFromPoint(x, y)
         return {"x": x, "y": y, "under_cursor": _describe_control(under) if under else None}
