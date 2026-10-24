@@ -209,7 +209,7 @@ def close_app(name: str, wait_seconds: float = 8.0) -> dict[str, Any]:
     procs = running(app["process"])
     if not procs:
         return {"app": key, "was_running": False, "windows_signalled": 0,
-                "still_running": [], "verified": True}
+                "still_running": [], "verified": True, "process": list(app["process"])}
     deadline = time.monotonic() + wait_seconds
     sent = 0
     left = procs
@@ -226,7 +226,8 @@ def close_app(name: str, wait_seconds: float = 8.0) -> dict[str, Any]:
                 sent += 1
         time.sleep(0.25)
     return {"app": key, "was_running": True, "windows_signalled": sent,
-            "still_running": [p.pid for p in left], "verified": not left}
+            "still_running": [p.pid for p in left], "verified": not left,
+            "process": list(app["process"])}
 
 
 def kill_app(name: str) -> dict[str, Any]:

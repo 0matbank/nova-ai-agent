@@ -125,8 +125,15 @@ class ProviderRouter:
                 max_output_tokens=budget.max_output_tokens))
         tried: list[str] = []
         noteworthy = False          # a provider that should have served failed / is limited
+        local_only = request.privacy == "local_only" or (
+            bool(request.images) and self.config.screenshot_privacy == "local_only")
         for cand in self.ranked(request.task_type):
             if cand.provider in exclude:
+                continue
+            entry = self.config.providers.get(cand.provider)
+            if local_only and (entry is None or entry.mode != "local"):
+                # enforced, not a preference: this request never leaves the PC
+                tried.append(f"{cand.provider}=LOCAL_ONLY")
                 continue
             adapter = self.adapters[cand.provider]
             left = self.breaker.open_for(cand.provider)

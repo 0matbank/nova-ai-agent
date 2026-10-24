@@ -231,6 +231,10 @@ class ProvidersConfig(Strict):
     budget_guard: BudgetGuard
     # task type → budget; when set it replaces the call site's own limits
     task_budgets: dict[str, TaskBudget] = {}
+    # CU-2 (plan §72): where a request carrying screenshots/images may go.
+    # local_first = this PC's model first, cloud only as fallback (owner 2026-09-25);
+    # local_only = never leaves this PC, enforced by the router (not just ranking).
+    screenshot_privacy: Literal["local_first", "local_only"] = "local_first"
 
     @field_validator("providers")
     @classmethod

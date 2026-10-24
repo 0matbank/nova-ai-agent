@@ -67,6 +67,8 @@ class ProviderRequest:
     model_alias: str | None = None        # e.g. "intent_classification"
     # PNG/JPEG bytes for vision task types (screenshot understanding, plan §57).
     images: tuple[bytes, ...] = ()
+    # CU-2: "local_only" = only providers running on this PC may see this request
+    privacy: str = "any"
 
 
 @dataclass(frozen=True)

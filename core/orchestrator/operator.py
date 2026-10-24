@@ -41,6 +41,8 @@ MAX_STEPS = 8
 # calls that change something — the verifier re-checks each one itself (plan §54)
 EFFECT_TOOLS = ("files.write", "files.mkdir", "files.copy", "files.move", "files.delete",
                 "app-control.open", "app-control.close",
+                # CU-2: UI input changes things too — re-checked, or reported unverified
+                "desktop-ui.click", "desktop-ui.click_xy", "desktop-ui.type", "desktop-ui.keys",
                 # Phase 22: admin work through the broker (its read-only ops are skipped)
                 "admin.service", "admin.firewall", "admin.package", "admin.power", "admin.task")
 READ_ONLY_OPS = ("query", "list", "cancel")

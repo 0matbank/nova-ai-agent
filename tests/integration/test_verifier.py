@@ -104,7 +104,9 @@ def test_a_claimed_file_that_is_not_there_is_redone_and_recovers(tmp_path: Path)
     msgs = [m for _, m in s.tasks.sent]
     assert any("যাচাইয়ে ঘাটতি" in m and "notes.txt নেই ✗" in m for m in msgs)
     done = next(m for m in msgs if "COMPLETE" in m)
-    assert "✅ PASS" in done and "notes.txt আছে ✓" in done and "AUTO_RECOVERED" in done
+    # CU-2: the proof is the content, not only that the file exists
+    assert "✅ PASS" in done and "notes.txt-এ চাওয়া লেখাই আছে ✓" in done
+    assert "AUTO_RECOVERED" in done
 
 
 def test_retries_exhausted_end_with_a_blocker_report(tmp_path: Path) -> None:

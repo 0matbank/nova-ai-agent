@@ -71,10 +71,14 @@ class VerdictStatus(StrEnum):
     LIMITED = "PASS WITH KNOWN LIMITATIONS"
     NEEDS_WORK = "NEEDS WORK"
     BLOCKED = "BLOCKED BY USER/AUTH/EXTERNAL SERVICE"
+    # CU-2 (plan §72): the work ran but its result could not be checked — never shown
+    # as a PASS, never retried (repeating an unverifiable action may duplicate it)
+    INCONCLUSIVE = "UNVERIFIED — RESULT NOT CONFIRMED"
 
 
 VERDICT_ICON = {VerdictStatus.PASS: "✅", VerdictStatus.LIMITED: "☑️",
-                VerdictStatus.NEEDS_WORK: "🔧", VerdictStatus.BLOCKED: "🧩"}
+                VerdictStatus.NEEDS_WORK: "🔧", VerdictStatus.BLOCKED: "🧩",
+                VerdictStatus.INCONCLUSIVE: "❔"}
 
 
 @dataclass(frozen=True)
@@ -422,6 +426,12 @@ class TaskEngine:
             await self._tell(task, MessageType.TASK_COMPLETED,
                              f"✅ TASK #{task.id} COMPLETE\n{result}\n"
                              f"Verifier: {verdict.text()}{recovered}")
+        elif final is VerdictStatus.INCONCLUSIVE:
+            store.transition(task.id, TaskState.COMPLETED, result_summary=result,
+                             error_code=None, error_message=None)
+            await self._tell(task, MessageType.TASK_COMPLETED,
+                             f"❔ TASK #{task.id} শেষ — কিন্তু ফল যাচাই করা যায়নি\n{result}\n"
+                             f"Verifier: {verdict.text()}")
         elif final is VerdictStatus.BLOCKED:
             # plan §53 WAITING_USER: retrying cannot fix what needs the owner / a sign-in
             store.transition(task.id, TaskState.FAILED, error_code="BLOCKED_NEEDS_USER",

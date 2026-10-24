@@ -16,11 +16,14 @@ async def run(p: P, env: ToolEnv) -> ToolResult:
     if isinstance(r, ToolResult):
         return r
     if not r.get("was_running"):
-        return ToolResult(True, f"{r['app']} was not running", r, {"still_running": []})
+        return ToolResult(True, f"{r['app']} was not running", r,
+                          {"still_running": [], "was_running": False,
+                           "process": r.get("process") or []})
     ok = bool(r.get("verified"))
     msg = (f"{r['app']} closed" if ok else
            f"{r['app']} still running {r.get('still_running')} — it may be asking to save")
-    return ToolResult(ok, msg, r, {"still_running": r.get("still_running")})
+    return ToolResult(ok, msg, r, {"still_running": r.get("still_running"),
+                                   "was_running": True, "process": r.get("process") or []})
 
 
 TOOL = Tool(name="close", params=P, run=run, action="app.close", target=lambda p: p.app)

@@ -5,6 +5,10 @@
 # enabled: true | false | optional   (optional = adapter available, off until configured)
 # mode:    subscription | api | subscription_or_api | local
 
+# CU-2: requests with screenshots — local_first (this PC first, cloud fallback; owner
+# 2026-09-25) or local_only (never leaves this PC, enforced by the router)
+screenshot_privacy: local_first
+
 providers:
   openai_codex:
     enabled: true
