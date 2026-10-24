@@ -3260,3 +3260,25 @@ Telegram voice-এর দেরি মাপা ও কমানো, installed a
 - ছবি-সহ পরিকল্পনার token-সীমা ৬০০ থেকে ২০০০ (qwen3-vl চিন্তা বন্ধ থাকলেও ~৬০০ token খরচ করে)।
 
 সব আসল চালানোয়: **০টা ভুল PASS, ০টা ভুল জায়গায় গোপন তথ্য।**
+
+**UI-TARS সিদ্ধান্ত (2026-10-25, আসল পুরো-কাজের মাপ, মোট ১০ বার করে):** vision ৬/১০, UI-TARS ৭/১০; কোনোটাই কখনো ভুল বোতামে ক্লিক করেনি; সব ব্যর্থতা planner-এর পুনরাবৃত্তি থেকে, খোঁজার ভুল নয়। পার্থক্য স্পষ্ট নয় → **default `vision` থাকছে**, UI-TARS ঐচ্ছিক flag।
+
+**V1.2 অগ্রগতি (2026-10-25):**
+- ✓ **Volume / mute / media / brightness, AI ছাড়া** (`device` skill, commit 258a5ba)।
+  - বাংলা, বাংলিশ আর ইংরেজি নির্দিষ্ট নিয়ম → fast lane।
+  - Volume: Windows Core Audio, কোনো নতুন library নয়। Media: স্বাভাবিক media key।
+  - Brightness: DDC/CI বা WMI; সম্ভব না হলে সৎভাবে জানায়।
+  - আসল পরীক্ষা: volume পড়া ০.৬ সেকেন্ডে; ৭৪→৭০→৭৪%, আলাদাভাবে মিলিয়ে দেখা।
+  - media key আর brightness বদলানো owner-এর PC-তে চালানো হয়নি — player থেমে যেত; monitor brightness «০» জানায়, তাই নির্ভরযোগ্য নয়। এগুলো শুধু নকল worker দিয়ে পরীক্ষিত।
+- ✓ **«শুনেছি — এখন X করছি» তাৎক্ষণিক সাড়া** (commit adc6aac)।
+  - router-এর একই নির্দিষ্ট নিয়ম থেকে, কোনো AI নয়; অস্পষ্ট হলে কোনো দাবি করে না।
+  - কণ্ঠ-বার্তার «🎙️ শুনলাম: «…»» আগে থেকেই ছিল।
+- বাকি:
+  - Speech Dictionary (owner-এর শব্দ, শেখা)
+  - push-to-talk
+  - streaming TTS-এর প্রথম বাক্য
+  - dictation mode
+  - wake phrase + টানা কথোপকথন + মাঝপথে থামানো (ঐচ্ছিক)
+  - ভাসমান orb
+  - PowerShell runner শক্ত করা
+  - sidecar
