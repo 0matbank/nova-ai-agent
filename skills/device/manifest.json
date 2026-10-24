@@ -1,0 +1,14 @@
+{
+  "name": "device",
+  "version": "1.0.0",
+  "description": "Speaker volume and mute, media play/pause/next/previous, and screen brightness — directly, without any AI (V1.2).",
+  "worker": "desktop",
+  "platforms": [
+    "win32"
+  ],
+  "tools": [
+    "volume",
+    "media",
+    "brightness"
+  ]
+}

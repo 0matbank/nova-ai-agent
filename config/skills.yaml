@@ -19,6 +19,7 @@ skills:
   download: { status: enabled }
   screenshot: { status: enabled }
   clipboard: { status: enabled }
+  device:         { status: enabled }     # V1.2: volume / mute / media keys / brightness
   # Phase 20 (plan §34, §37, §56): PDF + spreadsheet work lives in `documents`,
   # FFmpeg video + audio work in `media`
   documents:      { status: enabled }

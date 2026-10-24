@@ -1,0 +1,5 @@
+{
+  "volume": ["device.read", "device.control"],
+  "media": ["device.control"],
+  "brightness": ["device.read", "device.control"]
+}

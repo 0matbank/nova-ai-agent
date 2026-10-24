@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.router.device import device_command
 from core.scheduler.parse import looks_scheduled
 from core.skills.urls import URL_RX
 from providers.provider_base import Limits, ProviderRequest
@@ -318,7 +319,8 @@ def app_intent(res: Any) -> Intent:
 QUICK_SKILLS = frozenset({("windows", "status"), ("windows", "processes"),
                           ("windows", "open_windows"), ("screenshot", "capture"),
                           ("app-control", "open"), ("app-control", "close"),
-                          ("app-control", "view")})
+                          ("app-control", "view"), ("device", "volume"),
+                          ("device", "media"), ("device", "brightness")})
 
 
 def is_quick_request(text: str, apps: Any | None = None) -> bool:
@@ -418,6 +420,10 @@ def classify_by_rules(text: str, apps: Any | None = None, chat_id: str = "") -> 
         app = app_command(text)
         if app is not None:
             return Intent("pc_control", 0.95, "rule", app, matched=app[2]["app"])
+        device = device_command(text)
+        if device is not None:
+            # V1.2: volume / mute / media / brightness — fixed rules, no AI
+            return Intent("pc_control", 0.95, "rule", device, matched=f"device.{device[1]}")
         admin = admin_command(text)
         if admin is not None:
             return Intent("pc_control", 0.95, "rule", admin, matched=f"admin.{admin[1]}")

@@ -223,3 +223,27 @@ def test_db_aliases_survive(tmp_path: Path) -> None:
     assert not store.learn("token sk-" + "x" * 32, "x", "owner")
     assert store.learn("প্রিমোর", "after-effects", "owner correction")   # latest wins
     assert DbAliases(s.tasks.store._sessions).all() == {"প্রিমোর": "after-effects"}
+
+
+@pytest.mark.parametrize(("text", "want"), [
+    ("volume 30 koro", ("device", "volume", {"level": 30})),
+    ("ভলিউম ৪০ করো", ("device", "volume", {"level": 40})),
+    ("আওয়াজ কমাও", ("device", "volume", {"change": -10})),
+    ("sound 20 kom koro", ("device", "volume", {"change": -20})),
+    ("mute koro", ("device", "volume", {"mute": True})),
+    ("সাউন্ড অফ করো", ("device", "volume", {"mute": True})),
+    ("আনমিউট করো", ("device", "volume", {"mute": False})),
+    ("volume koto?", ("device", "volume", {})),
+    ("পরের গান চালাও", ("device", "media", {"action": "next"})),
+    ("gaan thamao", ("device", "media", {"action": "play_pause"})),
+    ("brightness 50", ("device", "brightness", {"level": 50})),
+    ("video trim koro", None), ("pause koro", None), ("Premiere Pro খোলো", None),
+])
+def test_device_words_need_no_ai(text: str, want: object) -> None:
+    """V1.2: volume / media / brightness from fixed rules — and the fast lane."""
+    from core.router.device import device_command
+    from core.router.intent import QUICK_SKILLS, classify_by_rules
+    assert device_command(text) == want
+    if want is not None:
+        hit = classify_by_rules(text)
+        assert hit is not None and hit.skill == want and hit.skill[:2] in QUICK_SKILLS

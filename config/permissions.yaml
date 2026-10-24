@@ -21,6 +21,8 @@ actions:
   process.list: GREEN
   powershell.read: GREEN      # only parser-verified read-only commands (skills/powershell)
   terminal.read: GREEN        # only allowlisted read-only programs (skills/terminal)
+  device.read: GREEN          # V1.2: volume / brightness level
+  device.control: BLUE        # V1.2: volume, mute, media keys, brightness (reversible)
   ui.read: GREEN              # list windows, inspect controls, read a value
   browser.read: GREEN         # snapshot, find text, page screenshot — content is untrusted
   clipboard.read: GREEN       # content is untrusted + redacted

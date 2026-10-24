@@ -12,12 +12,13 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import desktop_act  # noqa: E402
 import desktop_apps  # noqa: E402
 import desktop_clipboard  # noqa: E402
+import desktop_device  # noqa: E402
 import desktop_guard  # noqa: E402
 import desktop_inside  # noqa: E402
 import desktop_lock  # noqa: E402
@@ -57,6 +58,21 @@ class Target(Strict):
     name: str | None = None
     automation_id: str | None = None
     control_type: str | None = None
+
+
+class VolumeRequest(Strict):
+    level: int | None = Field(default=None, ge=0, le=100)
+    change: int | None = Field(default=None, ge=-100, le=100)
+    mute: bool | None = None
+
+
+class MediaRequest(Strict):
+    action: str
+
+
+class BrightnessRequest(Strict):
+    level: int | None = Field(default=None, ge=0, le=100)
+    change: int | None = Field(default=None, ge=-100, le=100)
 
 
 class ObserveRequest(Strict):
@@ -141,6 +157,21 @@ def register(app: FastAPI, ctx: AppContext | None = None) -> None:
     @app.post("/v1/apps/close")
     async def close_app(req: AppRequest) -> Any:
         return await _call(desktop_apps.close_app, req.app)
+
+    @app.post("/v1/device/volume")
+    async def device_volume(r: VolumeRequest) -> Any:
+        # V1.2: no AI — Core Audio in the owner's session; before/after is the proof
+        if r.level is None and r.change is None and r.mute is None:
+            return await _call(desktop_device.volume_state)
+        return await _call(desktop_device.set_volume, r.level, r.change, r.mute)
+
+    @app.post("/v1/device/media")
+    async def device_media(r: MediaRequest) -> Any:
+        return await _call(desktop_device.media, r.action)
+
+    @app.post("/v1/device/brightness")
+    async def device_brightness(r: BrightnessRequest) -> Any:
+        return await _call(desktop_device.brightness, r.level, r.change)
 
     @app.post("/v1/apps/visible")
     async def visible_apps() -> Any:
