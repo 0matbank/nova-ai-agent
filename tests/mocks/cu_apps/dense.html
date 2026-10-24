@@ -1,0 +1,56 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Nova Dense Test</title>
+<script>if (location.hash) document.title = decodeURIComponent(location.hash.slice(1));</script>
+<style>
+ body{font-family:Segoe UI;margin:0;font-size:13px;color:#222}
+ .bar{display:flex;gap:2px;padding:4px;background:#eee;border-bottom:1px solid #ccc}
+ .bar button{width:30px;height:28px;border:1px solid #bbb;background:#fafafa;font-size:15px}
+ .side{position:absolute;top:40px;left:0;width:190px;bottom:28px;background:#f6f6f6;
+       border-right:1px solid #ddd;padding:6px}
+ .side li{list-style:none;padding:3px 4px}
+ .main{position:absolute;top:40px;left:200px;right:250px;bottom:28px;padding:8px}
+ .tabs button{border:none;border-bottom:2px solid transparent;background:none;padding:4px 10px}
+ .tabs button.on{border-color:#2563eb}
+ .panel{position:absolute;top:40px;right:0;width:240px;bottom:28px;background:#fbfbfb;
+        border-left:1px solid #ddd;padding:8px}
+ .panel label{display:block;margin:6px 0}
+ .foot{position:absolute;left:0;right:0;bottom:0;height:26px;background:#2563eb;color:#fff;
+       display:flex;align-items:center;gap:8px;padding:0 8px}
+ .foot button{background:#1d4ed8;color:#fff;border:none;padding:2px 8px}
+</style></head>
+<body>
+<!-- Private held-out test screen for grounding (plan §72 CU-8): a dense editor-like layout
+     with icon-only buttons, built only for tests — never one of the owner's apps. -->
+<div class="bar">
+ <button aria-label="New file">🗋</button><button aria-label="Open folder">📂</button>
+ <button aria-label="Save">💾</button><button aria-label="Undo">↶</button>
+ <button aria-label="Redo">↷</button><button aria-label="Bold"><b>B</b></button>
+ <button aria-label="Italic"><i>I</i></button><button aria-label="Underline"><u>U</u></button>
+ <button aria-label="Align left">☰</button><button aria-label="Insert image">🖼</button>
+ <button aria-label="Search">🔍</button><button aria-label="Settings">⚙</button>
+ <button aria-label="Help">?</button>
+</div>
+<ul class="side">
+ <li><a href="#a">Introduction.md</a></li><li><a href="#b">Chapter 1.md</a></li>
+ <li><a href="#c">Chapter 2.md</a></li><li><a href="#d">Notes.txt</a></li>
+ <li><a href="#e">cover.png</a></li><li><a href="#f">budget.xlsx</a></li>
+</ul>
+<div class="main">
+ <div class="tabs"><button class="on">Edit</button><button>Preview</button>
+  <button>History</button></div>
+ <textarea aria-label="Document text" style="width:95%;height:300px">Draft text</textarea>
+ <p><button>Insert table</button> <button>Word count</button>
+  <button>Export PDF</button></p>
+</div>
+<div class="panel">
+ <b>Properties</b>
+ <label>Author <input aria-label="Author" value="Lab"></label>
+ <label>Font size <select aria-label="Font size"><option>12</option><option>14</option></select></label>
+ <label><input type="checkbox"> Spell check</label>
+ <label><input type="checkbox" checked> Auto save</label>
+ <label><input type="radio" name="t"> Light theme</label>
+ <label><input type="radio" name="t"> Dark theme</label>
+ <p><button>Apply</button> <button>Reset</button></p>
+</div>
+<div class="foot"><span>Ln 1, Col 1</span><button>Sync now</button><button>Share</button></div>
+</body></html>

@@ -21,7 +21,7 @@ APPS = Path(__file__).resolve().parent / "cu_apps"
 MOCKS = Path(__file__).resolve().parent
 EDGE = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
 KINDS = ("winforms", "wpf", "win32_dialog", "tk", "canvas", "web")
-EXTRA = ("dup",)                     # action tests (CU-3), not an observer technology
+EXTRA = ("dup", "dense")             # action tests (CU-3) / grounding bench (CU-8)
 
 
 def _command(kind: str, title: str, profile: Path) -> list[str]:
@@ -39,9 +39,10 @@ def _command(kind: str, title: str, profile: Path) -> list[str]:
         return [sys.executable, str(APPS / "tk_app.py"), title]
     if kind == "canvas":
         return [sys.executable, str(APPS / "tk_canvas.py"), title]
-    if kind == "web":
-        url = (APPS / "web.html").as_uri() + "#" + title.replace(" ", "%20")
-        return [str(EDGE), f"--app={url}", f"--user-data-dir={profile}", "--no-first-run",
+    if kind in ("web", "dense"):
+        url = (APPS / f"{kind}.html").as_uri() + "#" + title.replace(" ", "%20")
+        size = ["--window-size=1280,800"] if kind == "dense" else []
+        return [str(EDGE), f"--app={url}", *size, f"--user-data-dir={profile}", "--no-first-run",
                 "--no-default-browser-check", "--disable-extensions",
                 "--force-renderer-accessibility"]
     raise ValueError(kind)
@@ -67,7 +68,7 @@ def lab_app(kind: str, timeout: float = 30) -> Iterator[str]:
     try:
         if not _window_up(title, timeout):
             raise RuntimeError(f"{kind} test app did not show its window")
-        time.sleep(0.5 if kind != "web" else 1.5)        # let it finish drawing
+        time.sleep(1.5 if kind in ("web", "dense") else 0.5)   # let it finish drawing
         yield title
     finally:
         with contextlib.suppress(psutil.NoSuchProcess):
