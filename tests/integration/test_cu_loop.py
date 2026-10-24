@@ -51,6 +51,10 @@ def ctx_of(s: Any, goal: str) -> TaskContext:
                        s.tasks.approvals)
 
 
+# the independent judge's answer (CU-9): no PASS without it
+YES = json.dumps({"achieved": "yes", "why": "the screen shows it"})
+
+
 def act(n: int, op: str = "click", **kw: Any) -> str:
     return json.dumps({"action": "act", "element": n, "op": op, **kw})
 
@@ -62,6 +66,7 @@ def test_presses_the_right_one_and_proves_it(tmp_path: Path) -> None:
         lambda r: act(number_of(r, "Save", 1)),
         json.dumps({"action": "done", "summary": "pressed the second Save",
                     "expect": [{"text": "second", "present": True}]}),
+        YES,
     ])
     with lab_app("dup") as title:
         out = asyncio.run(agent.run(ctx_of(s, goal), goal, None, "bn", window=title))
@@ -100,6 +105,7 @@ def test_checkbox_goal_is_read_back(tmp_path: Path) -> None:
         lambda r: act(number_of(r, "Keep a backup"), "toggle"),
         json.dumps({"action": "done", "summary": "backup on",
                     "expect": [{"label": "Keep a backup", "checked": True}]}),
+        YES,
     ])
     with lab_app("wpf") as title:
         out = asyncio.run(agent.run(ctx_of(s, "turn on backup"), "turn on backup", None,
@@ -245,6 +251,7 @@ def test_safe_batch_does_several_field_edits_in_one_step(tmp_path: Path) -> None
             {"element": number_of(r, "Notes"), "op": "set_text", "text": "batch ok"}]}),
         json.dumps({"action": "done", "summary": "typed",
                     "expect": [{"label": "Notes", "value": "batch ok"}]}),
+        YES,
     ])
     with lab_app("dup") as title:
         out = asyncio.run(agent.run(ctx_of(s, "write batch ok in Notes"),
@@ -263,6 +270,7 @@ def test_after_a_restart_a_done_press_is_not_repeated(
         lambda r: act(number_of(r, "Save")),          # the model wants to press it again
         json.dumps({"action": "done", "summary": "saved",
                     "expect": [{"text": "idle", "present": True}]}),
+        YES,
     ])
     before = [{"did": "click [6]", "result": "ok", "ok": True, "label": "Save"}]
     monkeypatch.setattr(TaskContext, "recalled", lambda self: {"history": before})
@@ -285,3 +293,94 @@ def test_text_that_was_already_there_proves_nothing() -> None:
     ok, _ = check_expect([{"text": "saved", "present": True}],
                          {"window": {"title": "w"}, "elements": [{"name": "saved"}]}, before)
     assert ok is True                                   # new on screen: a proof
+
+
+def test_editor_surface_empty_plan_retry_and_no_duplicate_typing(tmp_path: Path) -> None:
+    """CU-9 (real Notepad++ run, 2026-10-24): an empty plan is retried WITHOUT thinking;
+    'type' adds at the end of an editing surface; typing the same words again is refused
+    instead of piling up copies."""
+    import tempfile
+    import time
+
+    from tests.mocks.cu_lab import lab_app
+    goal = "লেখার শেষে নতুন লাইনে 'Nova done' লেখো"
+
+    def surface(r: ProviderRequest) -> int:
+        return int(re.findall(r"\[(\d+)\] Pane", r.user_request)[0])
+    typed = lambda r: act(surface(r), "type", text="\nNova done")    # noqa: E731
+    s, agent, ad = setup(tmp_path, [
+        "",                                   # a thinking model that answered nothing
+        typed,                                # the retry (must be think-free)
+        typed,                                # the same words again: refused
+        json.dumps({"action": "done", "summary": "added the line", "expect": []}),
+    ])
+    with lab_app("editor") as title:
+        out = asyncio.run(agent.run(ctx_of(s, goal), goal, None, "bn", window=title))
+        time.sleep(0.5)
+        mirror = Path(tempfile.gettempdir()) / f"{title}.txt"
+        text = mirror.read_text(encoding="utf-8")
+        mirror.unlink()
+    reqs = ad["ollama_local"].requests
+    assert reqs[0].think is None and reqs[1].think is False
+    assert text == "first line\nsecond line\nNova done"        # once, at the end
+    assert out["kind"] == "computer"
+
+
+def test_the_planners_own_proof_needs_the_independent_judge(tmp_path: Path) -> None:
+    """CU-9 false PASS (real Character Map, 2026-10-24): the planner typed the wrong
+    words and then 'expected' exactly them. The judge sees only the goal and the screen,
+    says no — not PASS; the corrected text then passes. (Wrong words no fixed rule catches:
+    instruction words are already stopped before typing.)"""
+    from tests.mocks.cu_lab import lab_app
+    goal = "Notes ঘরে hello লেখো"
+    no = json.dumps({"achieved": "no", "why": "the field holds more than hello"})
+    s, agent, ad = setup(tmp_path, [
+        lambda r: act(number_of(r, "Notes"), "set_text", text="hello there"),
+        json.dumps({"action": "done", "summary": "typed",
+                    "expect": [{"label": "Notes", "value": "hello there"}]}),
+        no,
+        lambda r: act(number_of(r, "Notes"), "set_text", text="hello"),
+        json.dumps({"action": "done", "summary": "typed",
+                    "expect": [{"label": "Notes", "value": "hello"}]}),
+        YES,
+    ])
+    with lab_app("dup") as title:
+        out = asyncio.run(agent.run(ctx_of(s, goal), goal, None, "bn", window=title))
+    assert out["evidence"]["verified"] is True
+    judge = [r for r in ad["ollama_local"].requests if "achieved" in r.system]
+    assert len(judge) == 2 and all(r.think is False for r in judge)
+    assert "typed" not in judge[0].user_request          # never the planner's own claim
+
+
+def test_a_password_from_the_goal_needs_approval_in_any_field(tmp_path: Path) -> None:
+    """CU-9 (real KeePassXC, 2026-10-24): the owner's password went into a plain
+    description field. A value the goal gives as a password is RED wherever it goes."""
+    from core.queue.engine import ApprovalPending
+    from tests.mocks.cu_lab import lab_app
+    goal = "Notes ঘরে লেখো, password 'Lab-Test-2468'"
+    s, agent, _ = setup(tmp_path, [
+        lambda r: act(number_of(r, "Notes"), "set_text", text="Lab-Test-2468")])
+    with lab_app("dup") as title, pytest.raises(ApprovalPending):
+        asyncio.run(agent.run(ctx_of(s, goal), goal, None, "bn", window=title))
+
+
+@pytest.mark.parametrize(("goal", "text", "refused"), [
+    ("Characters to copy ঘরে NOVA9 লেখো", "ঘরে NOVA9 লেখো", True),   # real false PASS
+    ("Characters to copy ঘরে NOVA9 লেখো", "NOVA9", False),
+    ("write hello in the Name box", "write hello", True),
+    ("শেষে নতুন লাইনে 'Nova done' লেখো", "Nova done", False),
+    ("শেষে নতুন লাইনে 'Nova done' লেখো", "Nova done Nova done", True),
+    ("Title ঘরে 'Nova demo' লেখো আর Public চালু করো", "Nova demo", False),
+])
+def test_only_the_owners_words_are_typed(goal: str, text: str, refused: bool) -> None:
+    from core.orchestrator.computer import text_problem
+    assert (text_problem(goal, text) is not None) is refused
+
+
+def test_the_judge_sees_an_unticked_box_as_unchecked() -> None:
+    from core.orchestrator.computer import judge_lines
+    lines = judge_lines({"elements": [
+        {"type": "CheckBox", "name": "Advanced view", "checked": False},
+        {"type": "CheckBox", "name": "Spell check", "checked": True},
+        {"type": "Button", "name": "Close", "chrome": True}]})
+    assert lines == ["CheckBox «Advanced view» unchecked", "CheckBox «Spell check» checked"]

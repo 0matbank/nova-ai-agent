@@ -69,6 +69,9 @@ class ProviderRequest:
     images: tuple[bytes, ...] = ()
     # CU-2: "local_only" = only providers running on this PC may see this request
     privacy: str = "any"
+    # CU-9: None = models.yaml decides; False = answer without thinking (a retry after
+    # a thinking model spent its whole budget and answered nothing)
+    think: bool | None = None
 
 
 @dataclass(frozen=True)

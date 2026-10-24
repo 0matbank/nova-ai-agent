@@ -21,7 +21,7 @@ APPS = Path(__file__).resolve().parent / "cu_apps"
 MOCKS = Path(__file__).resolve().parent
 EDGE = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
 KINDS = ("winforms", "wpf", "win32_dialog", "tk", "canvas", "web")
-EXTRA = ("dup", "dense")             # action tests (CU-3) / grounding bench (CU-8)
+EXTRA = ("dup", "dense", "editor")   # actions (CU-3) / grounding (CU-8) / surfaces (CU-9)
 
 
 def _command(kind: str, title: str, profile: Path) -> list[str]:
@@ -39,6 +39,8 @@ def _command(kind: str, title: str, profile: Path) -> list[str]:
         return [sys.executable, str(APPS / "tk_app.py"), title]
     if kind == "canvas":
         return [sys.executable, str(APPS / "tk_canvas.py"), title]
+    if kind == "editor":
+        return [sys.executable, str(APPS / "tk_editor.py"), title]
     if kind in ("web", "dense"):
         url = (APPS / f"{kind}.html").as_uri() + "#" + title.replace(" ", "%20")
         size = ["--window-size=1280,800"] if kind == "dense" else []

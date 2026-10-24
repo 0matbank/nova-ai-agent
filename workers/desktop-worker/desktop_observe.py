@@ -31,24 +31,27 @@ from pathlib import Path
 from typing import Any
 
 from desktop_screen import require_unlocked
-from desktop_ui import UIError, _activate, _describe_window, _uia
+from desktop_ui import UIError, _activate, _describe_window, _uia, front_window
 
 # Control types worth showing (UFO's default CONTROL_LIST plus a few common ones)
 CONTROL_TYPES = ("Button", "Edit", "TabItem", "Document", "ListItem", "MenuItem", "ScrollBar",
                  "TreeItem", "Hyperlink", "ComboBox", "RadioButton", "Spinner", "CheckBox",
                  "Group", "Text", "SplitButton", "Slider", "DataItem", "MenuBar", "Menu",
                  "ToolBar", "Image", "Header", "HeaderItem", "Tab", "List", "Tree",
-                 "TitleBar")
+                 "TitleBar", "Pane")
 # things a person can act on (Text / Group / Image only describe)
 ACTIONABLE = {"Button", "Edit", "TabItem", "ListItem", "MenuItem", "TreeItem", "Hyperlink",
               "ComboBox", "RadioButton", "Spinner", "CheckBox", "SplitButton", "Slider",
-              "DataItem", "HeaderItem", "Document"}
+              "DataItem", "HeaderItem", "Document", "Pane"}
 FRAME_BUTTONS = {"minimize", "maximize", "restore", "close", "system"}
 FRAME_STRIP = 48           # px from the window's top edge
 KEEP_OBSERVATIONS = 16
 OBSERVATION_TTL = 300.0    # s; the element check at action time is the real guard
 MAX_ELEMENTS = 400
 RETRY_SECONDS = 0.6
+# a focusable pane at least this big is an editing/drawing surface (Scintilla editors,
+# canvases, terminals) — other panes are only layout and are left out (CU-9 2026-10-24)
+SURFACE_MIN = (120, 60)
 MIN_ACTIONABLE = 3         # fewer named actionable controls → the tree is "sparse"
 PREVIEW_WIDTH = 1280
 _COLORS = {"Button": (255, 196, 0), "Edit": (0, 170, 90), "MenuItem": (0, 120, 255),
@@ -79,6 +82,7 @@ def _collect(auto: Any, window: Any, keep: bool = False) -> list[dict[str, Any]]
                  p.AutomationIdProperty, p.IsEnabledProperty, p.HasKeyboardFocusProperty,
                  p.ClassNameProperty, p.ValueValueProperty, p.RuntimeIdProperty,
                  p.ToggleToggleStateProperty, p.SelectionItemIsSelectedProperty,
+                 p.IsPasswordProperty, p.IsKeyboardFocusableProperty,
                  *(getattr(p, f"Is{name}PatternAvailableProperty") for name, _ in PATTERN_OPS)):
         cache.AddProperty(prop)
     cond = iuia.CreateAndConditionFromArray([
@@ -92,21 +96,33 @@ def _collect(auto: Any, window: Any, keep: bool = False) -> list[dict[str, Any]]
     for i in range(min(found.Length, MAX_ELEMENTS)):
         e = found.GetElement(i)
         try:
-            out.append({"type": names.get(e.CachedControlType, str(e.CachedControlType)),
-                        "name": (e.CachedName or "").strip()[:200],
-                        "automation_id": (e.CachedAutomationId or "")[:80],
-                        "class": (e.CachedClassName or "")[:60],
-                        "enabled": bool(e.CachedIsEnabled),
-                        "focused": bool(e.CachedHasKeyboardFocus),
-                        "value": _cached_value(e, p.ValueValueProperty),
-                        "checked": _cached_toggle(e, p.ToggleToggleStateProperty),
-                        "selected": _cached_bool(e, p.SelectionItemIsSelectedProperty),
-                        "ops": _ops(e, p),
-                        "runtime_id": _runtime_id(e, p.RuntimeIdProperty),
-                        "rect": _rect(e.CachedBoundingRectangle),
-                        **({"_el": e} if keep else {})})
+            item = {"type": names.get(e.CachedControlType, str(e.CachedControlType)),
+                    "name": (e.CachedName or "").strip()[:200],
+                    "automation_id": (e.CachedAutomationId or "")[:80],
+                    "class": (e.CachedClassName or "")[:60],
+                    "enabled": bool(e.CachedIsEnabled),
+                    "focused": bool(e.CachedHasKeyboardFocus),
+                    "value": _cached_value(e, p.ValueValueProperty),
+                    "checked": _cached_toggle(e, p.ToggleToggleStateProperty),
+                    "selected": _cached_bool(e, p.SelectionItemIsSelectedProperty),
+                    # the app itself marks secret fields (any toolkit): RED to type
+                    "password": _cached_bool(e, p.IsPasswordProperty) is True,
+                    "focusable": _cached_bool(e, p.IsKeyboardFocusableProperty) is True,
+                    "ops": _ops(e, p),
+                    "runtime_id": _runtime_id(e, p.RuntimeIdProperty),
+                    "rect": _rect(e.CachedBoundingRectangle),
+                    **({"_el": e} if keep else {})}
         except Exception:  # noqa: BLE001 - one vanished control must not break the rest
             continue
+        if item["type"] == "Pane":
+            left, top, right, bottom = item["rect"]
+            if not (item["focusable"] and right - left >= SURFACE_MIN[0]
+                    and bottom - top >= SURFACE_MIN[1]):
+                continue                              # layout, not something to use
+            item["ops"] = ["type", "focus"]           # keyboard at its cursor
+            if out and out[-1]["type"] == "Pane" and out[-1]["rect"] == item["rect"]:
+                out.pop()                             # a frame around it: keep the inner one
+        out.append(item)
     return out
 
 
@@ -328,10 +344,10 @@ def _target(auto: Any, window: str | None, hwnd: int | None) -> Any:
         return w
     if window:
         return auto.ControlFromHandle(find_hwnd(window))
-    fg = auto.GetForegroundControl()
-    if fg is None:
+    top = front_window(auto)
+    if top is None:
         raise UIError("no window is in front")
-    return fg.GetTopLevelControl()
+    return top
 
 
 WS_POPUP = 0x80000000
@@ -368,8 +384,7 @@ def _popups(auto: Any, main: Any) -> list[Any]:
 
 
 def _is_front(auto: Any, w: Any) -> bool:
-    fg = auto.GetForegroundControl()
-    top = fg.GetTopLevelControl() if fg else None
+    top = front_window(auto)
     return top is not None and top.NativeWindowHandle == w.NativeWindowHandle
 
 

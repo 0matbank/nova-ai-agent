@@ -9,12 +9,12 @@ plan's priority order (§17): UIA control patterns → keyboard → raw coordina
 |---|---|---|
 | `windows` | ui.read 🟢 | top-level windows, owning process, which one is in front |
 | `observe` | ui.read 🟢 | plan §71: one window's controls numbered 1…n with their boxes, a window screenshot + a numbered-marks copy, and `sparse` (tree tells little → vision needed) — any app, **untrusted** |
-| `act` | ui.click 🟡 / ui.type 🔵 / ui.replace_text 🟡 / ui.focus 🔵 | plan §72: act on element N of an observation (click, set_text, focus, toggle, select, expand, collapse, scroll_into_view) — re-checked right before the input (same window, process, runtime id, place) or refused as `stale_target`; result says delivered vs. the app changed |
+| `act` | ui.click 🟡 / ui.type 🔵 / ui.replace_text 🟡 / ui.focus 🔵 / ui.type_secret 🔴 | plan §72: act on element N of an observation (click, set_text, focus, toggle, select, expand, collapse, scroll_into_view) — re-checked right before the input (same window, process, runtime id, place) or refused as `stale_target`; result says delivered vs. the app changed |
 | `inspect` | ui.read 🟢 | control tree (name, type, automation id) |
 | `read_value` | ui.read 🟢 | current text/value of a control — **untrusted** |
 | `focus` | ui.focus 🔵 | bring a window to front; verified |
 | `click` | ui.click 🟡 | UIA Invoke/Toggle/Select/Expand; danger-word names need approval |
-| `type` | ui.type 🔵 / ui.replace_text 🟡 | **appends**; `replace=true` backs up old content first |
+| `type` | ui.type 🔵 / ui.replace_text 🟡 / ui.type_secret 🔴 | **appends**; `replace=true` backs up old content first |
 | `keys` | ui.keys 🟡 | `ctrl+s`, `enter`… ; Alt+F4 / Ctrl+W / Delete need approval |
 | `click_xy` | ui.click_xy 🔴 | raw coordinates, last resort |
 

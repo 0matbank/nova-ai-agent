@@ -74,6 +74,7 @@ class ElementRef(Strict):
 class ActRequest(ElementRef):
     op: str = "click"
     text: str | None = None
+    at: str = "end"                    # "type": append at the end, or at the cursor
 
 
 class InspectRequest(Strict):
@@ -196,7 +197,8 @@ def register(app: FastAPI, ctx: AppContext | None = None) -> None:
     @app.post("/v1/ui/act")
     async def act(r: ActRequest) -> Any:
         # CU-3: one element of one observation, proven unchanged right before the input
-        return await _call(desktop_act.act, r.observation_id, r.element, r.op, r.text)
+        return await _call(desktop_act.act, r.observation_id, r.element, r.op, r.text,
+                           r.at)
 
     @app.post("/v1/ui/inspect")
     async def inspect(r: InspectRequest) -> Any:

@@ -18,11 +18,21 @@ from typing import Any
 from desktop_lock import input_lease
 from desktop_observe import _collect, process_signature, recall
 from desktop_screen import require_unlocked
-from desktop_ui import UIError, _proc_name, _uia, is_shell_window, win32_class
+from desktop_ui import (
+    UIError,
+    _activate,
+    _escape_sendkeys,
+    _focus_inside,
+    _proc_name,
+    _uia,
+    front_window,
+    is_shell_window,
+    win32_class,
+)
 
 MOVE_TOLERANCE = 4         # px a control may shift (re-layout) and still be "the same"
 OPS = ("click", "set_text", "focus", "toggle", "select", "expand", "collapse",
-       "scroll_into_view")
+       "scroll_into_view", "type")
 SETTLE_SECONDS = 0.35
 
 
@@ -75,14 +85,36 @@ def _window_state(auto: Any, w: Any) -> dict[str, Any]:
         kids = [c.Name for c in w.GetChildren() if c.ControlTypeName == "WindowControl"]
     except Exception:  # noqa: BLE001
         kids = []
-    fg = auto.GetForegroundControl()
+    top = front_window(auto)
     return {"dialogs": sorted(kids), "exists": bool(w.Exists(0, 0)),
-            "foreground": fg.GetTopLevelControl().Name if fg else None}
+            "foreground": top.Name if top is not None else None}
 
 
-def _perform(auto: Any, c: Any, op: str, text: str | None) -> str:
+def _type_keys(auto: Any, w: Any, el: Any, text: str, at: str = "end") -> str:
+    """Keyboard typing into a surface without a Value pattern: appended at the end
+    (Ctrl+End first), or at the cursor the planner placed. Never blind: the keys go out
+    only when the focus is inside THIS window."""
+    _activate(w)
+    el.SetFocus()
+    time.sleep(0.1)
+    if not _focus_inside(auto, w):
+        raise UIError("could not move keyboard focus into the target window — refusing "
+                      "to type")
+    lines = text.replace("\r\n", "\n").split("\n")
+    auto.SendKeys(("{Ctrl}{End}" if at == "end" else "")
+                  + "{Enter}".join(_escape_sendkeys(x) for x in lines), interval=0.005,
+                  waitTime=0.1)
+    return "SendKeys(at end)" if at == "end" else "SendKeys(at cursor)"
+
+
+def _perform(auto: Any, c: Any, op: str, text: str | None, w: Any = None,
+             at: str = "end") -> str:
     """Run one op through UIA patterns; returns the method used."""
     el = auto.Control.CreateControlFromElement(c)
+    if op == "type":
+        if not text:
+            raise UIError("type needs text")
+        return _type_keys(auto, w, el, text, at)
     if op == "click":
         for pattern, method in (("GetInvokePattern", "Invoke"), ("GetTogglePattern", "Toggle"),
                                 ("GetSelectionItemPattern", "Select"),
@@ -132,8 +164,9 @@ def target(observation_id: str, element: int) -> dict[str, Any]:
         w, now = _window_now(auto, obs, want.get("hwnd"))
         c = find_again(want, now)
         proc = _proc_name(obs["pid"])
-        return {"element": {k: c[k] for k in ("type", "name", "automation_id", "value",
-                                               "enabled")},
+        return {"element": {**{k: c[k] for k in ("type", "name", "automation_id", "value",
+                                                  "enabled")},
+                            "password": bool(c.get("password"))},
                 "window": {"title": w.Name, "process": proc, "class": win32_class(w),
                            "is_shell": is_shell_window(proc, win32_class(w), w.Name,
                                                        f"{c['name']} {c['automation_id']}")}}
@@ -154,8 +187,8 @@ def _window_now(auto: Any, obs: dict[str, Any], hwnd: int | None = None
     return w, _collect(auto, w, keep=True)
 
 
-def act(observation_id: str, element: int, op: str, text: str | None = None
-        ) -> dict[str, Any]:
+def act(observation_id: str, element: int, op: str, text: str | None = None,
+        at: str = "end") -> dict[str, Any]:
     require_unlocked()
     if op not in OPS:
         raise UIError(f"unknown op {op!r} (allowed: {', '.join(OPS)})")
@@ -170,13 +203,13 @@ def act(observation_id: str, element: int, op: str, text: str | None = None
         if not c["enabled"] and op not in ("focus", "scroll_into_view"):
             raise UIError(f"disabled: {c['name']!r} is disabled")
         proc = _proc_name(obs["pid"])
-        if op in ("set_text", "click") and is_shell_window(
+        if op in ("set_text", "click", "type") and is_shell_window(
                 proc, win32_class(w), w.Name, f"{c['name']} {c['automation_id']}"):
             raise UIError("shell_target: this window runs what is typed — refused here")
         el = auto.Control.CreateControlFromElement(c["_el"])
         before = {**_state(el), **_window_state(auto, w)}
         content_before = content_signature(now)
-        method = _perform(auto, c["_el"], op, text)
+        method = _perform(auto, c["_el"], op, text, w, at)
         time.sleep(SETTLE_SECONDS)
         after = {**_state(el), **_window_state(auto, w)}
         content_changed = w.Exists(0, 0) and content_signature(
@@ -185,6 +218,8 @@ def act(observation_id: str, element: int, op: str, text: str | None = None
     effect = "changed" if changed else "noop"
     if op == "set_text":
         effect = "changed" if after.get("value") == text else "noop"
+    if op == "type":
+        effect = "changed" if content_changed else "noop"
     return {"op": op, "element": {"id": element, "type": c["type"], "name": c["name"]},
             "transport_ok": True, "delivered": True, "effect": effect, "method": method,
             "before": before, "after": after, "failure_code": None,

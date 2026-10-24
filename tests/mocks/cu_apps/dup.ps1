@@ -51,4 +51,14 @@ $box.Left = 10
 $box.Width = 300
 $form.Controls.Add($box)
 
+# a secret field (CU-9): the app marks it as a password - typing there is the owner's call
+$pin = New-Object System.Windows.Forms.TextBox
+$pin.Name = 'Pin'
+$pin.AccessibleName = 'PIN'
+$pin.UseSystemPasswordChar = $true
+$pin.Top = 160
+$pin.Left = 10
+$pin.Width = 200
+$form.Controls.Add($pin)
+
 [System.Windows.Forms.Application]::Run($form)

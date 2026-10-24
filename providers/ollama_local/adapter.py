@@ -275,7 +275,8 @@ class OllamaAdapter(ProviderAdapter):
         # Thinking per task type comes from models.yaml (benchmark-driven, plan §9A).
         # JSON replies may think too: Ollama keeps the thinking apart and applies the
         # format to the answer only (planner steps need it — Phase 11 drill).
-        think = request.task_type in self.policy.think_task_types
+        think = (request.task_type in self.policy.think_task_types if request.think is None
+                 else request.think)
         budget = request.limits.max_output_tokens + (1536 if think else 0)
         body: dict[str, Any] = {
             "model": model, "messages": messages, "stream": False, "think": think,

@@ -1,6 +1,7 @@
 """Type text into a control. Default APPENDS — existing content is kept and
 verified to still be there. replace=true → ui.replace_text (YELLOW: the old
-content is backed up first). Terminal / Run dialog → RED ui.shell_input."""
+content is backed up first). Terminal / Run dialog → RED ui.shell_input; a password
+field → RED ui.type_secret."""
 
 from __future__ import annotations
 
@@ -23,6 +24,11 @@ class P(Params):
 async def action(p: P, env: ToolEnv) -> str:
     if await is_shell_target(env, p.window):
         return "ui.shell_input"
+    r = await desktop_call(env, "/v1/ui/value", {
+        "window": p.window, "name": p.name, "automation_id": p.automation_id,
+        "control_type": p.control_type})
+    if not isinstance(r, ToolResult) and (r.get("control") or {}).get("password"):
+        return "ui.type_secret"               # a password field: always the owner's call
     return "ui.replace_text" if p.replace else "ui.type"
 
 

@@ -190,3 +190,56 @@ def test_act_permissions_are_decided_on_what_is_there_now(
     assert backup.read_text(encoding="utf-8") == "old text"
     seen["reply"] = target("Notes")
     assert run(mod.action(write, env)) == "ui.type"
+    secret = target("PIN")
+    secret["element"]["password"] = True                          # the app says: secret
+    seen["reply"] = secret
+    assert run(mod.action(write, env)) == "ui.type_secret"        # RED, whatever the app
+    assert run(mod.action(click, env)) == "ui.click"              # only typing is secret
+
+
+@WIN
+def test_a_custom_editor_surface_is_listed_and_typed_into(tmp_path: Path) -> None:
+    """CU-9 (found on real Notepad++/Scintilla): a focusable editing surface that offers
+    no accessibility value is still listed — once — and typed into with the keyboard at
+    its cursor; what was there stays."""
+    pytest.importorskip("uiautomation")
+    import tempfile
+
+    import desktop_act as da
+    import desktop_observe as ob
+
+    from tests.mocks.cu_lab import lab_app
+    with lab_app("editor") as title:
+        r = ob.observe(tmp_path, window=title, image=False, focus=True)
+        panes = [e for e in r["elements"] if e["type"] == "Pane"]
+        assert len(panes) == 1 and panes[0]["ops"] == ["type", "focus"]
+        assert panes[0]["actionable"]
+        out = da.act(r["observation_id"], panes[0]["id"], "type", "Nova typed")
+        assert out["delivered"] and out["method"] == "SendKeys(at end)"
+        import time
+        time.sleep(0.5)
+        mirror = Path(tempfile.gettempdir()) / f"{title}.txt"
+        text = mirror.read_text(encoding="utf-8")
+        assert text == "first line\nsecond lineNova typed"        # added at the end
+        mirror.unlink()
+        with pytest.raises(da.UIError, match="type needs text"):
+            da.act(r["observation_id"], panes[0]["id"], "type", "")
+
+
+@WIN
+def test_a_password_field_is_seen_in_a_real_app(tmp_path: Path) -> None:
+    """CU-9: the toolkit's own IsPassword flag reaches the observation and the
+    permission check — no field names or app names involved."""
+    pytest.importorskip("uiautomation")
+    import desktop_act as da
+    import desktop_observe as ob
+
+    from tests.mocks.cu_lab import lab_app
+    with lab_app("dup") as title:
+        obs = ob.observe(tmp_path, window=title, image=False)
+        pin = next(e for e in obs["elements"] if e["name"] == "PIN")
+        notes = next(e for e in obs["elements"] if e["name"] == "Notes")
+        assert pin["password"] is True and notes["password"] is False
+        assert not pin.get("value")                       # the secret is never read out
+        t = da.target(obs["observation_id"], pin["id"])
+        assert t["element"]["password"] is True

@@ -72,6 +72,21 @@ def win32_class(w: Any) -> str:
         return str(w.ClassName or "")
 
 
+def front_window(auto: Any) -> Any:
+    """The top-level window in front, or None while Windows cannot say (one closing,
+    hung or changing right now) — never an exception for that."""
+    try:
+        fg = auto.GetForegroundControl()
+        return fg.GetTopLevelControl() if fg else None
+    except Exception:  # noqa: BLE001 - COMError while the front window changes
+        return None
+
+
+def _front_title(auto: Any) -> str | None:
+    top = front_window(auto)
+    return str(top.Name) if top is not None else None
+
+
 def _describe_window(w: Any) -> dict[str, Any]:
     return {"title": w.Name, "hwnd": w.NativeWindowHandle, "pid": w.ProcessId,
             "process": _proc_name(w.ProcessId), "class": win32_class(w)}
@@ -93,8 +108,8 @@ def _top_windows(auto: Any) -> list[Any]:
 def list_windows() -> list[dict[str, Any]]:
     require_unlocked()
     with _uia() as auto:
-        fg = auto.GetForegroundControl()
-        fg_hwnd = fg.GetTopLevelControl().NativeWindowHandle if fg else None
+        top = front_window(auto)
+        fg_hwnd = top.NativeWindowHandle if top else None
         out = []
         for w in _top_windows(auto):
             try:        # the window may vanish / hang between listing and reading it
@@ -134,8 +149,12 @@ def _walk(root: Any, max_depth: int) -> Iterator[tuple[Any, int]]:
 
 
 def _describe_control(c: Any) -> dict[str, Any]:
+    try:
+        secret = bool(c.IsPassword)
+    except Exception:  # noqa: BLE001 - a control without the property is not a password
+        secret = False
     return {"name": c.Name, "type": c.ControlTypeName, "automation_id": c.AutomationId,
-            "enabled": bool(c.IsEnabled)}
+            "enabled": bool(c.IsEnabled), "password": secret}
 
 
 def _find_control(window: Any, name: str | None, automation_id: str | None,
@@ -289,8 +308,7 @@ def focus(window: str) -> dict[str, Any]:
     with _uia() as auto:
         w = _find_window(auto, window)
         _activate(w)
-        fg = auto.GetForegroundControl()
-        top = fg.GetTopLevelControl() if fg else None
+        top = front_window(auto)
         ok = top is not None and top.NativeWindowHandle == w.NativeWindowHandle
         return {"window": _describe_window(w), "foreground": ok, "verified": ok}
 
@@ -335,8 +353,7 @@ def click(window: str, name: str | None, automation_id: str | None,
         still = [x.NativeWindowHandle for x in _top_windows(auto)]
         return {"control": _describe_control(c), "method": used,
                 "window_still_open": w.NativeWindowHandle in still,
-                "foreground_title": (auto.GetForegroundControl().GetTopLevelControl().Name
-                                     if auto.GetForegroundControl() else None)}
+                "foreground_title": _front_title(auto)}
 
 
 def type_text(window: str, text: str, name: str | None, automation_id: str | None,
@@ -430,9 +447,8 @@ def send_keys(window: str, combo: str) -> dict[str, Any]:
         auto.SendKeys(keys, waitTime=0.2)
         import desktop_guard
         desktop_guard.note_injected()
-        fg = auto.GetForegroundControl()
         return {"keys": combo, "window_still_open": w.Exists(0, 0),
-                "foreground_title": fg.GetTopLevelControl().Name if fg else None}
+                "foreground_title": _front_title(auto)}
 
 
 def read_value(window: str, name: str | None, automation_id: str | None,

@@ -59,6 +59,7 @@ actions:
   terminal.run: RED
   process.kill: RED
   ui.shell_input: RED         # typing/clicking/keys into a terminal or Run dialog
+  ui.type_secret: RED         # typing into a password field (the app marks it; any app)
   ui.click_xy: RED            # raw coordinates: last resort (plan §15, §17)
   browser.fill_secret: RED    # typing into a password field
 

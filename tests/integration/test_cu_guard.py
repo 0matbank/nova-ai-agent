@@ -99,3 +99,15 @@ def test_the_escape_hook_runs_and_ignores_novas_own_escape() -> None:
         ctypes.windll.user32.SendInput(1, ctypes.byref(i), ctypes.sizeof(i))
     time.sleep(0.3)                     # the hook thread has seen it (injected → ignored)
     assert g.ESCAPE.armed() and not g.halted()
+
+
+def test_front_window_never_raises_while_windows_change() -> None:
+    """CU-9 real run: Windows can fail to name the front window for a moment (COMError
+    while one closes) — that is "unknown", never a crashed worker call."""
+    import desktop_ui
+
+    class Broken:
+        def GetForegroundControl(self) -> None:          # noqa: N802 - uiautomation API
+            raise OSError("An event was unable to invoke any of the subscribers")
+    assert desktop_ui.front_window(Broken()) is None
+    assert desktop_ui._front_title(Broken()) is None
