@@ -3164,3 +3164,34 @@ Telegram voice-এর দেরি মাপা ও কমানো, installed a
 | CU-6 | Windows Sandbox test lab + metrics রিপোর্ট | পুরো benchmark একটা command-এ চলে, owner-এর desktop না ছুঁয়ে |
 | CU-7 | Native adapter-এর কাঠামো (প্রথমে Office COM) | Word/Excel-এ API পথে কাজ + GUI fallback |
 | CU-8 | owner-এর আসল ব্যবহারে ছোট পরীক্ষা (আগে জানিয়ে) | owner-এর দেওয়া ৫টা কাজের ফল |
+
+
+## ৭২. গবেষণা রিপোর্ট (A–G, 2026-10-24) মিলিয়ে CU ধাপের হালনাগাদ
+
+**উৎস:** owner-এর দেওয়া ChatGPT গবেষণা — Report A (১১ repo-র source), B (Nova gap audit, commit b8c4884), C (architecture), D (priority), E (model/voice মাপার পদ্ধতি), F (implementation spec), G (evidence/license)। `D:\Personal Ai Assitant\Report`-এ আছে (repo-তে নয়)। এগুলো মূল technical reference; অন্ধভাবে নয় — Nova-র code-এ যাচাই করে নেওয়া।
+
+**Code-এ যাচাই করা মূল সত্য (রিপোর্টের সঙ্গে মিলেছে):**
+- `check_effect()` অচেনা effect-এ `True (tool-confirmed)`; `files.write` শুধু "file আছে" দেখে, content নয়; Store app-এ শুধু window-flag — ভুল PASS সম্ভব (B-01, **P0**)।
+- Operator text-only: observer-এর ছবি planner পায় না, desktop-এ vision grounding নেই (B-02)।
+- `vision.locate()` fixed 1280×720 — desktop window/DPI-তে চলবে না (B-03)।
+- নিরাপদ-দেখতে label মানেই নিরাপদ কাজ নয়; safety check আর আসল কাজের মাঝে target বদলাতে পারে (B-04, P0)।
+- Screenshot "local first" শুধু ranking; cloud-এ না যাওয়া enforce হয় না (B-06, P0)।
+- নিজের পরীক্ষায় পাওয়া: background worker জানালা সামনে আনতে পারে না (CU-1 নোট)।
+
+**সিদ্ধান্ত:** ১১টা framework জোড়া নয় — Nova-র queue, worker IPC, SkillRunner, approval, router, resource manager রেখে **observation → grounded action → independent goal verification** শক্ত করা। নেওয়া pattern: Hermes `ActionResult` (transport ok ≠ effect verified) ও stale element token; Dodaios frame-scoped batch, foreground signature, `CoordinateMapper` (DPI/negative monitor), desktop lock, Escape; ego-lite "stale ref কখনো একই label-এর অন্য বোতামে যাবে না"; OpenClaw outcome-hash দিয়ে no-progress loop ধরা; Artemis-এর আলাদা read-only checker কিন্তু **INCONCLUSIVE কখনো PASS নয়**; Agent-S planner/grounder আলাদা, কিন্তু প্রতি click-এ বহু LLM call নয়; UFO cached UIA (CU-1-এ নেওয়া)। License: সব repo MIT/Apache-2.0; code নিলে notice রাখা (G)।
+
+**নতুন ক্রম (§৭১-এর CU-2…CU-8 এই ক্রমে প্রতিস্থাপিত; CU-0, CU-1 শেষ):**
+| ধাপ | কাজ | PASS শর্ত |
+|---|---|---|
+| CU-2 | **Verifier সঠিকতা (P0):** অচেনা effect → INCONCLUSIVE/LIMITED, PASS নয়; tool-success ≠ goal-success (typed `ActionOutcome`: transport_ok / delivered / effect=confirmed·noop·unknown); file-এ content/size predicate; app-open-এ সত্যিকারের window+process; UI কাজে readback; screenshot/vision request-এ `local_only` enforce | B-এর ৩টা probe + wrong content / wrong window / empty evidence / stale proof → কখনো PASS নয়; পুরোনো সঠিক পথ অক্ষত |
+| CU-3 | **নিরাপদ লক্ষ্য-পরিচয়:** observation_id + opaque element token (hwnd+pid+process start+runtime id), stale হলে বাতিল (চুপচাপ অন্য বোতাম নয়); কাজের ঠিক আগে window/frame আবার মেলানো; approval-এ target identity বাঁধা; coordinate mapper (DPI, negative monitor); একটাই desktop lock; foreground পাওয়া (worker focus fix); owner input/Escape-এ থামা | duplicate label, বদলে যাওয়া element, সরানো/resize window, ভুল foreground, দেরিতে popup, locked desktop → ভুল input শূন্য |
+| CU-4 | **সাধারণ perceive-act-verify executor** (operator-এর পাশে, নতুন engine নয়): ছবি আলাদা channel-এ (base64 text-এ নয়); UIA আগে, কম হলে crop → vision grounding; `not_found` → scroll/crop/প্রশ্ন, আন্দাজে click নয়; model-এর "done" = যাচাইয়ের অনুরোধ; no-progress loop ধরা | accessible ও canvas lab app-এ একই executor; held-out-এ app/বোতাম-নাম বদলেও চলে |
+| CU-5 | কণ্ঠ/app fast path: stage timer আছে — যোগ: compound নির্দেশ ("X খোলো তারপর Y") বাকি লক্ষ্য না হারানো, কাজ শুরু হলে সত্য ack, exact app-এ ASR-এর পরে শূন্য LLM call | একই corpus-এ wrong-app বাড়ে না; P50/P95 |
+| CU-6 | নিরাপদ batching (boundary-তে fresh observe), browser session reuse মেপে, recovery category (stale/ambiguous/noop/timeout/worker_lost/auth/locked/user_intervened/policy_denied), restart-এ অনিশ্চিত কাজ replay-এর আগে postcondition পড়া | duplicate submit নেই; cancel মানা হয় |
+| CU-7 | Live execution UI: typed event (received→transcript→target→approval→action→effect→verdict), dashboard-এ authenticated stream, target overlay, Telegram progress edit; ভুয়া % নয় | stop LLM ছাড়াই দ্রুত; password অঞ্চল mask; idle-এ capture বন্ধ |
+| CU-8 | Model মাপা (E-এর protocol): qwen3-vl বনাম UI-TARS-1.5-7B (owner অনুমোদিত, বিনামূল্যে) একই crop/target set-এ — নির্ভুলতা/গতি/VRAM | শুধু মাপা Pareto ফল; না চললে NOT_TESTED |
+| CU-9 | Generalization + security release gate (F-এর matrix): Win32/WinForms/WPF/WinUI/web/Qt/Tk/canvas, layout held-out, recovery, prompt-injection, human intervention; Windows Sandbox; "N বারে 0 false PASS" ভাষায় রিপোর্ট | false PASS দেখা গেলে release বন্ধ |
+
+**যা বদলাবে না:** §১–§৭১-এর সব feature, V1.2–V2, WhatsApp deferred। নতুন paid service / remote server নয়। প্রতিটি ধাপ: ছোট diff, feature flag যেখানে আচরণ বদলায়, focused + পুরো regression (pytest-এর নিজের exit code), আসল যাচাই, commit (owner-এর নির্দেশে প্রতি milestone-এ)।
+
+**খোলা বিষয় (owner জানবেন):** Nova repo-তে root LICENSE নেই (public repo) — owner-এর সিদ্ধান্ত।
