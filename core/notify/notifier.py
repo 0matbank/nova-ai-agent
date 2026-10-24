@@ -40,9 +40,11 @@ class MessageType(StrEnum):
     TASK_FAILED_PERMANENTLY = "task_failed_permanently"
     AGENT_GOING_OFFLINE = "agent_going_offline"
     RECOVERY_AFTER_RESTART = "recovery_after_restart"
+    LIVE = "live"                  # CU-7: one message per task, edited in place
 
 
 Sender = Callable[[str, OutgoingMessage], Awaitable[None]]
+LIVE_EDIT_SECONDS = 1.5            # Telegram rate-limits edits; fold faster updates
 
 
 @dataclass
@@ -65,6 +67,8 @@ class Notifier:
         # Called after a task's final message is delivered (e.g. spoken reply).
         self.on_task_final: list[Callable[[str, MessageType, int], Awaitable[None]]] = []
         self._hooks: set[asyncio.Task[None]] = set()
+        self._live_at: dict[str, float] = {}
+        self._live_pending: dict[str, tuple[str, str]] = {}
 
     @staticmethod
     async def _run_hook(hook: Callable[[str, MessageType, int], Awaitable[None]],
@@ -112,9 +116,44 @@ class Notifier:
                     self._hooks.add(job)
                     job.add_done_callback(self._hooks.discard)
             return sent
+        if kind is MessageType.LIVE:
+            return await self._live_update(chat_id, text, task_id)
         if kind is MessageType.PROGRESS:
             return await self._progress_update(chat_id, text, task_id)
         return await self._error(chat_id, text, error_key or text, severity)
+
+    async def _live_update(self, chat_id: str, text: str, task_id: int | None) -> bool:
+        """The task's live message (edited in place). Edits closer than
+        LIVE_EDIT_SECONDS are folded: only the newest text goes out when the window
+        opens — the screen never shows a stale step for long."""
+        key = f"task-{task_id}"
+        now = self._clock()
+        last = self._live_at.get(key)
+        if last is not None and now - last < LIVE_EDIT_SECONDS:
+            pending = self._live_pending.get(key)
+            self._live_pending[key] = (chat_id, text)
+            if pending is None:
+                job = asyncio.create_task(self._flush_live(key, LIVE_EDIT_SECONDS - (now - last)))
+                self._hooks.add(job)
+                job.add_done_callback(self._hooks.discard)
+            return False
+        self._live_at[key] = now
+        return await self._deliver_live(chat_id, text, key)
+
+    async def _flush_live(self, key: str, delay: float) -> None:
+        await asyncio.sleep(max(delay, 0))
+        pending = self._live_pending.pop(key, None)
+        if pending is not None:
+            self._live_at[key] = self._clock()
+            await self._deliver_live(pending[0], pending[1], key)
+
+    async def _deliver_live(self, chat_id: str, text: str, key: str) -> bool:
+        try:
+            await self._send(chat_id, OutgoingMessage(text, live_key=key))
+        except Exception:
+            _log.exception("live message failed", extra={"action": "notify"})
+            return False
+        return True
 
     def cap(self, task_id: int) -> int:
         p = self._progress.get(task_id)

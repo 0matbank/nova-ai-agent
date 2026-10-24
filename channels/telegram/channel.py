@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from collections import OrderedDict
 from datetime import UTC, datetime
 from typing import Any
 
@@ -48,6 +49,7 @@ class TelegramChannel:
         callback_handler: CallbackHandler | None = None,
     ) -> None:
         self.api = api
+        self._live: OrderedDict[str, tuple[str, str]] = OrderedDict()   # key → (chat, msg)
         self.whitelist = whitelist
         self.handler = handler
         self.callback_handler = callback_handler
@@ -200,7 +202,37 @@ class TelegramChannel:
         if reply is not None:
             await self.send(chat_id, reply)
 
+    async def _send_live(self, chat_id: str, message: OutgoingMessage) -> None:
+        """One message per live key, edited in place (Telegram allows that)."""
+        key = str(message.live_key)
+        text = message.text[:4000]
+        known = self._live.get(key)
+        if known is not None and known[0] == chat_id:
+            try:
+                await self.api.edit_message_text(chat_id, known[1], text)
+                return
+            except TelegramError as e:
+                if "not modified" in str(e).lower():
+                    return
+                _log.warning(f"live edit failed, sending anew: {e}",
+                             extra={"action": "telegram.live"})
+        try:
+            sent = await self.api.send_message(chat_id, text)
+        except TelegramError as e:
+            _log.error(f"live send failed: {e}", extra={"action": "telegram.live",
+                                                        "status": "error"})
+            return
+        msg_id = str((sent or {}).get("message_id", ""))
+        if msg_id:
+            self._live[key] = (chat_id, msg_id)
+            while len(self._live) > 200:
+                self._live.popitem(last=False)
+
     async def send(self, chat_id: str, message: OutgoingMessage) -> None:
+        if message.live_key and message.video is None and message.voice is None \
+                and message.photo is None and not message.buttons:
+            await self._send_live(chat_id, message)
+            return
         if message.video is not None:
             name, data = message.video
             caption, rest = message.text[:1024], message.text[1024:]

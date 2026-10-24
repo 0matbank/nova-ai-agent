@@ -176,6 +176,17 @@ def _texts(obs: dict[str, Any]) -> list[str]:
     return [t.lower() for t in out if t]
 
 
+def live_text(window: str | None, history: list[dict[str, Any]], now: str) -> str:
+    """The task's live message: the window, the last real steps, what happens now."""
+    lines = [f"🪟 {(window or '?')[:60]}"]
+    for h in history[-6:]:
+        mark = "✅" if h.get("ok") else ("↪️" if h.get("did", "").startswith("skip")
+                                         else "⚠️")
+        lines.append(f"{mark} {h['did'][:60]} — {str(h['result'])[:70]}")
+    lines.append(f"⏳ {now}")
+    return "\n".join(lines)
+
+
 def note_state(history: list[dict[str, Any]], obs: dict[str, Any]) -> None:
     """Tell the planner what its last step left behind ("Public is now checked") —
     small models toggle a box again and again without it (seen 2026-10-24)."""
@@ -406,6 +417,8 @@ class ComputerUseAgent:
         # a true acknowledgement: the work has really started, in this window
         await ctx.progress(f"🖱️ শুরু করছি — «{(window or 'সামনের জানালা')[:50]}»" if lang == "bn"
                            else f"🖱️ starting — «{(window or 'the front window')[:50]}»")
+        ctx.event("progress", f"computer-use started in {window or 'the front window'}",
+                  window=window)
         # after a restart / retry the loop continues from what was already done — the
         # press-count rules then still stop a second press (Report F phase 5)
         saved = ctx.recalled() or {}
@@ -433,6 +446,12 @@ class ComputerUseAgent:
                 first = obs                    # the screen before Nova did anything
             note_state(history, obs)
             vision = bool(obs.get("sparse"))
+            ctx.event("observation_ready", f"{len(obs.get('elements') or [])} controls"
+                      + (" (sparse → vision)" if vision else ""),
+                      observation_id=obs.get("observation_id"),
+                      window=obs["window"]["title"])
+            await ctx.live(live_text(window, history, "দেখছি, পরের ধাপ ঠিক করছি…"
+                                     if lang == "bn" else "looking, planning the next step…"))
             decision = normalize(await self._plan(ctx, system, obs, history, vision))
             if not decision.get("action"):
                 # an empty / garbled answer is not a step: ask once more, reminding the
@@ -453,11 +472,11 @@ class ComputerUseAgent:
                 history.append({"did": action, "result": "REPEATED on an unchanged screen — "
                                 "it did nothing; try another way or ask"})
                 continue
-            if n % 3 == 0:
-                await ctx.progress(f"🖱️ {n} ধাপ — {obs['window']['title'][:40]}" if lang == "bn"
-                                   else f"🖱️ step {n} — {obs['window']['title'][:40]}")
+
             if action == "done":
                 verified, proofs = check_expect(decision.get("expect"), obs, first)
+                ctx.event("verification_result", "; ".join(proofs)[:300],
+                          verified=verified)
                 if verified is False:
                     bad_done += 1
                     history.append({"did": "done", "result": "NOT done — the screen shows: "
@@ -509,6 +528,8 @@ class ComputerUseAgent:
             stale = 0
             history.append({"did": did, "result": result[:300], "ok": ok,
                             "label": label_of(decision, obs)})
+            ctx.event("action_delivered" if ok else "failed", f"{did} → {result[:200]}",
+                      effect=(ev or {}).get("effect"))
             ctx.remember({"history": history[-30:]})
             if ok and ev:
                 effects.append({"did": did, "evidence": ev})

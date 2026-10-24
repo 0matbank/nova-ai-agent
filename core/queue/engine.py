@@ -245,6 +245,18 @@ class TaskContext:
             self.steps = refreshed.steps
         return data
 
+    async def live(self, text: str) -> None:
+        """CU-7: this task's live message (one message, edited in place)."""
+        if self.notifier is not None:
+            await self.notifier.notify(self.task.chat_id, MessageType.LIVE,
+                                       f"🔴 Task #{self.task.id} — live\n{text}",
+                                       task_id=self.task.id)
+
+    def event(self, kind: str, summary: str, **data: Any) -> None:
+        """CU-7: a real step of this task, for the dashboard timeline."""
+        from core.notify.events import EVENTS
+        EVENTS.add(self.task.id, kind, summary, **data)
+
     async def progress(self, text: str) -> None:
         if self.notifier is not None:
             await self.notifier.notify(self.task.chat_id, MessageType.PROGRESS,

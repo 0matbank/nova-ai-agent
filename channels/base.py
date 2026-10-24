@@ -46,6 +46,9 @@ class OutgoingMessage:
     # Optional MP4 video (Phase 20: a finished edit to watch on the phone); `text` is
     # its caption. (file name, bytes)
     video: tuple[str, bytes] | None = None
+    # CU-7: messages with the same key replace each other (one live message per task,
+    # edited in place) where the channel can edit; elsewhere they are simply sent
+    live_key: str | None = None
 
 
 @dataclass(frozen=True)

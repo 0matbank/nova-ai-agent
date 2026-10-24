@@ -165,6 +165,12 @@ def create_dashboard_app(d: DashboardDeps, port: int, static_dir: Path | None) -
             raise HTTPException(404, "no such task")
         return _task(t, steps=True)
 
+    @app.get("/api/tasks/{task_id}/events")
+    async def task_events(task_id: int, after: int = 0) -> dict[str, Any]:
+        # CU-7: what the task really did, step by step; `after` = last seq seen
+        from core.notify.events import EVENTS
+        return {"task_id": task_id, "events": EVENTS.since(task_id, after)}
+
     @app.get("/api/approvals")
     async def approvals() -> dict[str, Any]:
         from sqlalchemy import select
