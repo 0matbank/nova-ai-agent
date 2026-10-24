@@ -9,6 +9,7 @@
   "tools": [
     "windows",
     "observe",
+    "act",
     "inspect",
     "read_value",
     "focus",

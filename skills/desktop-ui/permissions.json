@@ -1,6 +1,7 @@
 {
   "windows": ["ui.read"],
   "observe": ["ui.read", "ui.focus"],
+  "act": ["ui.click", "ui.type", "ui.replace_text", "ui.focus", "ui.shell_input"],
   "inspect": ["ui.read"],
   "read_value": ["ui.read"],
   "focus": ["ui.focus"],

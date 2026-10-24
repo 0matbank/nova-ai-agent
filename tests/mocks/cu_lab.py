@@ -21,6 +21,7 @@ APPS = Path(__file__).resolve().parent / "cu_apps"
 MOCKS = Path(__file__).resolve().parent
 EDGE = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
 KINDS = ("winforms", "wpf", "win32_dialog", "tk", "canvas", "web")
+EXTRA = ("dup",)                     # action tests (CU-3), not an observer technology
 
 
 def _command(kind: str, title: str, profile: Path) -> list[str]:
@@ -28,6 +29,8 @@ def _command(kind: str, title: str, profile: Path) -> list[str]:
     psargs = [ps, "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File"]
     if kind == "winforms":
         return [*psargs, str(MOCKS / "uia_target.ps1"), "-Title", title]
+    if kind == "dup":
+        return [*psargs, str(APPS / "dup.ps1"), "-Title", title]
     if kind == "wpf":
         return [*psargs, str(APPS / "wpf.ps1"), "-Title", title]
     if kind == "win32_dialog":

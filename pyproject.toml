@@ -84,6 +84,7 @@ ignore = ["S101"]  # assert is fine in tests
 "workers/desktop-worker/desktop_ui.py" = ["S112"]
 "workers/desktop-worker/desktop_inside.py" = ["S112"]
 "workers/desktop-worker/desktop_observe.py" = ["S112"]
+"workers/desktop-worker/desktop_act.py" = ["S112"]
 
 [tool.mypy]
 python_version = "3.12"

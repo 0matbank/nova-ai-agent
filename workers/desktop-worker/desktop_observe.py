@@ -10,7 +10,11 @@ for any app — no app, button or layout names anywhere in here.
   3. "sparse": the tree tells almost nothing (web-style / canvas / custom-drawn apps) —
      then the caller adds vision grounding (CU-2).
 
-Element numbers are valid for this observation only. Screen text is untrusted data.
+Element numbers are display labels valid for this observation only. Each observation
+gets an id and is kept briefly (CU-3): an action names (observation id, element number)
+and the worker proves it is still the SAME element — same window, same process, same
+UI Automation runtime id, same place — or refuses (never another button with the same
+label). Screen text is untrusted data.
 """
 
 from __future__ import annotations
@@ -18,7 +22,10 @@ from __future__ import annotations
 import base64
 import io
 import sys
+import threading
 import time
+import uuid
+from collections import OrderedDict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -38,6 +45,8 @@ ACTIONABLE = {"Button", "Edit", "TabItem", "ListItem", "MenuItem", "TreeItem", "
               "DataItem", "HeaderItem", "Document"}
 FRAME_BUTTONS = {"minimize", "maximize", "restore", "close", "system"}
 FRAME_STRIP = 48           # px from the window's top edge
+KEEP_OBSERVATIONS = 16
+OBSERVATION_TTL = 300.0    # s; the element check at action time is the real guard
 MAX_ELEMENTS = 400
 RETRY_SECONDS = 0.6
 MIN_ACTIONABLE = 3         # fewer named actionable controls → the tree is "sparse"
@@ -56,8 +65,9 @@ def _type_names(auto: Any) -> dict[int, str]:
             if isinstance(v, int) and k.endswith("Control")}
 
 
-def _collect(auto: Any, window: Any) -> list[dict[str, Any]]:
-    """All visible controls of `window` in one cached query (UFO's approach)."""
+def _collect(auto: Any, window: Any, keep: bool = False) -> list[dict[str, Any]]:
+    """All visible controls of `window` in one cached query (UFO's approach).
+    keep=True adds the live COM element under "_el" (same thread only)."""
     from uiautomation.uiautomation import _AutomationClient
     client = _AutomationClient.instance()
     iuia, core = client.IUIAutomation, client.UIAutomationCore
@@ -67,7 +77,7 @@ def _collect(auto: Any, window: Any) -> list[dict[str, Any]]:
     cache = iuia.CreateCacheRequest()
     for prop in (p.ControlTypeProperty, p.NameProperty, p.BoundingRectangleProperty,
                  p.AutomationIdProperty, p.IsEnabledProperty, p.HasKeyboardFocusProperty,
-                 p.ClassNameProperty, p.ValueValueProperty):
+                 p.ClassNameProperty, p.ValueValueProperty, p.RuntimeIdProperty):
         cache.AddProperty(prop)
     cond = iuia.CreateAndConditionFromArray([
         iuia.CreatePropertyCondition(p.IsOffscreenProperty, False),
@@ -87,10 +97,23 @@ def _collect(auto: Any, window: Any) -> list[dict[str, Any]]:
                         "enabled": bool(e.CachedIsEnabled),
                         "focused": bool(e.CachedHasKeyboardFocus),
                         "value": _cached_value(e, p.ValueValueProperty),
-                        "rect": _rect(e.CachedBoundingRectangle)})
+                        "runtime_id": _runtime_id(e, p.RuntimeIdProperty),
+                        "rect": _rect(e.CachedBoundingRectangle),
+                        **({"_el": e} if keep else {})})
         except Exception:  # noqa: BLE001 - one vanished control must not break the rest
             continue
     return out
+
+
+def _runtime_id(e: Any, prop: int) -> tuple[int, ...]:
+    try:
+        v = e.GetCachedPropertyValue(prop)
+    except Exception:  # noqa: BLE001 - no runtime id
+        return ()
+    try:
+        return tuple(int(x) for x in v)
+    except TypeError:
+        return ()
 
 
 def _cached_value(e: Any, prop: int) -> str:
@@ -222,6 +245,45 @@ def find_hwnd(spec: str) -> int:
     return hits[0]
 
 
+# ------------------------------------------------------------- observation store
+
+_STORE: OrderedDict[str, dict[str, Any]] = OrderedDict()
+_STORE_LOCK = threading.Lock()
+
+
+def process_signature(pid: int) -> float:
+    """The process start time: a reused PID is a different program."""
+    import psutil
+    try:
+        return float(psutil.Process(pid).create_time())
+    except psutil.Error:
+        return 0.0
+
+
+def _remember(window: dict[str, Any], elements: list[dict[str, Any]]) -> str:
+    oid = uuid.uuid4().hex[:12]
+    with _STORE_LOCK:
+        _STORE[oid] = {"hwnd": window["hwnd"], "pid": window["pid"],
+                       "created": process_signature(window["pid"]), "at": time.monotonic(),
+                       "elements": {e["id"]: {
+                           **{k: e[k] for k in ("rect", "name", "type", "automation_id",
+                                                "value")},
+                           "runtime_id": e.get("runtime_id", ())} for e in elements}}
+        while len(_STORE) > KEEP_OBSERVATIONS:
+            _STORE.popitem(last=False)
+    return oid
+
+
+def recall(observation_id: str) -> dict[str, Any]:
+    with _STORE_LOCK:
+        obs = _STORE.get(observation_id)
+    if obs is None:
+        raise UIError("stale_target: that observation is unknown or too old — observe again")
+    if time.monotonic() - obs["at"] > OBSERVATION_TTL:
+        raise UIError("stale_target: that observation is too old — observe again")
+    return obs
+
+
 def _target(auto: Any, window: str | None, hwnd: int | None) -> Any:
     if hwnd:
         w = auto.ControlFromHandle(hwnd)
@@ -265,7 +327,11 @@ def observe(out_dir: Path, window: str | None = None, hwnd: int | None = None,
             if len(again) > len(elements):
                 elements = again
     t1 = time.perf_counter()
-    out: dict[str, Any] = {"window": {**info, "rect": win, "foreground": front},
+    oid = _remember(info, elements)
+    for el in elements:
+        el.pop("runtime_id", None)                 # internal identity, not for the model
+    out: dict[str, Any] = {"observation_id": oid,
+                           "window": {**info, "rect": win, "foreground": front},
                            "elements": elements, "sparse": is_sparse(elements),
                            "timing_ms": {"tree": round((t1 - t0) * 1000)}}
     if image:

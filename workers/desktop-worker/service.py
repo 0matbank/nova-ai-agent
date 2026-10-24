@@ -15,9 +15,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import desktop_act  # noqa: E402
 import desktop_apps  # noqa: E402
 import desktop_clipboard  # noqa: E402
 import desktop_inside  # noqa: E402
+import desktop_lock  # noqa: E402
 import desktop_observe  # noqa: E402
 import desktop_screen  # noqa: E402
 import desktop_ui  # noqa: E402
@@ -61,6 +63,16 @@ class ObserveRequest(Strict):
     hwnd: int | None = None
     image: bool = True
     focus: bool = False                # bring it to the front first (the work loop)
+
+
+class ElementRef(Strict):
+    observation_id: str
+    element: int
+
+
+class ActRequest(ElementRef):
+    op: str = "click"
+    text: str | None = None
 
 
 class InspectRequest(Strict):
@@ -163,26 +175,38 @@ def register(app: FastAPI, ctx: AppContext | None = None) -> None:
         return await _call(desktop_observe.observe, shots_dir.parent / "observe", r.window,
                            r.hwnd, r.image, r.focus)
 
+    @app.post("/v1/ui/target")
+    async def act_target(r: ElementRef) -> Any:
+        # CU-3: what an action would hit, re-checked against the screen now
+        return await _call(desktop_act.target, r.observation_id, r.element)
+
+    @app.post("/v1/ui/act")
+    async def act(r: ActRequest) -> Any:
+        # CU-3: one element of one observation, proven unchanged right before the input
+        return await _call(desktop_act.act, r.observation_id, r.element, r.op, r.text)
+
     @app.post("/v1/ui/inspect")
     async def inspect(r: InspectRequest) -> Any:
         return await _call(desktop_ui.inspect, r.window, r.max_depth, r.limit)
 
     @app.post("/v1/ui/focus")
     async def focus(t: Target) -> Any:
-        return await _call(desktop_ui.focus, t.window)
+        return await _call(desktop_lock.leased(desktop_ui.focus), t.window)
 
     @app.post("/v1/ui/click")
     async def click(t: Target) -> Any:
-        return await _call(desktop_ui.click, t.window, t.name, t.automation_id, t.control_type)
+        return await _call(desktop_lock.leased(desktop_ui.click), t.window, t.name,
+                           t.automation_id, t.control_type)
 
     @app.post("/v1/ui/type")
     async def type_text(r: TypeRequest) -> Any:
-        return await _call(desktop_ui.type_text, r.window, r.text, r.name, r.automation_id,
+        return await _call(desktop_lock.leased(desktop_ui.type_text), r.window, r.text, r.name,
+                           r.automation_id,
                            r.control_type, replace=r.replace)
 
     @app.post("/v1/ui/keys")
     async def keys(r: KeysRequest) -> Any:
-        return await _call(desktop_ui.send_keys, r.window, r.keys)
+        return await _call(desktop_lock.leased(desktop_ui.send_keys), r.window, r.keys)
 
     @app.post("/v1/ui/value")
     async def value(t: Target) -> Any:
@@ -191,7 +215,7 @@ def register(app: FastAPI, ctx: AppContext | None = None) -> None:
 
     @app.post("/v1/ui/click_xy")
     async def click_xy(r: XYRequest) -> Any:
-        return await _call(desktop_ui.click_xy, r.x, r.y)
+        return await _call(desktop_lock.leased(desktop_ui.click_xy), r.x, r.y)
 
     # ----------------------------------------------------------- clipboard
     @app.post("/v1/clipboard/get")
