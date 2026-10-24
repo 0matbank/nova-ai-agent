@@ -34,10 +34,12 @@ def parse_task_id(args: list[str]) -> int | None:
 
 class TaskCommands:
     def __init__(self, store: TaskStore, engine: TaskEngine, list_limit: int,
-                 timezone: str, quick: Callable[[str], bool] | None = None) -> None:
+                 timezone: str, quick: Callable[[str], bool] | None = None,
+                 describe: Callable[[str], str | None] | None = None) -> None:
         self.store = store
         self.engine = engine
         self.quick = quick                    # V1.1: → the fast lane (FAST_PRIORITY)
+        self.describe = describe              # V1.2: "শুনেছি — এখন X করছি" (rules, no AI)
         self.list_limit = list_limit
         self.tz = ZoneInfo(timezone)
 
@@ -66,6 +68,14 @@ class TaskCommands:
                                  priority=FAST_PRIORITY if quick else 0)
         self.engine.wake()
         lines = [f"📥 Task #{task.id} তৈরি হয়েছে — {task.state}"]
+        doing = None
+        if self.describe is not None:
+            try:
+                doing = self.describe(text)
+            except Exception:  # noqa: BLE001 - an acknowledgement never blocks a request
+                doing = None
+        if doing:
+            lines.insert(0, f"👂 শুনেছি — এখন {doing}")
         if USER_REQUEST not in self.engine.executors:
             lines.append("AI planner এখনো চালু হয়নি (Phase 8) — তখন এই task নিজে থেকে চলবে।")
         if self.store.is_queue_paused():

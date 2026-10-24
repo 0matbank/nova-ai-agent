@@ -347,6 +347,9 @@ async def run_core_service(
     if tasks is not None:
         # V1.1 fast lane: quick deterministic requests never wait behind long AI work
         tasks.quick = lambda text: is_quick_request(text, app_resolver)
+        # V1.2: say what is about to happen, the moment the request arrives (no AI)
+        from core.router.ack import ack_for
+        tasks.describe = lambda text: ack_for(text, app_resolver)
     if engine is not None and security is not None and approvals is not None:
         # plan §9.1: side effects go through the idempotency ledger
         skill_runner = (SkillRunner(registry, ToolEnv(cfg, PathPolicy(cfg), tool_workers),
