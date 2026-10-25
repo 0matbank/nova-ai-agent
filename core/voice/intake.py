@@ -20,7 +20,7 @@ from core.config.schema import VoiceSection
 from core.log import get_logger
 from core.router.intent import classify_by_rules
 from core.voice.dictionary import SpeechDictionary
-from core.voice.speech import asks_to_repeat_in_full, spoken_answer, wants_detail
+from core.voice.speech import asks_to_repeat_in_full, same_topic, spoken_answer, wants_detail
 from core.voice.transcriber import Transcriber
 from core.voice.tts import Speaker
 
@@ -38,6 +38,8 @@ NEEDS_YOU = {
     False: {"bn": "এই কাজে আপনার একটা উত্তর লাগবে — Telegram-এ দেখুন।",
             "en": "I need an answer from you — please check Telegram."}}
 REPEATING = "🔊 আগের উত্তরটা পুরো পড়ে শোনাচ্ছি।"
+# "read it out" about the same topic this soon after an answer means that answer
+RECENT_ANSWER_SECONDS = 600
 NOTHING_TO_REPEAT = "আগের কোনো উত্তর আমার মনে নেই — Telegram-এ আগের বার্তাটা দেখুন।"
 
 
@@ -94,6 +96,8 @@ class VoiceIntake:
         # task id -> (chat, turn, what the owner said)
         self.task_turns: dict[int, tuple[str, int, str]] = {}
         # chat -> the last answer, to read in full on "পুরোটা পড়ে শোনাও"
+        # chat -> (what the owner asked for it, when it was answered)
+        self.last_request: dict[str, tuple[str, float]] = {}
         self.last_full: dict[str, str] = {}
         self._noticed: set[tuple[int, bool]] = set()
         self.progress_after = PROGRESS_AFTER_SECONDS
@@ -118,6 +122,7 @@ class VoiceIntake:
                            max_chars=self.max_chars)
         if chat_id:
             self.last_full[chat_id] = say
+            self.last_request[chat_id] = (request, time.time())
         return sp.text
 
     async def _spoken(self, reply: OutgoingMessage, say: str, chat_id: str = "",
@@ -182,6 +187,18 @@ class VoiceIntake:
         say = " ".join(x for x in (line, WORKING[lang]) if x)
         await self._spoken(OutgoingMessage(""), say, chat_id, here, turn=turn, as_is=True)
 
+    def about_last_answer(self, chat_id: str, text: str) -> bool:
+        """"Read it out / in detail / again" about the last answer — said outright, or
+        about the same topic soon after it (owner 2026-10-25: Whisper broke every
+        exact phrase — «পিসিজে স্ট্যাটাস … সেটা পরে আমাকে শোনা»)."""
+        if asks_to_repeat_in_full(text):
+            return True
+        if not wants_detail(text) or chat_id not in self.last_full:
+            return False
+        asked, when = self.last_request.get(chat_id, ("", 0.0))
+        return (time.time() - when < RECENT_ANSWER_SECONDS
+                and same_topic(text, asked, self.last_full[chat_id]))
+
     def task_speech(self, task_id: int, result: str, completed: bool) -> str | None:
         """What to say when a voice task ends — None when a newer voice command came."""
         entry = self.task_turns.pop(task_id, None)
@@ -196,6 +213,7 @@ class VoiceIntake:
                            said_in=request, max_chars=self.max_chars)
         if chat_id and result:
             self.last_full[chat_id] = result
+            self.last_request[chat_id] = (request, time.time())
         return sp.text
 
     def notice_speech(self, task_id: int, approval: bool) -> str | None:
@@ -269,7 +287,7 @@ class VoiceIntake:
                 heard += f"\n📖 অভিধানে ঠিক করলাম: «{text}»"
                 _log.info(f"speech dictionary: {len(fixed.changes)} fix(es) applied",
                           extra={"action": "voice.dictionary", "status": "ok"})
-        if asks_to_repeat_in_full(text):
+        if self.about_last_answer(msg.chat_id, text):
             # V1.2: "পুরোটা পড়ে শোনাও" — the last answer in full, never a new task
             last = self.last_full.get(msg.chat_id)
             if last is None:

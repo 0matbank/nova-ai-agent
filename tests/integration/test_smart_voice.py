@@ -20,7 +20,7 @@ from core.voice.intake import VoiceIntake
 from core.voice.ptt import PcVoice, PushToTalk
 from core.voice.speech import asks_to_repeat_in_full, spoken_answer, wants_detail
 from tests.integration.test_push_to_talk import FakeListener, FakeRecorder, tone
-from tests.integration.test_voice import SETTINGS, FakeModel, fake_download, make, voice_msg
+from tests.integration.test_voice import SETTINGS, Echo, FakeModel, fake_download, make, voice_msg
 
 PC_STATUS = ("CPU: 15%\nRAM: 73% (11.0/15.1 GB)\nDisk free: 82/109 GB (D:)\n"
              "GPU: NVIDIA GeForce RTX 5060 Ti — 100%, VRAM 13.4/15.9 GB, 55°C\n"
@@ -356,3 +356,20 @@ def test_nothing_remembered_is_said_plainly_never_a_new_task(tmp_path: Path) -> 
     out = asyncio.run(go())
     assert routed == [] and "আগের কোনো উত্তর আমার মনে নেই" in out.text
     assert here.said == ["আগের কোনো উত্তর আমার মনে নেই — Telegram-এ আগের বার্তাটা দেখুন।"]
+
+
+def test_read_it_out_about_the_same_topic_soon_after_means_that_answer(tmp_path: Path) -> None:
+    """Owner 2026-10-25, third try: «পিসিজে স্ট্যাটাস আমাকে দিলে, সেটা পরে আমাকে শোনা» —
+    «যে» glued onto «পিসি». Asking to hear it, about the same topic, soon after → that
+    answer; a different topic or too late → a new request."""
+    vi = _intake(tmp_path, "x", Echo())
+    import time as _t
+    vi.last_full["555"] = PC_STATUS
+    vi.last_request["555"] = ("পিসির বট্তোমন অবস্থা বলো", _t.time())
+    glued = "পিসিজে স্ট্যাটাস আমাকে দিলে, সেটা পরে আমাকে শোনা, উপরাটা পরে"
+    assert vi.about_last_answer("555", glued)
+    assert vi.about_last_answer("555", "CPU টা বিস্তারিত বলো")          # a word of the answer
+    assert not vi.about_last_answer("555", "আজকের খবর পড়ে শোনাও")       # another topic
+    assert not vi.about_last_answer("555", "পিসির বর্তমান স্ট্যাটাস বলো")  # a new ask
+    vi.last_request["555"] = ("পিসির বট্তোমন অবস্থা বলো", _t.time() - 3600)
+    assert not vi.about_last_answer("555", glued.replace("যে", ""))     # an hour later

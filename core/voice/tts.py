@@ -114,6 +114,28 @@ class TTSBudget:
                                  encoding="utf-8")
 
 
+def rate_limit_info(r: httpx.Response) -> tuple[float | None, str]:
+    """(seconds to wait, which quota) from a 429 — Retry-After or Google's RetryInfo."""
+    wait: float | None = None
+    quota = ""
+    header = r.headers.get("retry-after", "")
+    if header.replace(".", "", 1).isdigit():
+        wait = float(header)
+    try:
+        details = r.json().get("error", {}).get("details", [])
+    except ValueError:
+        details = []
+    for d in details if isinstance(details, list) else []:
+        delay = str(d.get("retryDelay", ""))
+        if delay.endswith("s") and delay[:-1].replace(".", "", 1).isdigit():
+            wait = float(delay[:-1])
+        for v in d.get("violations", []) or []:
+            quota = quota or str(v.get("quotaId", ""))[:80]
+    if wait is not None:
+        wait = min(max(wait, 5.0), 6 * 3600.0)
+    return wait, quota
+
+
 class GeminiTTS:
     """Google Gemini speech generation (REST `interactions`, verified 2026-09-25)."""
 
@@ -145,8 +167,12 @@ class GeminiTTS:
         except (httpx.TimeoutException, httpx.TransportError) as e:
             raise RuntimeError(f"gemini tts network error ({type(e).__name__})") from None
         if r.status_code == 429:
-            self.cooldown_until = time.time() + self.COOLDOWN_SECONDS
-            raise RuntimeError("gemini tts rate limited (free tier)")
+            # wait as long as Google says (a per-minute limit is seconds, a daily one hours)
+            wait, quota = rate_limit_info(r)
+            self.cooldown_until = time.time() + (wait or self.COOLDOWN_SECONDS)
+            raise RuntimeError(f"gemini tts rate limited (free tier"
+                               f"{', ' + quota if quota else ''}; "
+                               f"retry in {int(wait or self.COOLDOWN_SECONDS)}s)")
         if r.status_code in (401, 403):
             raise RuntimeError(f"gemini tts auth error {r.status_code} — check GEMINI_API_KEY")
         if r.status_code != 200:

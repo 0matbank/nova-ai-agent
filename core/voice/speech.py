@@ -105,6 +105,27 @@ def wants_detail(text: str) -> bool:
                 or _READ_GLUED.search(_glued(text)))
 
 
+# words that say nothing about WHAT the owner wants to hear
+_NOT_TOPIC = re.compile(
+    r"^(?:আমাকে|আমার|আমি|তুমি|তোমার|আপনি|যে|যা|জে|সেটা|সেটি|সেতি|ওটা|এটা|একটু|আবার|এখন|"
+    r"বলো|বল|দাও|দিলে|দিলা|দিয়েছিলে|শোনাও|শুনাও|পড়ে|পরে|পুরোটা|বিস্তারিত|কি|কী|টা|"
+    r"বলেছি|বললাম|amake|amar|ami|tumi|je|ja|seta|ota|eta|bolo|dao|dile|shonao|pore|"
+    r"please|the|it|that|me|my|you|your|to|read|tell|say|again|all|full|details?)$",
+    re.IGNORECASE)
+
+
+def _topic_words(text: str) -> set[str]:
+    words = re.findall(r"[\u0980-\u09ffA-Za-z0-9]+", text)
+    return {w.lower()[:3] for w in words if len(w) >= 2 and not _NOT_TOPIC.match(w)}
+
+
+def same_topic(text: str, *earlier: str) -> bool:
+    """Shares a topic word with what came before («পিসিজে স্ট্যাটাস» ~ «পিসির অবস্থা»):
+    compared by the first three letters, so Whisper's endings and splits do not matter."""
+    mine = _topic_words(text)
+    return bool(mine & set().union(*(_topic_words(e) for e in earlier)))
+
+
 def asks_to_repeat_in_full(text: str) -> bool:
     """About the last answer, not a new task: only "read it all", or "read out what you
     gave me" (owner 2026-10-25: «পিসির যে স্ট্যাটাস আমাকে দিলে, সেটি আমাকে পড়ে শোনাও»)."""

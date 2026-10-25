@@ -231,3 +231,23 @@ def test_budget_guard_persists_and_blocks(tmp_path: Path) -> None:
     b.spend(8)
     assert not TTSBudget(tmp_path / "b.json", 10).allows(5)   # survives restart
     assert TTSBudget(tmp_path / "b.json", 10).allows(2)
+
+
+@pytest.mark.parametrize(("headers", "body", "wait", "quota"), [
+    ({}, {"error": {"details": [
+        {"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+         "violations": [{"quotaId": "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"}]},
+        {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "38s"}]}},
+     38.0, "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"),
+    ({"retry-after": "120"}, {}, 120.0, ""),
+    ({}, {}, None, ""),
+])
+def test_rate_limit_waits_as_long_as_google_says(headers: dict, body: dict,
+                                                  wait: float | None, quota: str) -> None:
+    """V1.2 (owner 2026-10-25: «the voice is so artificial»): a 429 kept the owner's
+    Gemini voice off for a fixed 10 minutes; now only as long as Google asks."""
+    import httpx
+
+    from core.voice.tts import rate_limit_info
+    r = httpx.Response(429, headers=headers, json=body)
+    assert rate_limit_info(r) == (wait, quota)
