@@ -4,13 +4,11 @@ invocations are terminal.read (GREEN); everything else is terminal.run (RED)."""
 
 from __future__ import annotations
 
-import asyncio
 import shutil
 from pathlib import Path
 
-import psutil
-
 from core.skills.api import Params, PolicyDenied, Tool, ToolEnv, ToolResult
+from core.skills.proc import run_contained
 
 MAX_OUTPUT = 20_000
 VERSION_FLAGS = {"--version", "-v", "-V", "version"}
@@ -65,35 +63,25 @@ def action(p: P, env: ToolEnv) -> str:
     return "terminal.read" if is_read_only(p.program, p.args) else "terminal.run"
 
 
-def _kill_tree(pid: int) -> None:
-    try:
-        parent = psutil.Process(pid)
-    except psutil.NoSuchProcess:
-        return
-    for child in parent.children(recursive=True):
-        child.kill()
-    parent.kill()
-
-
 async def run(p: P, env: ToolEnv) -> ToolResult:
     exe = shutil.which(p.program)
     assert exe is not None
     cwd = str(env.paths.resolve(p.cwd)) if p.cwd else str(env.paths.workspace)
-    proc = await asyncio.create_subprocess_exec(
-        exe, *p.args, cwd=cwd, stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    try:
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=p.timeout_seconds)
-    except TimeoutError:
-        _kill_tree(proc.pid)
-        await proc.wait()
-        return ToolResult(False, f"timed out after {p.timeout_seconds}s", {"exit_code": None})
-    stdout = out.decode("utf-8", errors="replace")
-    stderr = err.decode("utf-8", errors="replace")
-    return ToolResult(proc.returncode == 0, f"{Path(exe).name} exit {proc.returncode}",
-                      {"exit_code": proc.returncode, "stdout": stdout[:MAX_OUTPUT],
-                       "stderr": stderr[:MAX_OUTPUT], "program": exe},
-                      {"exit_code": proc.returncode}, untrusted=True)
+    # V1.2 hardening: input closed, no secret-named env, output capped, the whole tree
+    # ends on a timeout or a cancelled task
+    done = await run_contained([exe, *p.args], cwd=cwd, timeout=p.timeout_seconds,
+                               max_output=MAX_OUTPUT)
+    stdout = done.stdout.decode("utf-8", errors="replace")
+    stderr = done.stderr.decode("utf-8", errors="replace")
+    if done.timed_out:
+        return ToolResult(False, f"timed out after {p.timeout_seconds}s — every process it "
+                                 "started was ended",
+                          {"exit_code": None, "stdout": stdout, "stderr": stderr},
+                          untrusted=True)
+    return ToolResult(done.exit_code == 0, f"{Path(exe).name} exit {done.exit_code}",
+                      {"exit_code": done.exit_code, "stdout": stdout, "stderr": stderr,
+                       "program": exe, "truncated": done.truncated},
+                      {"exit_code": done.exit_code}, untrusted=True)
 
 
 TOOL = Tool(name="run", params=P, run=run, action=action,

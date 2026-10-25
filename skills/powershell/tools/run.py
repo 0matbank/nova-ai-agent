@@ -4,19 +4,28 @@ powershell.run RED with the exact command shown for approval."""
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import importlib.util
 import sys
 from pathlib import Path
 
-import psutil
-
 from core.skills.api import Params, PolicyDenied, Tool, ToolEnv, ToolResult
+from core.skills.proc import clean_env, run_contained
 
 MAX_OUTPUT = 20_000
 PREAMBLE = ("[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
             "$ProgressPreference='SilentlyContinue';")
+# V1.2 hardening: the command travels in this environment variable, not on the command
+# line (no process list shows it, no 32k limit); PowerShell clears it before running it,
+# so nothing the command starts can read it back
+COMMAND_VAR = "NOVA_PS_COMMAND"
+LOADER = (f"$nova_c=[Environment]::GetEnvironmentVariable('{COMMAND_VAR}');"
+          f"[Environment]::SetEnvironmentVariable('{COMMAND_VAR}',$null);"
+          "& ([ScriptBlock]::Create($nova_c))")
+# -Command exits 1 when the last command failed; a script block alone exits 0 — this
+# line keeps that meaning (measured: same exit codes as before for failures, exit N,
+# native failures, throw)
+EXIT_TAIL = "\nif (-not $?) { exit 1 }"
 
 
 def _classifier():  # type: ignore[no-untyped-def]
@@ -58,37 +67,27 @@ def summary(p: P) -> str:
     return f"PowerShell command:\n{p.command[:1500]}\n\nClassifier: {v.reason}"
 
 
-def _kill_tree(pid: int) -> None:
-    try:
-        parent = psutil.Process(pid)
-    except psutil.NoSuchProcess:
-        return
-    for child in parent.children(recursive=True):
-        child.kill()
-    parent.kill()
-
-
 async def run(p: P, env: ToolEnv) -> ToolResult:
     exe = _classifier()._powershell()
-    encoded = base64.b64encode((PREAMBLE + p.command).encode("utf-16-le")).decode()
+    loader = base64.b64encode(LOADER.encode("utf-16-le")).decode()
     cwd = str(env.paths.resolve(p.cwd)) if p.cwd else str(env.paths.workspace)
-    proc = await asyncio.create_subprocess_exec(
-        exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-        "-EncodedCommand", encoded, cwd=cwd,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    try:
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=p.timeout_seconds)
-    except TimeoutError:
-        _kill_tree(proc.pid)
-        await proc.wait()
-        return ToolResult(False, f"timed out after {p.timeout_seconds}s", {"exit_code": None})
-    stdout = out.decode("utf-8", errors="replace")
-    stderr = err.decode("utf-8", errors="replace")
-    ok = proc.returncode == 0
-    return ToolResult(ok, f"exit {proc.returncode}, {len(stdout)} chars of output",
-                      {"exit_code": proc.returncode, "stdout": stdout[:MAX_OUTPUT],
-                       "stderr": stderr[:MAX_OUTPUT], "truncated": len(stdout) > MAX_OUTPUT},
-                      {"exit_code": proc.returncode}, untrusted=True)
+    done = await run_contained(
+        [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+         "-EncodedCommand", loader], cwd=cwd, timeout=p.timeout_seconds,
+        env=clean_env({COMMAND_VAR: PREAMBLE + p.command + EXIT_TAIL}),
+        max_output=MAX_OUTPUT)
+    stdout = done.stdout.decode("utf-8", errors="replace")
+    stderr = done.stderr.decode("utf-8", errors="replace")
+    if done.timed_out:
+        return ToolResult(False, f"timed out after {p.timeout_seconds}s — every process it "
+                                 "started was ended",
+                          {"exit_code": None, "stdout": stdout, "stderr": stderr},
+                          untrusted=True)
+    ok = done.exit_code == 0
+    return ToolResult(ok, f"exit {done.exit_code}, {len(stdout)} chars of output",
+                      {"exit_code": done.exit_code, "stdout": stdout, "stderr": stderr,
+                       "truncated": done.truncated},
+                      {"exit_code": done.exit_code}, untrusted=True)
 
 
 TOOL = Tool(name="run", params=P, run=run, action=action, target=lambda p: p.command[:300],

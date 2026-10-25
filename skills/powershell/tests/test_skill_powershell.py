@@ -90,3 +90,26 @@ def test_timeout_kills(s: SkillEnv) -> None:
     r, _ = s.call_with_approval("powershell", "run",
                                 {"command": "Start-Sleep 30", "timeout_seconds": 2})
     assert r is not None and not r.ok and "timed out" in r.summary
+
+
+def test_the_command_is_not_on_the_command_line_nor_left_in_the_env(s: SkillEnv) -> None:
+    """V1.2 hardening: the command travels in an environment variable that PowerShell
+    clears before running it — no process list shows it, nothing it starts reads it."""
+    marker = "nova-marker-7f3a"
+    cmd = (f"Get-CimInstance Win32_Process -Filter \"ProcessId=$PID\" | "
+           f"Select-Object -ExpandProperty CommandLine; "
+           f"Get-ChildItem env:NOVA_PS_COMMAND -ErrorAction SilentlyContinue | "
+           f"Select-Object -ExpandProperty Value; '{marker}'")
+    r = s.call("powershell", "run", {"command": cmd})
+    assert r.ok, r.summary
+    lines = [ln for ln in r.data["stdout"].splitlines() if ln.strip()]
+    command_line, last = lines[0], lines[-1]
+    assert "-EncodedCommand" in command_line and marker not in command_line
+    assert last == marker and len(lines) == 2          # the variable was already gone
+
+
+def test_exit_codes_survive_the_loader(s: SkillEnv) -> None:
+    r, _ = s.call_with_approval("powershell", "run", {"command": "exit 7"})
+    assert r is not None and not r.ok and r.data["exit_code"] == 7
+    r = s.call("powershell", "run", {"command": "Get-Item C:/definitely-not-here-nova"})
+    assert not r.ok and r.data["exit_code"] == 1 and "definitely-not-here" in r.data["stderr"]

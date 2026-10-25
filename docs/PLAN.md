@@ -3307,8 +3307,13 @@ Telegram voice-এর দেরি মাপা ও কমানো, installed a
   - ফল কণ্ঠে বলে না (Telegram-এ «⌨️ PC-তে dictation»)।
   - আসল পরীক্ষা (Nova-র নিজের test window): cursor শুরুতে রেখে «নোভা » → «নোভা existing text» (বাংলা, cursor-এর জায়গায়); অন্য window হলে কিছুই লেখে না।
   - owner-এর নিজের app-এ আসল পরীক্ষা বাকি (owner করবেন)।
+- ✓ **PowerShell / terminal runner শক্ত করা** (core/skills/proc.py)।
+  - command আর command line-এ নয়: environment দিয়ে যায়, PowerShell চালুর সাথে সাথে মুছে ফেলে (process তালিকায় দেখা যায় না, ভেতরের কিছু পড়তে পারে না)।
+  - সময় পেরোলে বা task বাতিল হলে পুরো tree বন্ধ — Windows Job Object, যেটা বাবা বেরিয়ে যাওয়া নাতি process-ও ধরে; স্বাভাবিকভাবে শেষ হলে চালু করা app চলতে থাকে।
+  - input বন্ধ, output-এর সীমা (বিশাল output-এ memory ভরে না), গোপন-নামের env child-এ যায় না।
+  - পরীক্ষায় ধরা পড়া ২টা পুরোনো ত্রুটিও ঠিক: child process pipe ধরে রাখলে runner সময় শেষ পর্যন্ত আটকে থাকত; task বাতিলে PowerShell চলতেই থাকত।
+  - exit code-এর অর্থ আগের মতোই (মাপা: ব্যর্থ command=1, exit N=N, native ব্যর্থ=1, throw=1) — নইলে ব্যর্থ কাজ «সফল» দেখাত।
 - বাকি:
   - wake phrase + টানা কথোপকথন + মাঝপথে থামানো (ঐচ্ছিক)
   - ভাসমান orb
-  - PowerShell runner শক্ত করা
   - sidecar
