@@ -132,6 +132,17 @@ class TTSSection(Strict):
     rate: Annotated[str, Field(pattern=r"^[+-]\d{1,2}%$")] = "+0%"
 
 
+class PushToTalkSection(Strict):
+    """V1.2: hold a shortcut on the PC and speak (the microphone is open only while held)."""
+    enabled: bool = False
+    hotkey: Annotated[str, Field(pattern=r"^((ctrl|control|alt|shift|win)\+)*[a-z0-9]+$")] = (
+        "ctrl+alt+space")
+    max_seconds: Annotated[float, Field(ge=3, le=120)] = 60
+    min_seconds: Annotated[float, Field(ge=0.1, le=5)] = 0.4
+    cue: bool = True                 # a short tone when listening starts and stops
+    speak_on_pc: bool = True         # the spoken answer plays on the PC speakers
+
+
 class VoiceSection(Strict):
     max_duration_seconds: Annotated[int, Field(ge=5, le=1800)]
     confirm_below_confidence: Annotated[float, Field(ge=0.0, le=1.0)]
@@ -144,6 +155,7 @@ class VoiceSection(Strict):
     # V1.1: give Whisper this many installed app names as hotwords (0 = off)
     app_hotwords: Annotated[int, Field(ge=0, le=80)] = 0
     tts: TTSSection = TTSSection()
+    ptt: PushToTalkSection = PushToTalkSection()
 
 
 class WhatsAppSection(Strict):

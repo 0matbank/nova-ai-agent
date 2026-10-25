@@ -33,6 +33,8 @@ LANG_NAME = {"bn": "বাংলা", "en": "English"}
 Corrector = Callable[[str, str], Awaitable[str | None]]   # (heard, language) -> suggestion
 LowRisk = Callable[[str], bool]
 Sender = Callable[[str, OutgoingMessage], Awaitable[object]]
+# V1.2 push-to-talk: speak the answer where the owner spoke (the PC), not as a voice note
+SayHere = Callable[[str], Awaitable[None]]
 
 READ_ONLY_INTENTS = frozenset({"pc_status", "screenshot", "processes", "open_windows"})
 # \b does not work inside Bengali script: require no Bengali letter on either side,
@@ -74,19 +76,35 @@ class VoiceIntake:
         # Tasks started by voice: their final answer is spoken too (voice mode).
         # task id -> when its voice note arrived (end-to-end time is logged at the end)
         self.voice_tasks: dict[int, float] = {}
-        # nonce -> (message, {"y": suggested text, "h": heard text}, expires_at)
-        self._pending: dict[str, tuple[IncomingMessage, dict[str, str], float]] = {}
+        # task id -> where its final answer is spoken (a task started on the PC)
+        self.said_here: dict[int, SayHere] = {}
+        # nonce -> (message, {"y": suggested text, "h": heard text}, expires_at, say here)
+        self._pending: dict[str, tuple[IncomingMessage, dict[str, str], float,
+                                       SayHere | None]] = {}
 
-    async def _spoken(self, reply: OutgoingMessage, say: str,
-                      chat_id: str = "") -> OutgoingMessage:
+    async def _spoken(self, reply: OutgoingMessage, say: str, chat_id: str = "",
+                      here: SayHere | None = None) -> OutgoingMessage:
+        if here is not None:
+            if say:
+                self._background(self._say_here(here, say))
+            return reply
         if self.speaker is None or not self.speaker.enabled or not say:
             return reply
         if self.send is not None and chat_id:
-            job = asyncio.create_task(self._speak_later(chat_id, say))
-            self._speaking.add(job)
-            job.add_done_callback(self._speaking.discard)
+            self._background(self._speak_later(chat_id, say))
             return reply
         return dataclasses.replace(reply, voice=await self.speaker.synthesize(say))
+
+    def _background(self, work: Awaitable[None]) -> None:
+        job = asyncio.ensure_future(work)
+        self._speaking.add(job)
+        job.add_done_callback(self._speaking.discard)
+
+    async def _say_here(self, here: SayHere, say: str) -> None:
+        try:
+            await here(say)
+        except Exception:
+            _log.exception("spoken reply on the PC failed", extra={"action": "voice.tts"})
 
     async def _speak_later(self, chat_id: str, say: str) -> None:
         assert self.speaker is not None and self.send is not None
@@ -97,9 +115,16 @@ class VoiceIntake:
         except Exception:
             _log.exception("spoken reply failed", extra={"action": "voice.tts"})
 
-    def _track(self, reply: OutgoingMessage | None, started: float) -> None:
+    def _track(self, reply: OutgoingMessage | None, started: float,
+               here: SayHere | None = None) -> None:
         if reply is not None and reply.task_id is not None:
             self.voice_tasks[reply.task_id] = started
+            if here is not None:
+                self.said_here[reply.task_id] = here
+
+    def here(self, task_id: int) -> SayHere | None:
+        """Where a voice task's final answer is spoken, when not as a voice note."""
+        return self.said_here.pop(task_id, None)
 
     def finish(self, task_id: int) -> float | None:
         """A voice task ended: log its whole time (voice note → final answer)."""
@@ -110,14 +135,16 @@ class VoiceIntake:
                                                    "task_id": task_id})
         return started
 
-    async def handle(self, msg: IncomingMessage, download: Downloader) -> OutgoingMessage:
+    async def handle(self, msg: IncomingMessage, download: Downloader,
+                     here: SayHere | None = None) -> OutgoingMessage:
         assert msg.voice is not None
         if msg.voice.duration > self.settings.max_duration_seconds:
             return OutgoingMessage(f"🎙️ Voice অনেক লম্বা ({msg.voice.duration}s) — সর্বোচ্চ "
                                    f"{self.settings.max_duration_seconds}s।")
         self.audio_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f")
-        path = self.audio_dir / f"voice-{stamp}.ogg"
+        suffix = ".wav" if msg.voice.mime_type == "audio/wav" else ".ogg"
+        path = self.audio_dir / f"voice-{stamp}{suffix}"
         started, t0 = time.time(), time.perf_counter()
         # V1.1: a cold Whisper load runs while the voice note downloads
         warm = asyncio.create_task(self.transcriber.warm())
@@ -138,7 +165,7 @@ class VoiceIntake:
                   extra={"action": "voice.transcribe", "status": "ok"})
         if not t.text:
             ask = "কিছু বুঝতে পারিনি — আবার একটু স্পষ্ট করে বলবেন?"
-            return await self._spoken(OutgoingMessage(f"🎙️ {ask}"), ask, msg.chat_id)
+            return await self._spoken(OutgoingMessage(f"🎙️ {ask}"), ask, msg.chat_id, here)
 
         heard = (f"🎙️ শুনলাম ({LANG_NAME.get(t.language, t.language)}, "
                  f"{t.confidence:.0%}): «{t.text}»")
@@ -156,10 +183,10 @@ class VoiceIntake:
         threshold = (self.settings.confirm_below_confidence_safe if safe
                      else self.settings.confirm_below_confidence)
         if t.confidence < threshold:
-            return await self._ask_to_confirm(text_msg, text, t.language, heard)
+            return await self._ask_to_confirm(text_msg, text, t.language, heard, here)
         r0 = time.perf_counter()
         reply = await self.handle_text(text_msg)
-        self._track(reply, started)
+        self._track(reply, started, here)
         _log.info(f"voice timing: download {t_download:.2f}s, whisper load {load:.1f}s, "
                   f"transcribe {t.seconds:.2f}s, hand-off {time.perf_counter() - r0:.2f}s,"
                   f" total {time.perf_counter() - t0:.2f}s",
@@ -170,10 +197,10 @@ class VoiceIntake:
                               task_id=reply.task_id if reply else None)
         # A task's answer is spoken when it completes; a direct reply is spoken now.
         return out if out.task_id is not None else await self._spoken(
-            out, reply.text if reply else "", msg.chat_id)
+            out, reply.text if reply else "", msg.chat_id, here)
 
     async def _ask_to_confirm(self, msg: IncomingMessage, text: str, language: str,
-                              heard: str) -> OutgoingMessage:
+                              heard: str, here: SayHere | None = None) -> OutgoingMessage:
         """Never guess: show what was heard (and a suggested reading), run nothing
         until the owner taps ✅ (plan §7)."""
         suggestion = None
@@ -185,7 +212,8 @@ class VoiceIntake:
         self._expire()
         nonce = secrets.token_urlsafe(9)
         choices = {"y": suggestion or text, "h": text}
-        self._pending[nonce] = (msg, choices, time.time() + self.settings.confirm_timeout_seconds)
+        self._pending[nonce] = (msg, choices, time.time() + self.settings.confirm_timeout_seconds,
+                                here)
         base = f"{CALLBACK_PREFIX}:{nonce}"
         if suggestion and suggestion.strip() != text.strip():
             body = (f"{heard}\n\n🤔 পুরোপুরি নিশ্চিত নই। আপনি কি এটা বলতে চেয়েছেন?\n"
@@ -197,11 +225,11 @@ class VoiceIntake:
             body = f"{heard}\n\nঠিক শুনেছি তো? নিশ্চিত না হওয়া পর্যন্ত কিছু চালাব না।"
             buttons = [[("✅ ঠিক আছে, চালাও", f"{base}:y"), ("🔁 আবার বলব", f"{base}:n")]]
             say = f"ঠিক শুনেছি তো? আপনি বলেছেন: {text}?"
-        return await self._spoken(OutgoingMessage(body, buttons), say, msg.chat_id)
+        return await self._spoken(OutgoingMessage(body, buttons), say, msg.chat_id, here)
 
     def _expire(self) -> None:
         now = time.time()
-        for k in [k for k, (_, _c, exp) in self._pending.items() if exp < now]:
+        for k in [k for k, (_, _c, exp, _h) in self._pending.items() if exp < now]:
             del self._pending[k]
 
     async def on_button(self, cb: IncomingCallback) -> CallbackReply:
@@ -213,7 +241,7 @@ class VoiceIntake:
         if entry is None:
             return CallbackReply("সময় শেষ বা আগেই সিদ্ধান্ত হয়েছে",
                                  f"{cb.message_text}\n\n⌛ বাতিল")
-        msg, choices, _ = entry
+        msg, choices, _, here = entry
         if msg.chat_id != cb.chat_id:
             return CallbackReply("Not allowed")
         if parts[2] not in choices:
@@ -225,7 +253,7 @@ class VoiceIntake:
             # (the second confirmation of the same change is learned)
             self.dictionary.observe(choices["h"], chosen)
         reply = await self.handle_text(dataclasses.replace(msg, text=chosen))
-        self._track(reply, time.time())
+        self._track(reply, time.time(), here)
         result = reply.text if reply else "✅"
         return CallbackReply("✅ চালানো হচ্ছে",
                              f"{cb.message_text}\n\n✅ নিশ্চিত: «{chosen}»\n{result}")

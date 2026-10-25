@@ -83,6 +83,7 @@ from core.voice.correct import suggest as suggest_correction
 from core.voice.dictionary import DbStore, SpeechDictionary
 from core.voice.intake import CALLBACK_PREFIX as VOICE_PREFIX
 from core.voice.intake import VoiceIntake
+from core.voice.ptt import PushToTalk, pc_turn, speak_on_pc
 from core.voice.transcriber import Transcriber
 from core.voice.tts import GeminiTTS, Speaker, TTSBudget
 from core.whatsapp_service import start_whatsapp
@@ -402,11 +403,15 @@ async def run_core_service(
 
     async def speak_final_answer(chat_id: str, kind: MessageType, task_id: int) -> None:
         """Voice mode (plan §57): a task started by voice gets its answer spoken."""
+        here = voice.here(task_id)              # V1.2: started on the PC → spoken there
         if voice.finish(task_id) is None or store is None:
             return
         task = store.get(task_id)
         done = kind is MessageType.TASK_COMPLETED and task is not None and task.result_summary
         say = task.result_summary if done and task else "দুঃখিত, কাজটা শেষ করা যায়নি।"
+        if here is not None:
+            await here(str(say))
+            return
         audio = await speaker.synthesize(str(say))
         if audio is not None:
             await channel.send(chat_id, OutgoingMessage("", voice=audio))
@@ -514,9 +519,25 @@ async def run_core_service(
         owner = sorted(channel.whitelist.chat_ids)
         scheduler.sync_static(cfg.schedules.schedules, owner[0] if owner else None)
         background.append(asyncio.create_task(scheduler.run(stop)))
+    # V1.2 push-to-talk (off unless enabled): hold the shortcut on the PC and speak
+    ptt_cfg = cfg.default.voice.ptt
+    ptt: PushToTalk | None = None
+    if ptt_cfg.enabled and channel.whitelist.chat_ids:
+        owner_chat = sorted(channel.whitelist.chat_ids)[0]
+        say_here = speak_on_pc(speaker) if ptt_cfg.speak_on_pc else None
+
+        async def on_pc_voice(wav: bytes, seconds: float) -> None:
+            _record(store, "telegram", owner_chat, "in", "<pc voice>", None)
+            await pc_turn(voice, send_and_record, owner_chat, wav, seconds, say_here)
+
+        ptt = PushToTalk(ptt_cfg, asyncio.get_running_loop(), on_pc_voice)
+        if not ptt.start():
+            ptt = None
     try:
         await channel.run(stop)
     finally:
+        if ptt is not None:
+            ptt.stop()
         # plan §32A graceful shutdown: 1–2 no new task / message (Telegram keeps new
         # messages until we are back), 3–6 the running task stops at its next checkpoint
         # (state is in the DB), then going-offline notice, AI drain, DB + logs closed
