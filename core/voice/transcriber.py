@@ -95,6 +95,11 @@ class Transcriber:
         self.vad_speech_pad_ms = vad_speech_pad_ms
         # V1.1: installed app names, so "Premiere Pro" is not heard as "প্রিমিয় প্রো"
         self.hotwords: str | None = None
+        # V1.2: the owner's own words (Speech Dictionary) — first, so a long app list is
+        # what gets cut at Whisper's prompt limit. Measured 2026-10-25 (real large-v3, two
+        # edge Bangla voices): owner words as hotwords 6/6 heard right, no other phrase
+        # worse; the same words in initial_prompt 5/6 and "পিসির অবস্থা" turned English.
+        self.owner_words: str | None = None
         self.pressure = pressure
         self.last_load_seconds = 0.0      # cold load paid by the last transcription
         self._load_seconds = 0.0
@@ -163,8 +168,9 @@ class Transcriber:
         kwargs: dict[str, Any] = {"language": language, "beam_size": self.beam_size,
                                   "vad_filter": vad, "condition_on_previous_text": False,
                                   "initial_prompt": self.initial_prompt}
-        if self.hotwords:
-            kwargs["hotwords"] = self.hotwords
+        hot = ", ".join(w for w in (self.owner_words, self.hotwords) if w)
+        if hot:
+            kwargs["hotwords"] = hot
         if vad:
             kwargs["vad_parameters"] = {"speech_pad_ms": self.vad_speech_pad_ms}
         segments, info = model.transcribe(audio, **kwargs)

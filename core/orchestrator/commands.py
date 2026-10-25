@@ -18,6 +18,7 @@ from core.orchestrator.screen_commands import ScreenCommands
 from core.orchestrator.security_commands import SecurityCommands
 from core.orchestrator.skill_commands import SkillCommands
 from core.orchestrator.task_commands import TaskCommands
+from core.voice.dictionary import SpeechDictionary, run_command
 
 # Every command from plan §27. Ones without a handler yet reply "not yet".
 ALL_COMMANDS = (
@@ -25,6 +26,7 @@ ALL_COMMANDS = (
     "/pc", "/skills", "/agents", "/logs", "/restart-agent", "/update", "/lockdown", "/help",
     "/memory",                      # Phase 17 addition: what Nova keeps about each project
     "/schedules",                   # Phase 19 addition: scheduled jobs (plan §39)
+    "/words",                       # V1.2 addition: the Speech Dictionary
 )
 
 COMMAND_DESCRIPTIONS = {
@@ -41,6 +43,7 @@ COMMAND_DESCRIPTIONS = {
     "/agents": "Specialist ও project agent-দের তালিকা",
     "/memory": "Project memory: /memory <project> (মুছতে: forget <id>)",
     "/schedules": "Schedule-এর তালিকা (বাতিল: /schedules cancel <id>)",
+    "/words": "কণ্ঠের অভিধান: /words পিছি = পিসি (মুছতে: /words forget পিছি)",
     "/lockdown": "Emergency: সব dangerous কাজ বন্ধ (off দিলে খোলে)",
     "/restart-agent": "Nova restart (চলমান কাজ checkpoint থেকে আবার চলবে)",
     "/update": "নতুন version install (approval লাগবে; ব্যর্থ হলে নিজে আগের version-এ ফেরে)",
@@ -73,8 +76,10 @@ class CommandRouter:
                  screen: ScreenCommands | None = None,
                  logs: LogCommands | None = None,
                  agents: AgentCommands | None = None,
-                 schedules: ScheduleCommands | None = None) -> None:
+                 schedules: ScheduleCommands | None = None,
+                 dictionary: SpeechDictionary | None = None) -> None:
         self.started_at = time.time()
+        self.dictionary = dictionary
         self.disk_path = disk_path
         self.health = health
         self.agent_name = agent_name
@@ -103,6 +108,8 @@ class CommandRouter:
             self._handlers["/memory"] = agents.memory_cmd
         if schedules is not None:
             self._handlers["/schedules"] = schedules.schedules
+        if dictionary is not None:
+            self._handlers["/words"] = self._words
 
     def add(self, command: str, handler: Handler) -> None:
         assert command in ALL_COMMANDS, command
@@ -113,6 +120,11 @@ class CommandRouter:
 
     async def handle(self, msg: IncomingMessage) -> OutgoingMessage | None:
         if not msg.is_command:
+            if self.dictionary is not None:
+                # V1.2: "শব্দ শেখো: পিছি মানে পিসি" — a fixed rule, never a task
+                said = run_command(self.dictionary, msg.text)
+                if said is not None:
+                    return OutgoingMessage(said)
             if self.tasks is None:
                 return self._safe_mode()
             return await self.tasks.submit(msg)
@@ -155,6 +167,12 @@ class CommandRouter:
         lines.append("")
         lines.append(format_pc_status(await pc_status(self.disk_path)))
         return "\n".join(lines)
+
+    async def _words(self, msg: IncomingMessage, args: list[str]) -> str:
+        assert self.dictionary is not None
+        text = "/words " + " ".join(args) if args else "/words"
+        said = run_command(self.dictionary, text)
+        return said or self.dictionary.listing()
 
     async def _pc(self, msg: IncomingMessage, args: list[str]) -> str:
         return "🖥️ PC status\n" + format_pc_status(await pc_status(self.disk_path))

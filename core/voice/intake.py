@@ -19,6 +19,7 @@ from channels.base import CallbackReply, IncomingCallback, IncomingMessage, Outg
 from core.config.schema import VoiceSection
 from core.log import get_logger
 from core.router.intent import classify_by_rules
+from core.voice.dictionary import SpeechDictionary
 from core.voice.transcriber import Transcriber
 from core.voice.tts import Speaker
 
@@ -55,8 +56,11 @@ class VoiceIntake:
     def __init__(self, transcriber: Transcriber, settings: VoiceSection, audio_dir: Path,
                  handle_text: Handler, corrector: Corrector | None = None,
                  speaker: Speaker | None = None, low_risk: LowRisk | None = None,
-                 send: Sender | None = None) -> None:
+                 send: Sender | None = None,
+                 dictionary: SpeechDictionary | None = None) -> None:
         self.transcriber = transcriber
+        # V1.2: the owner's own words and learned fixes, before routing
+        self.dictionary = dictionary
         # V1.1: opening a clearly named installed app is harmless like a read-only ask
         self.low_risk = low_risk
         # V1.1: when set, a spoken reply follows the text instead of holding it back
@@ -138,13 +142,21 @@ class VoiceIntake:
 
         heard = (f"🎙️ শুনলাম ({LANG_NAME.get(t.language, t.language)}, "
                  f"{t.confidence:.0%}): «{t.text}»")
-        text_msg = dataclasses.replace(msg, text=t.text, voice=None)
-        safe = is_read_only_request(t.text) or (self.low_risk is not None
-                                                and self.low_risk(t.text))
+        text = t.text
+        if self.dictionary is not None:
+            fixed = self.dictionary.apply(text)
+            if fixed.changes:
+                text = fixed.text
+                heard += f"\n📖 অভিধানে ঠিক করলাম: «{text}»"
+                _log.info(f"speech dictionary: {len(fixed.changes)} fix(es) applied",
+                          extra={"action": "voice.dictionary", "status": "ok"})
+        text_msg = dataclasses.replace(msg, text=text, voice=None)
+        safe = is_read_only_request(text) or (self.low_risk is not None
+                                              and self.low_risk(text))
         threshold = (self.settings.confirm_below_confidence_safe if safe
                      else self.settings.confirm_below_confidence)
         if t.confidence < threshold:
-            return await self._ask_to_confirm(text_msg, t.text, t.language, heard)
+            return await self._ask_to_confirm(text_msg, text, t.language, heard)
         r0 = time.perf_counter()
         reply = await self.handle_text(text_msg)
         self._track(reply, started)
@@ -208,6 +220,10 @@ class VoiceIntake:
             return CallbackReply("🔁 ঠিক আছে",
                                  f"{cb.message_text}\n\n🔁 বাতিল — আবার বলুন বা লিখে দিন।")
         chosen = choices[parts[2]]
+        if parts[2] == "y" and self.dictionary is not None and chosen != choices["h"]:
+            # V1.2: the owner confirmed a corrected reading — count its small changes
+            # (the second confirmation of the same change is learned)
+            self.dictionary.observe(choices["h"], chosen)
         reply = await self.handle_text(dataclasses.replace(msg, text=chosen))
         self._track(reply, time.time())
         result = reply.text if reply else "✅"

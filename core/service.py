@@ -80,6 +80,7 @@ from core.skills.paths import PathPolicy
 from core.skills.registry import SkillError, SkillRegistry
 from core.skills.runner import SkillRunner
 from core.voice.correct import suggest as suggest_correction
+from core.voice.dictionary import DbStore, SpeechDictionary
 from core.voice.intake import CALLBACK_PREFIX as VOICE_PREFIX
 from core.voice.intake import VoiceIntake
 from core.voice.transcriber import Transcriber
@@ -377,12 +378,27 @@ async def run_core_service(
     transcriber.pressure = pressure                 # V1.1 warm-idle follows memory pressure
     pressure.relievers.append(transcriber.relieve)  # plan §17H unload_idle_whisper
     speaker = build_speaker(ctx)
+    # V1.2 Speech Dictionary: the owner's words reach Whisper and the corrector too
+    dictionary = SpeechDictionary(DbStore(db_sessions) if db_sessions is not None else None)
+    hints = cfg.default.voice.hint_words
+
+    def vocabulary() -> list[str]:
+        return list(dict.fromkeys([*hints, *dictionary.words()[:40]]))
+
+    def refresh_hints() -> None:
+        transcriber.owner_words = ", ".join(dictionary.words()[:40]) or None
+
+    dictionary.on_change.append(refresh_hints)
+    try:
+        refresh_hints()
+    except Exception:  # noqa: BLE001 - hint words are a help, never a reason to stop
+        _log.exception("speech dictionary load failed", extra={"action": "voice.dictionary"})
     voice = VoiceIntake(transcriber, cfg.default.voice, cfg.path("workspace_dir") / "voice",
                         lambda m: router.handle(m),
                         corrector=lambda heard, lang: suggest_correction(
-                            provider_router, heard, lang, cfg.default.voice.hint_words),
+                            provider_router, heard, lang, vocabulary()),
                         speaker=speaker, low_risk=app_resolver.is_low_risk,
-                        send=channel.send)
+                        send=channel.send, dictionary=dictionary)
 
     async def speak_final_answer(chat_id: str, kind: MessageType, task_id: int) -> None:
         """Voice mode (plan §57): a task started by voice gets its answer spoken."""
@@ -412,7 +428,7 @@ async def run_core_service(
                            AgentCommands(cfg, roster, project_memory,
                                          cfg.default.agent.timezone),
                            ScheduleCommands(schedule_store, cfg.default.agent.timezone)
-                           if schedule_store is not None else None)
+                           if schedule_store is not None else None, dictionary)
     lifecycle = LifecycleCommands(store, engine, request_exit)
     router.add("/restart-agent", lifecycle.restart)
     router.add("/update", lifecycle.update)

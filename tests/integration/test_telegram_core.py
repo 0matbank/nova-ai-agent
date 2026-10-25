@@ -304,7 +304,7 @@ def test_service_end_to_end(config_dir: Path, runtime_root: Path) -> None:
     assert [c["command"] for c in fake.commands] == [
         "status", "tasks", "task", "cancel", "pause", "resume", "screenshot", "pc", "skills",
         "agents", "logs", "restart_agent", "update", "lockdown",   # Telegram: no "-"
-        "help", "memory", "schedules"]
+        "help", "memory", "schedules", "words"]
     # Phase 23 (§32A step 12): going offline is announced when the service stops
     *replies, offline = fake.texts_to(OWNER)
     assert offline.startswith("🔌 Nova বন্ধ হচ্ছে")
