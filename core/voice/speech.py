@@ -37,6 +37,19 @@ _DETAIL = re.compile(
 _FILLER = re.compile(r"\b(?:abar|ektu|amake|please|pls|plz|again|it|that|this|me|nova|"
                      r"ta|ti|to|ki|na)\b|আবার|একটু|আমাকে|প্লিজ|নোভা|টা|টি|তো|[,.!?।]",
                      re.IGNORECASE)
+# "পড়ে শোনাও" — and how Whisper often writes it ("পরে সুনাও"); "read it out"
+_READ_ALOUD = re.compile(
+    r"(?:পড়ে|পরে|পোড়ে)\s*(?:শোনাও|শুনাও|সুনাও|সনাও|শোনা|শুনিয়ে\s*দাও)|শুনিয়ে\s*দাও|"
+    r"\b(?:pore|pode|pora)\s*(?:shonao|sunao|shunao|sonao)\b|"
+    r"\bread\s+(?:it\s+|that\s+|them\s+)?(?:out|aloud|to\s+me)\b", re.IGNORECASE)
+# pointing at Nova's previous answer: "যে স্ট্যাটাস আমাকে দিলে", "আগের উত্তর", "what you said"
+_EARLIER = re.compile(
+    r"(?<![ঀ-৿])যে(?![ঀ-৿]).{0,40}?(?:দিলে|দিলা|দিয়েছ|দিয়েছিলে|বললে|বল্লে|বললা|বলেছ|বলেছিলে|পাঠালে|"
+    r"পাঠিয়েছ|পাঠিয়েছিলে|লিখলে|লিখেছ|দেখালে|দেখিয়েছ)|আগের\s*(?:উত্তর|টা|রেজাল্ট|ফল)|"
+    r"শেষ\s*উত্তর|\bje\b.{0,40}?\b(?:dile|dila|bolle|bolla|pathale|dekhale)\b|"
+    r"\bager\s*(?:uttor|ta|result)\b|\bwhat\s+you\s+(?:just\s+)?(?:said|sent|gave|told)\b|"
+    r"\b(?:the\s+)?(?:last|previous)\s+(?:answer|reply|result)\b|\bthat\s+again\b",
+    re.IGNORECASE)
 # "CPU: 15%" "Disk free: 82/109 GB" — a list of facts, not prose
 _KEY_VALUE = re.compile(r"^\W{0,3}(?P<k>[^:：\n]{1,32}?)\s*[:：]\s*(?P<v>\S.*)$")
 _SENTENCE = re.compile(r"(?<=[।.!?])\s+")
@@ -59,14 +72,19 @@ class Speech:
 
 
 def wants_detail(text: str) -> bool:
-    return bool(_DETAIL.search(text))
+    """"বিস্তারিত বলো", "পুরোটা", or asked to be read out: say all of it."""
+    return bool(_DETAIL.search(text) or _READ_ALOUD.search(text))
 
 
 def asks_to_repeat_in_full(text: str) -> bool:
-    """Only "read it all / say it in detail" — about the last answer, not a new task."""
+    """About the last answer, not a new task: only "read it all", or "read out what you
+    gave me" (owner 2026-10-25: «পিসির যে স্ট্যাটাস আমাকে দিলে, সেটি আমাকে পড়ে শোনাও»)."""
     if not wants_detail(text):
         return False
-    return not _FILLER.sub(" ", _DETAIL.sub(" ", text)).split()
+    if _EARLIER.search(text):
+        return True
+    rest = _READ_ALOUD.sub(" ", _DETAIL.sub(" ", text))
+    return not _FILLER.sub(" ", rest).split()
 
 
 def hide_secrets(text: str) -> tuple[str, bool]:

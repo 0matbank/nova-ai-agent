@@ -91,6 +91,15 @@ def test_secrets_are_never_spoken(text: str) -> None:
     ("read it all", True, True),
     ("tell me the details please", True, True),
     ("পিসির অবস্থা বিস্তারিত বলো", True, False),     # a new request, told in detail
+    # the owner's own words on 2026-10-25, as Whisper wrote them ("পড়ে" → "পরে")
+    ("পিসির যে স্ট্যাটাস আমাকে দিলে, সেটি আমাকে পরে সুনাও", True, True),
+    ("আমি বলেছি, পিসির স্ট্যাটাস যে আমাকে বল্লে, সেটি আমাকে পরে সনাও", True, True),
+    ("আগের উত্তরটা পড়ে শোনাও", True, True),
+    ("pc status je dile seta pore shonao", True, True),
+    ("read out what you just said", True, True),
+    ("পিসির স্ট্যাটাস পড়ে শোনাও", True, False),       # a fresh one, read in full
+    ("ফাইলটা পড়ে শোনাও", True, False),
+    ("পরে জানাও", False, False),                       # "later", not "read"
     ("পিসির অবস্থা বলো", False, False),
     ("ফাইলটা পুরো মুছে দাও", False, False),
 ])
@@ -292,3 +301,27 @@ def test_real_player_plays_silence_and_stops_at_once(tmp_path: Path) -> None:
     whole, stopped = asyncio.run(go())
     assert 1.9 < whole < 3.5 and stopped < 0.3
     assert list((tmp_path / "say").glob("*")) == []
+
+
+def test_owner_asks_to_hear_the_status_he_was_given(tmp_path: Path) -> None:
+    """Owner 2026-10-25: after a short spoken PC status, «পিসির যে স্ট্যাটাস আমাকে দিলে,
+    সেটি আমাকে পড়ে শোনাও» made a new status task instead of reading the last one."""
+    routed: list[str] = []
+
+    async def make_task(msg: IncomingMessage) -> OutgoingMessage:
+        routed.append(msg.text)
+        return OutgoingMessage("📥 Task", task_id=40 + len(routed))
+    vi = _intake(tmp_path, "পিসির অবস্থা বলো", make_task)
+    here = Here()
+
+    async def go() -> None:
+        await vi.handle(voice_msg(), fake_download, here=here)
+        here.said.append(vi.task_speech(41, PC_STATUS, completed=True) or "")
+        vi.transcriber = make(tmp_path, FakeModel(
+            ("পিসির যে স্ট্যাটাস আমাকে দিলে, সেটি আমাকে পরে সুনাও", "bn", -0.05)))[0]
+        await vi.handle(voice_msg(), fake_download, here=here)
+        await _settle()
+    asyncio.run(go())
+    assert routed == ["পিসির অবস্থা বলো"]                  # no second status task
+    assert here.said[0] == "CPU 15%, RAM 73%। বিস্তারিত Telegram-এ দিয়েছি।"
+    assert "Disk free" in here.said[1] and "uptime" in here.said[1]
