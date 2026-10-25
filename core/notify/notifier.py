@@ -44,6 +44,7 @@ class MessageType(StrEnum):
 
 
 Sender = Callable[[str, OutgoingMessage], Awaitable[None]]
+NEEDS_OWNER = frozenset({MessageType.APPROVAL_REQUIRED, MessageType.USER_INPUT_REQUIRED})
 LIVE_EDIT_SECONDS = 1.5            # Telegram rate-limits edits; fold faster updates
 
 
@@ -66,6 +67,8 @@ class Notifier:
         self._errors: dict[str, tuple[float, int]] = {}   # key -> (last_sent_at, severity)
         # Called after a task's final message is delivered (e.g. spoken reply).
         self.on_task_final: list[Callable[[str, MessageType, int], Awaitable[None]]] = []
+        # V1.2: a task needs the owner (approval, an answer) — e.g. say so in voice
+        self.on_task_notice: list[Callable[[str, MessageType, int], Awaitable[None]]] = []
         self._hooks: set[asyncio.Task[None]] = set()
         self._live_at: dict[str, float] = {}
         self._live_pending: dict[str, tuple[str, str]] = {}
@@ -92,10 +95,16 @@ class Notifier:
         """Returns True if the message was sent now."""
         token = _TASK.set(task_id)
         try:
-            return await self._notify(chat_id, kind, text, task_id, error_key, severity,
+            sent = await self._notify(chat_id, kind, text, task_id, error_key, severity,
                                       buttons, photo, video)
         finally:
             _TASK.reset(token)
+        if sent and task_id is not None and kind in NEEDS_OWNER:
+            for hook in self.on_task_notice:
+                job = asyncio.create_task(self._run_hook(hook, chat_id, kind, task_id))
+                self._hooks.add(job)
+                job.add_done_callback(self._hooks.discard)
+        return sent
 
     async def _notify(self, chat_id: str, kind: MessageType, text: str, task_id: int | None,
                       error_key: str | None, severity: int,

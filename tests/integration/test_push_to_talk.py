@@ -146,7 +146,7 @@ def test_pc_turn_answers_in_chat_and_speaks_on_the_pc(tmp_path: Path) -> None:
     assert echo.got == ["পিসির অবস্থা বলো"]
     assert len(sent) == 1 and sent[0][0] == "555"                 # text only, no voice note
     assert sent[0][1].text.startswith("💻 PC-তে বলা\n🎙️ শুনলাম") and sent[0][1].voice is None
-    assert here.said == ["📥 Task #1 তৈরি হয়েছে — পিসির অবস্থা বলো"]
+    assert here.said == ["Task 1 তৈরি হয়েছে — পিসির অবস্থা বলো"]    # spoken, cleaned
     assert list((tmp_path / "audio").glob("*")) == []             # the recording is deleted
 
 

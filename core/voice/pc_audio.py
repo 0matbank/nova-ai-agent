@@ -5,6 +5,7 @@ held — never always on (plan §৬৯-৩)."""
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import ctypes
 import functools
@@ -12,9 +13,11 @@ import io
 import sys
 import threading
 import time
+import uuid
 import wave
 from collections.abc import Callable
 from ctypes import wintypes
+from pathlib import Path
 from typing import Any
 
 from core.log import get_logger
@@ -75,10 +78,41 @@ def decode_to_wav(audio: bytes, rate: int = 24000) -> bytes:
     return to_wav(bytes(pcm), rate)
 
 
-def play(audio: bytes) -> None:
-    """Play a spoken answer on the PC speakers; blocks until it ends."""
-    import winsound
-    winsound.PlaySound(decode_to_wav(audio), winsound.SND_MEMORY | winsound.SND_NODEFAULT)
+class Player:
+    """Spoken answers on the PC speakers, one after another, stoppable at once.
+    winsound cannot stop a sound played from memory, so each answer is a short-lived
+    WAV file played in the background (measured 2026-10-25)."""
+
+    def __init__(self, folder: Path) -> None:
+        self.folder = folder
+        self._lock = asyncio.Lock()
+
+    async def play(self, audio: bytes) -> None:
+        import winsound
+        async with self._lock:
+            wav = await asyncio.to_thread(decode_to_wav, audio)
+            with wave.open(io.BytesIO(wav)) as w:
+                seconds = w.getnframes() / w.getframerate()
+            self.folder.mkdir(parents=True, exist_ok=True)
+            path = self.folder / f"say-{uuid.uuid4().hex}.wav"
+            path.write_bytes(wav)
+            try:
+                winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC
+                                   | winsound.SND_NODEFAULT)
+                await asyncio.sleep(seconds + 0.2)
+            except asyncio.CancelledError:
+                self.stop()
+                raise
+            finally:
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
+
+    @staticmethod
+    def stop() -> None:
+        """Silence now (safe from any thread)."""
+        import winsound
+        with contextlib.suppress(RuntimeError):
+            winsound.PlaySound(None, 0)
 
 
 def cue(kind: str) -> None:

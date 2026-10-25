@@ -82,8 +82,9 @@ from core.skills.runner import SkillRunner
 from core.voice.correct import suggest as suggest_correction
 from core.voice.dictionary import DbStore, SpeechDictionary
 from core.voice.intake import CALLBACK_PREFIX as VOICE_PREFIX
-from core.voice.intake import VoiceIntake
-from core.voice.ptt import PushToTalk, pc_turn, speak_on_pc
+from core.voice.intake import SayHere, VoiceIntake
+from core.voice.pc_audio import Player
+from core.voice.ptt import PcVoice, PushToTalk, pc_turn
 from core.voice.transcriber import Transcriber
 from core.voice.tts import GeminiTTS, Speaker, TTSBudget
 from core.whatsapp_service import start_whatsapp
@@ -405,18 +406,36 @@ async def run_core_service(
         """Voice mode (plan §57): a task started by voice gets its answer spoken."""
         here = voice.here(task_id)              # V1.2: started on the PC → spoken there
         if voice.finish(task_id) is None or store is None:
+            voice.task_turns.pop(task_id, None)
             return
         task = store.get(task_id)
-        done = kind is MessageType.TASK_COMPLETED and task is not None and task.result_summary
-        say = task.result_summary if done and task else "দুঃখিত, কাজটা শেষ করা যায়নি।"
+        # V1.2 Smart Voice: the main point aloud, the full result stays in the chat;
+        # "done" only for a task that really completed
+        completed = kind is MessageType.TASK_COMPLETED and task is not None
+        if completed and task is not None:
+            result = task.result_summary or "কাজটা শেষ হয়েছে।"
+        else:
+            result = (task.error_message or "") if task is not None else ""
+        say = voice.task_speech(task_id, str(result), completed)
+        if say:
+            await say_to(chat_id, say, here)
+
+    async def say_to(chat_id: str, say: str, here: SayHere | None) -> None:
         if here is not None:
-            await here(str(say))
+            await here(say)
             return
-        audio = await speaker.synthesize(str(say))
+        audio = await speaker.synthesize(say)
         if audio is not None:
             await channel.send(chat_id, OutgoingMessage("", voice=audio))
 
+    async def speak_notice(chat_id: str, kind: MessageType, task_id: int) -> None:
+        """V1.2: a voice task waits for the owner (approval / an answer) — say so once."""
+        say = voice.notice_speech(task_id, kind is MessageType.APPROVAL_REQUIRED)
+        if say:
+            await say_to(chat_id, say, voice.said_here.get(task_id))
+
     notifier.on_task_final.append(speak_final_answer)
+    notifier.on_task_notice.append(speak_notice)
 
     async def on_button(cb: IncomingCallback) -> CallbackReply | None:
         if cb.data.startswith(f"{VOICE_PREFIX}:"):
@@ -524,14 +543,16 @@ async def run_core_service(
     ptt: PushToTalk | None = None
     if ptt_cfg.enabled and channel.whitelist.chat_ids:
         owner_chat = sorted(channel.whitelist.chat_ids)[0]
-        say_here = speak_on_pc(speaker) if ptt_cfg.speak_on_pc else None
+        pc_voice = PcVoice(speaker, Player(cfg.path("workspace_dir") / "voice" / "say"),
+                           asyncio.get_running_loop())
+        say_here = pc_voice.say if ptt_cfg.speak_on_pc else None
 
         async def on_pc_voice(wav: bytes, seconds: float) -> None:
             _record(store, "telegram", owner_chat, "in", "<pc voice>", None)
             await pc_turn(voice, send_and_record, owner_chat, wav, seconds, say_here)
 
         ptt = PushToTalk(ptt_cfg, asyncio.get_running_loop(), on_pc_voice,
-                         on_press=transcriber.warm)
+                         on_press=transcriber.warm, interrupt=pc_voice.interrupt)
         if not ptt.start():
             ptt = None
     try:

@@ -38,7 +38,8 @@ class PushToTalk:
                  on_audio: OnAudio, recorder: Recorder | None = None,
                  listener: Callable[..., Listener] | None = None,
                  cue: Callable[[str], None] | None = None,
-                 on_press: Callable[[], Awaitable[object]] | None = None) -> None:
+                 on_press: Callable[[], Awaitable[object]] | None = None,
+                 interrupt: Callable[[], None] | None = None) -> None:
         self.settings = settings
         self.loop = loop
         self.on_audio = on_audio
@@ -49,6 +50,8 @@ class PushToTalk:
                                        settings.max_seconds)
         # the moment the key goes down: wake Whisper while the owner is still speaking
         self.on_press = on_press
+        # the owner starts speaking: Nova stops talking at once (barge-in)
+        self.interrupt = interrupt
         self.recording = False
         self.turns: list[Any] = []        # futures of the turns sent to the event loop
 
@@ -70,6 +73,8 @@ class PushToTalk:
 
     # called on the shortcut's own thread
     def down(self) -> None:
+        if self.interrupt is not None:
+            self.interrupt()
         if self.on_press is not None:
             self.turns.append(asyncio.run_coroutine_threadsafe(self._warm(), self.loop))
         if self.cue is not None:
@@ -133,9 +138,31 @@ async def pc_turn(voice: Any, send: Callable[[str, OutgoingMessage], Awaitable[o
     return out
 
 
-def speak_on_pc(speaker: Any) -> SayHere:
-    async def say(text: str) -> None:
-        audio = await speaker.synthesize(text)
-        if audio is not None:
-            await asyncio.to_thread(pc_audio.play, audio)
-    return say
+class PcVoice:
+    """Nova's voice on the PC speakers: answers queue up; `interrupt()` silences the one
+    playing and drops the queued ones (a new spoken command came)."""
+
+    def __init__(self, speaker: Any, player: Any, loop: asyncio.AbstractEventLoop) -> None:
+        self.speaker, self.player, self.loop = speaker, player, loop
+        self._jobs: set[asyncio.Task[Any]] = set()
+
+    async def say(self, text: str) -> None:
+        job = asyncio.current_task()
+        if job is not None:
+            self._jobs.add(job)
+        try:
+            audio = await self.speaker.synthesize(text)
+            if audio is not None:
+                await self.player.play(audio)
+        finally:
+            if job is not None:
+                self._jobs.discard(job)
+
+    def interrupt(self) -> None:
+        """Safe from any thread (the shortcut's own)."""
+        self.player.stop()
+        self.loop.call_soon_threadsafe(self._cancel)
+
+    def _cancel(self) -> None:
+        for job in list(self._jobs):
+            job.cancel()
