@@ -41,7 +41,7 @@ def test_a_short_answer_is_spoken_whole() -> None:
 
 def test_pc_status_gives_its_main_figures_and_points_to_telegram() -> None:
     s = spoken_answer(PC_STATUS, completed=True, said_in="পিসির অবস্থা বলো")
-    assert s.text == "CPU 15%, RAM 73%। বিস্তারিত Telegram-এ দিয়েছি।" and not s.full
+    assert s.text == "সিপিইউ 15 শতাংশ, র্যাম 73 শতাংশ। বিস্তারিত Telegram-এ দিয়েছি।" and not s.full
 
 
 def test_a_long_report_is_one_or_two_sentences() -> None:
@@ -175,7 +175,7 @@ def test_task_answer_and_a_newer_command_silences_the_older_one(tmp_path: Path) 
     asyncio.run(go())
     assert vi.task_speech(21, PC_STATUS, completed=True) is None
     assert vi.task_speech(22, PC_STATUS, completed=True) == (
-        "CPU 15%, RAM 73%। বিস্তারিত Telegram-এ দিয়েছি।")
+        "সিপিইউ 15 শতাংশ, র্যাম 73 শতাংশ। বিস্তারিত Telegram-এ দিয়েছি।")
     assert vi.last_full["555"] == PC_STATUS              # "পুরোটা পড়ে শোনাও" can follow
     assert vi.task_speech(23, "", completed=False) == "কাজটা শেষ করা যায়নি"
 
@@ -336,8 +336,8 @@ def test_owner_asks_to_hear_the_status_he_was_given(tmp_path: Path) -> None:
         await _settle()
     asyncio.run(go())
     assert routed == ["পিসির অবস্থা বলো"]                  # no second status task
-    assert here.said[0] == "CPU 15%, RAM 73%। বিস্তারিত Telegram-এ দিয়েছি।"
-    assert "Disk free" in here.said[1] and "uptime" in here.said[1]
+    assert here.said[0] == "সিপিইউ 15 শতাংশ, র্যাম 73 শতাংশ। বিস্তারিত Telegram-এ দিয়েছি।"
+    assert "ডিস্কে খালি" in here.said[1] and "চালু আছে" in here.said[1]   # in Bangla
 
 
 def test_nothing_remembered_is_said_plainly_never_a_new_task(tmp_path: Path) -> None:
@@ -373,3 +373,19 @@ def test_read_it_out_about_the_same_topic_soon_after_means_that_answer(tmp_path:
     assert not vi.about_last_answer("555", "পিসির বর্তমান স্ট্যাটাস বলো")  # a new ask
     vi.last_request["555"] = ("পিসির বট্তোমন অবস্থা বলো", _t.time() - 3600)
     assert not vi.about_last_answer("555", glued.replace("যে", ""))     # an hour later
+
+
+def test_asked_in_bangla_it_is_read_in_bangla() -> None:
+    """Owner 2026-10-25: «আমি বাংলায় বললাম, ইংরেজিতে কেন পড়ে শোনায়» — the PC status is
+    written in English; the voice follows the owner's language, not the text's."""
+    from core.voice.tts import voice_language
+    bn = spoken_answer(PC_STATUS, completed=True, detail=True,
+                       said_in="যে স্ট্যাটাস দিলে সেটা পড়ে শোনাও").text
+    assert voice_language(bn) == "bn"
+    for english in ("percent", "gigabytes", "free", "uptime", "CPU", "RAM"):
+        assert english not in bn
+    assert "সিপিইউ: 15 শতাংশ" in bn and "দশমিক" in bn and "ডিস্কে খালি" in bn
+    short = spoken_answer(PC_STATUS, completed=True, said_in="পিসির অবস্থা বলো").text
+    assert short == "সিপিইউ 15 শতাংশ, র্যাম 73 শতাংশ। বিস্তারিত Telegram-এ দিয়েছি।"
+    en = spoken_answer(PC_STATUS, completed=True, detail=True, said_in="read out the pc status")
+    assert "percent" in en.text and voice_language(en.text) == "en"

@@ -32,29 +32,64 @@ _EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿️‍⬀-⯿]")
 _URL = re.compile(r"https?://\S+")
 _SKIP_LINE = re.compile(r"^\s*(verifier:|অবস্থা:|/\w+)", re.IGNORECASE)
 
-# Symbols a voice would read badly, per reply language.
+# Symbols a voice would read badly, per reply language. For Bangla also the common
+# English words of status results (units, free/used/of, uptime) — V1.2 owner 2026-10-25:
+# «আমি বাংলায় বললাম, ইংরেজিতে কেন পড়ে শোনায়»
 _WORDS = {
     "bn": [(r"(\d)\s*%", r"\1 শতাংশ"), (r"(\d)\s*°C", r"\1 ডিগ্রি"),
+           (r"(\d[\d.]*)\s*GB\s+free\s+of\s+(\d[\d.]*)\s*GB",
+            r"\2 গিগাবাইটের মধ্যে \1 গিগাবাইট খালি"),
            (r"(\d[\d.]*)\s*/\s*(\d[\d.]*)\s*GB", r"\2-এর মধ্যে \1 গিগাবাইট"),
-           (r"(\d)\s*GB", r"\1 গিগাবাইট"), (r"(\d)\s*MB", r"\1 মেগাবাইট")],
+           (r"(\d)\s*GB", r"\1 গিগাবাইট"), (r"(\d)\s*MB", r"\1 মেগাবাইট"),
+           (r"(\d+)\s*h\s+(\d+)\s*m\b", r"\1 ঘণ্টা \2 মিনিট"),
+           (r"(\d+)\s*d\s+(\d+)\s*h\b", r"\1 দিন \2 ঘণ্টা"),
+           (r"\bdisk\s+free\b", "ডিস্কে খালি"), (r"\buptime\b", "চালু আছে"),
+           (r"\bdrives\b", "ড্রাইভ"), (r"\bfree\b", "খালি"), (r"\bused\b", "ব্যবহৃত"),
+           (r"\btotal\b", "মোট"), (r"\bof\b", "এর মধ্যে"), (r"\bvolume\b", "ভলিউম")],
     "en": [(r"(\d)\s*%", r"\1 percent"), (r"(\d)\s*°C", r"\1 degrees"),
            (r"(\d[\d.]*)\s*/\s*(\d[\d.]*)\s*GB", r"\1 of \2 gigabytes"),
            (r"(\d)\s*GB", r"\1 gigabytes"), (r"(\d)\s*MB", r"\1 megabytes")],
 }
 
 
+# A Bangla voice cannot read Latin acronyms (real check 2026-10-25: "CPU" came out as
+# «কিপি»): spell them with Bangla letter names; a few are said as words.
+_BN_LETTER = dict(zip("ABCDEFGHIJKLMNOPQRSTUVWXYZ", [
+    "এ", "বি", "সি", "ডি", "ই", "এফ", "জি", "এইচ", "আই", "জে", "কে", "এল", "এম", "এন",
+    "ও", "পি", "কিউ", "আর", "এস", "টি", "ইউ", "ভি", "ডাবলিউ", "এক্স", "ওয়াই", "জেড"],
+    strict=True))
+_BN_ACRONYM_WORD = {"RAM": "র্যাম", "VRAM": "ভি র্যাম", "OK": "ওকে", "WIFI": "ওয়াইফাই"}
+_ACRONYM = re.compile(r"(?<![A-Za-z])([A-Z]{2,5})(?![A-Za-z])")
+_DECIMAL = re.compile(r"(\d+)\.(\d+)")
+
+
+def _bn_spoken(text: str) -> str:
+    text = _DECIMAL.sub(r"\1 দশমিক \2", text)
+    return _ACRONYM.sub(lambda m: _BN_ACRONYM_WORD.get(m[1]) or
+                        "".join(_BN_LETTER[c] for c in m[1]), text)
+
+
 def language_of(text: str) -> str:
     return "bn" if len(_BN_CHARS.findall(text)) >= len(_LATIN.findall(text)) else "en"
 
 
-def speakable(text: str, max_chars: int = 1200) -> str:
+def voice_language(text: str) -> str:
+    """The voice to read it: a Bangla voice reads "CPU" or "RAM" fine, an English voice
+    cannot read Bangla at all — so a fair share of Bangla is enough."""
+    return "bn" if 3 * len(_BN_CHARS.findall(text)) >= len(_LATIN.findall(text)) else "en"
+
+
+def speakable(text: str, max_chars: int = 1200, lang: str | None = None) -> str:
+    """`lang`: the language it will be spoken in (the owner's) — else the text's own."""
     lines = [ln for ln in text.splitlines() if ln.strip() and not _SKIP_LINE.match(ln)]
-    lang = language_of(" ".join(lines))
+    lang = lang or language_of(" ".join(lines))
     sep = "। " if lang == "bn" else ". "
     out = sep.join(ln.strip().rstrip("।.") for ln in lines)
     out = _URL.sub("", _EMOJI.sub("", out))
     for pattern, repl in _WORDS[lang]:
-        out = re.sub(pattern, repl, out)
+        out = re.sub(pattern, repl, out, flags=re.IGNORECASE)
+    if lang == "bn":
+        out = _bn_spoken(out)
     out = re.sub(r"[*_`#<>«»|()\[\]]+", " ", out)
     out = re.sub(r"\s+", " ", out).strip(" ।.")
     if len(out) > max_chars:
@@ -205,7 +240,7 @@ class Speaker:
         """Voice-note bytes (OGG/Opus from Gemini, MP3 from edge), or None."""
         if not self.enabled:
             return None
-        clean = speakable(text, self.settings.max_chars)
+        clean = speakable(text, self.settings.max_chars, voice_language(text))
         if not clean:
             return None
         if self.gemini is not None and self.budget.allows(len(clean)):
@@ -222,7 +257,7 @@ class Speaker:
     async def _edge(self, clean: str) -> bytes | None:
         if not self.settings.voices:
             return None
-        lang = language_of(clean)
+        lang = voice_language(clean)
         voice = self.settings.voices.get(lang) or next(iter(self.settings.voices.values()))
         try:
             edge_tts: Any = importlib.import_module("edge_tts")

@@ -173,8 +173,8 @@ def _main_point(text: str, lang: str) -> str:
     prose_lines = [ln for ln in lines if not _KEY_VALUE.match(ln)]
     if facts and (not prose_lines or (len(facts) >= 3 and len(facts) * 2 >= len(lines))):
         # a report of facts: its first two, the way a person would say them
-        return ", ".join(f"{k} {v}" for k, v in facts[:2])
-    prose = speakable("\n".join(prose_lines or lines), max_chars=2000)
+        return speakable(", ".join(f"{k} {v}" for k, v in facts[:2]), lang=lang)
+    prose = speakable("\n".join(prose_lines or lines), max_chars=2000, lang=lang)
     said: list[str] = []
     for sentence in _SENTENCE.split(prose):
         if said and (len(" ".join(said)) + len(sentence) > SUMMARY_CHARS
@@ -202,15 +202,15 @@ def spoken_answer(result: str, *, completed: bool | None = None, detail: bool = 
         if len(reason.split()) < 3:
             reason = ""                       # a fragment explains nothing
         say = NOT_DONE[lang] + (f" {_end(reason, lang)}" if reason else "")
-        return Speech(speakable(say, max_chars), full=True, hidden=hidden)
-    whole = speakable(safe, max_chars=max_chars)
+        return Speech(speakable(say, max_chars, lang), full=True, hidden=hidden)
+    whole = speakable(safe, max_chars=max_chars, lang=lang)
     lines = _lines(safe)
     short = (len(whole) <= SHORT_CHARS and len(lines) <= SHORT_LINES
              and not _CODE.search(safe) and len(_facts(lines)) < 3)
     if short:
         return Speech(whole, full=True, hidden=hidden)
     if detail:
-        cut = len(speakable(safe, max_chars=100_000)) > len(whole)
+        cut = len(speakable(safe, max_chars=100_000, lang=lang)) > len(whole)
         return Speech(f"{whole} {REST_NOTE[lang]}" if cut else whole, full=not cut,
                       hidden=hidden)
     point = _main_point(safe, lang)
