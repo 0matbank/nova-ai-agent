@@ -37,7 +37,8 @@ class PushToTalk:
     def __init__(self, settings: PushToTalkSection, loop: asyncio.AbstractEventLoop,
                  on_audio: OnAudio, recorder: Recorder | None = None,
                  listener: Callable[..., Listener] | None = None,
-                 cue: Callable[[str], None] | None = None) -> None:
+                 cue: Callable[[str], None] | None = None,
+                 on_press: Callable[[], Awaitable[object]] | None = None) -> None:
         self.settings = settings
         self.loop = loop
         self.on_audio = on_audio
@@ -46,6 +47,8 @@ class PushToTalk:
         make = listener or pc_audio.HotkeyListener
         self.listener: Listener = make(settings.hotkey, self.down, self.up,
                                        settings.max_seconds)
+        # the moment the key goes down: wake Whisper while the owner is still speaking
+        self.on_press = on_press
         self.recording = False
         self.turns: list[Any] = []        # futures of the turns sent to the event loop
 
@@ -67,6 +70,10 @@ class PushToTalk:
 
     # called on the shortcut's own thread
     def down(self) -> None:
+        if self.on_press is not None:
+            self.turns.append(asyncio.run_coroutine_threadsafe(self._warm(), self.loop))
+        if self.cue is not None:
+            self.cue("start")              # before the microphone opens: not in the recording
         try:
             self.recorder.start()
         except pc_audio.AudioError as e:
@@ -74,8 +81,13 @@ class PushToTalk:
                          extra={"action": "voice.ptt", "status": "error"})
             return
         self.recording = True
-        if self.cue is not None:
-            self.cue("start")
+
+    async def _warm(self) -> None:
+        assert self.on_press is not None
+        try:
+            await self.on_press()
+        except Exception:
+            _log.exception("push-to-talk warm-up failed", extra={"action": "voice.ptt"})
 
     def up(self) -> None:
         if not self.recording:

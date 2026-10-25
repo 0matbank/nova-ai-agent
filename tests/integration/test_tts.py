@@ -77,7 +77,7 @@ def test_task_answer_is_spoken_later_not_the_ack(tmp_path: Path) -> None:
 
 
 def test_confirmation_question_is_spoken(tmp_path: Path) -> None:
-    t, _ = make(tmp_path, FakeModel(("ফাইলটা ডিলিট কর", "bn", -1.5)))
+    t, _ = make(tmp_path, FakeModel(("ফাইলটা ডিলিট কর", "bn", -0.6)))
     sp = FakeSpeaker()
     vi = VoiceIntake(t, SETTINGS, tmp_path / "a", Echo(), speaker=sp)
     out = asyncio.run(vi.handle(voice_msg(), fake_download))

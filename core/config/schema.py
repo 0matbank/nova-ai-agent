@@ -147,6 +147,10 @@ class VoiceSection(Strict):
     max_duration_seconds: Annotated[int, Field(ge=5, le=1800)]
     confirm_below_confidence: Annotated[float, Field(ge=0.0, le=1.0)]
     confirm_below_confidence_safe: Annotated[float, Field(ge=0.0, le=1.0)] = 0.5
+    # V1.2: below this Whisper has not understood anything (noise, a tap of the
+    # push-to-talk key) — ask again instead of reading made-up words aloud. Measured
+    # 2026-10-25 on 37 real voice notes: real speech ≥ 0.62, made-up text 0.24 and 0.00.
+    not_understood_below: Annotated[float, Field(ge=0.0, le=1.0)] = 0.4
     confirm_timeout_seconds: Annotated[int, Field(ge=30, le=3600)]
     keep_audio: bool
     beam_size: Annotated[int, Field(ge=1, le=10)]

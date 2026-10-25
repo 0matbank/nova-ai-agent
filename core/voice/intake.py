@@ -163,8 +163,11 @@ class VoiceIntake:
         _log.info(f"voice transcribed: lang={t.language} conf={t.confidence:.2f} "
                   f"{t.duration:.1f}s audio in {t.seconds:.1f}s on {t.device}",
                   extra={"action": "voice.transcribe", "status": "ok"})
-        if not t.text:
+        if not t.text or t.confidence < self.settings.not_understood_below:
             ask = "কিছু বুঝতে পারিনি — আবার একটু স্পষ্ট করে বলবেন?"
+            if t.text:
+                _log.info(f"voice not understood (conf {t.confidence:.2f}) — asked again",
+                          extra={"action": "voice.transcribe", "status": "unclear"})
             return await self._spoken(OutgoingMessage(f"🎙️ {ask}"), ask, msg.chat_id, here)
 
         heard = (f"🎙️ শুনলাম ({LANG_NAME.get(t.language, t.language)}, "

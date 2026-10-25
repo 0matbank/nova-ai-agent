@@ -79,6 +79,11 @@ voice:
     voices: {bn: bn-BD-NabanitaNeural, en: en-US-AvaMultilingualNeural}
     max_chars: 1200
     rate: "-8%"                  # edge only: a little slower = clearer
+  # V1.2 push-to-talk (owner OK 2026-10-25): hold the shortcut on the PC and speak; the
+  # microphone is open only while it is held, the spoken answer plays on the PC
+  ptt:
+    enabled: true
+    hotkey: ctrl+alt+space
   hint_words: [Nova AI, পিসি, পিসির অবস্থা, স্ট্যাটাস, স্ক্রিনশট, screenshot, status,
                বাংলাদেশ, রাজধানী, খোলো, বন্ধ করো, ফাইল, ফোল্ডার, Notepad, Chrome,
                Click TV, টাস্ক, বলো, দেখাও]

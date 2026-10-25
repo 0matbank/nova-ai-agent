@@ -530,7 +530,8 @@ async def run_core_service(
             _record(store, "telegram", owner_chat, "in", "<pc voice>", None)
             await pc_turn(voice, send_and_record, owner_chat, wav, seconds, say_here)
 
-        ptt = PushToTalk(ptt_cfg, asyncio.get_running_loop(), on_pc_voice)
+        ptt = PushToTalk(ptt_cfg, asyncio.get_running_loop(), on_pc_voice,
+                         on_press=transcriber.warm)
         if not ptt.start():
             ptt = None
     try:

@@ -113,7 +113,7 @@ def test_a_tap_is_ignored_and_a_missing_microphone_runs_nothing() -> None:
     p2, got2, cues2, loop2 = _ptt(tone(2.0), fail=True)
     p2.down()
     p2.up()
-    assert got2 == [] and cues2 == [] and p2.turns == []
+    assert got2 == [] and cues2 == ["start"] and p2.turns == []   # tone, then no mic
     loop.close()
     loop2.close()
 
@@ -203,3 +203,43 @@ def test_real_shortcut_registers_and_reports_a_clash() -> None:
     c = pc_audio.HotkeyListener("ctrl+alt+shift+f23", lambda: None, lambda: None)
     assert c.start(), c.error                         # freed again after stop()
     c.stop()
+
+
+def test_noise_is_never_read_aloud(tmp_path: Path) -> None:
+    """Owner 2026-10-25: a 1.2 s tap came back as made-up words (24%) and Nova read them
+    out asking "did you mean …?". Below the floor it just asks again."""
+    t, _ = make(tmp_path, FakeModel(("উপিশা, কোলো, ক্ষা, কে, কে, কে, কে", "en", -1.5)))
+    echo, here, sent = Echo(), Here(), []
+
+    async def send(chat: str, out: OutgoingMessage) -> None:
+        sent.append(out)
+    vi = VoiceIntake(t, SETTINGS, tmp_path / "audio", echo)
+
+    async def go() -> None:
+        await pc_turn(vi, send, "555", pc_audio.to_wav(tone(1.2)), 1.2, here)
+        await _settle()
+    asyncio.run(go())
+    assert echo.got == [] and sent[0].buttons == []
+    assert here.said == ["কিছু বুঝতে পারিনি — আবার একটু স্পষ্ট করে বলবেন?"]
+    assert "উপিশা" not in sent[0].text
+
+
+def test_tone_before_microphone_and_whisper_woken_on_press() -> None:
+    events: list[str] = []
+    loop = asyncio.new_event_loop()
+
+    class Rec(FakeRecorder):
+        def start(self) -> None:
+            events.append("mic")
+
+    async def on_audio(wav: bytes, seconds: float) -> None:
+        pass
+
+    async def warm() -> None:
+        events.append("warm")
+    p = PushToTalk(PushToTalkSection(enabled=True), loop, on_audio, recorder=Rec(tone(1)),
+                   listener=FakeListener, cue=events.append, on_press=warm)
+    p.down()
+    loop.run_until_complete(asyncio.wrap_future(p.turns[0], loop=loop))
+    loop.close()
+    assert events.index("start") < events.index("mic") and "warm" in events

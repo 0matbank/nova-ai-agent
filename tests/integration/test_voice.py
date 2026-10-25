@@ -169,7 +169,7 @@ def test_suggestion_cleanup() -> None:
 
 
 def test_unclear_voice_waits_for_confirmation(tmp_path: Path) -> None:
-    vi, echo = intake(tmp_path, FakeModel(("ফাইলটা ডিলিট কর", "bn", -1.6)))
+    vi, echo = intake(tmp_path, FakeModel(("ফাইলটা ডিলিট কর", "bn", -0.6)))
     out = asyncio.run(vi.handle(voice_msg(), fake_download))
     assert echo.got == []                                       # nothing ran
     assert "নিশ্চিত না হওয়া পর্যন্ত কিছু চালাব না" in out.text
@@ -182,7 +182,7 @@ def test_unclear_voice_waits_for_confirmation(tmp_path: Path) -> None:
 
 
 def test_unclear_voice_rejected(tmp_path: Path) -> None:
-    vi, echo = intake(tmp_path, FakeModel(("কিছু একটা", "bn", -1.8)))
+    vi, echo = intake(tmp_path, FakeModel(("কিছু একটা", "bn", -0.7)))
     out = asyncio.run(vi.handle(voice_msg(), fake_download))
     no = out.buttons[0][1][1]
     asyncio.run(vi.on_button(IncomingCallback("telegram", "555", "555", "c", no, "1", "x")))
