@@ -37,19 +37,47 @@ _DETAIL = re.compile(
 _FILLER = re.compile(r"\b(?:abar|ektu|amake|please|pls|plz|again|it|that|this|me|nova|"
                      r"ta|ti|to|ki|na)\b|আবার|একটু|আমাকে|প্লিজ|নোভা|টা|টি|তো|[,.!?।]",
                      re.IGNORECASE)
-# "পড়ে শোনাও" — and how Whisper often writes it ("পরে সুনাও"); "read it out"
+# "পড়ে শোনাও" however Whisper spells it (owner 2026-10-25, real transcripts): «পড়ে / পডে /
+# পরে / পোড়ে» then, within two words, «শোনাও / শুনাও / সুনাও / সনাও / সনা / সলাও»
+_BN_LETTER = "\u0980-\u09ff"
 _READ_ALOUD = re.compile(
-    r"(?:পড়ে|পরে|পোড়ে)\s*(?:শোনাও|শুনাও|সুনাও|সনাও|শোনা|শুনিয়ে\s*দাও)|শুনিয়ে\s*দাও|"
+    rf"(?<![{_BN_LETTER}])\u09aa\u09cb?(?:\u09dc|\u09a1\u09bc?|\u09b0)\u09c7(?![{_BN_LETTER}])"
+    rf"(?:\s+\S+){{0,2}}?\s+(?:[\u09b6\u09b8][\u09cb\u09c1]?[\u09a8\u09b2]\u09be\u0993?"
+    rf"(?![{_BN_LETTER}])|শুনিয়ে\s*দাও)|শুনিয়ে\s*দাও|"
     r"\b(?:pore|pode|pora)\s*(?:shonao|sunao|shunao|sonao)\b|"
     r"\bread\s+(?:it\s+|that\s+|them\s+)?(?:out|aloud|to\s+me)\b", re.IGNORECASE)
-# pointing at Nova's previous answer: "যে স্ট্যাটাস আমাকে দিলে", "আগের উত্তর", "what you said"
+# pointing at Nova's previous answer: «যে স্ট্যাটাস আমাকে দিলে», «যা আমাকে দিলা», «আগের উত্তর»
+_RELATIVE = re.compile(
+    rf"(?<![{_BN_LETTER}])(?:যে|যা|যেটা|যেটি|জে|জা)(?![{_BN_LETTER}]).{{0,40}}?"
+    rf"(?<![{_BN_LETTER}])(?P<verb>(?:দি|দে|বল|বোল|পাঠা|দেখা|লিখ)[{_BN_LETTER}]*)")
+# Whisper also glues and splits these words: «পুরোতা পরেশো নাও» = «পুরোটা পড়ে শোনাও».
+# The same checks on the text with its spaces gone:
+_READ_GLUED = re.compile("\u09aa\u09cb?(?:\u09dc|\u09a1\u09bc?|\u09b0)\u09c7"
+                         "[\u09b6\u09b8][\u09cb\u09c1]?[\u09a8\u09b2]\u09be\u0993")
+_DETAIL_GLUED = re.compile("পুরোটা|পুরোতা|পুরটা|পুরতা|পুরো|সবটা|বিস্তারিত")
+_FILLER_GLUED = re.compile("আবার|একটু|আমাকে|প্লিজ|নোভা|টা|টি|তো")
+
+
+def _glued(text: str) -> str:
+    return re.sub(r"[\s,.!?।]+", "", text)
+
+
+# "দিলাম / দিয়েছি" — what the OWNER gave, not Nova's answer
+_FIRST_PERSON = re.compile(r"(?:াম|ছি)$")
 _EARLIER = re.compile(
-    r"(?<![ঀ-৿])যে(?![ঀ-৿]).{0,40}?(?:দিলে|দিলা|দিয়েছ|দিয়েছিলে|বললে|বল্লে|বললা|বলেছ|বলেছিলে|পাঠালে|"
-    r"পাঠিয়েছ|পাঠিয়েছিলে|লিখলে|লিখেছ|দেখালে|দেখিয়েছ)|আগের\s*(?:উত্তর|টা|রেজাল্ট|ফল)|"
-    r"শেষ\s*উত্তর|\bje\b.{0,40}?\b(?:dile|dila|bolle|bolla|pathale|dekhale)\b|"
+    r"আগের\s*(?:উত্তর|টা|রেজাল্ট|ফল)|শেষ\s*উত্তর|"
+    r"\bje\b.{0,40}?\b(?:dile|dila|bolle|bolla|pathale|dekhale)\b|"
     r"\bager\s*(?:uttor|ta|result)\b|\bwhat\s+you\s+(?:just\s+)?(?:said|sent|gave|told)\b|"
     r"\b(?:the\s+)?(?:last|previous)\s+(?:answer|reply|result)\b|\bthat\s+again\b",
     re.IGNORECASE)
+
+
+def points_at_last_answer(text: str) -> bool:
+    if _EARLIER.search(text):
+        return True
+    return any(not _FIRST_PERSON.search(m["verb"]) for m in _RELATIVE.finditer(text))
+
+
 # "CPU: 15%" "Disk free: 82/109 GB" — a list of facts, not prose
 _KEY_VALUE = re.compile(r"^\W{0,3}(?P<k>[^:：\n]{1,32}?)\s*[:：]\s*(?P<v>\S.*)$")
 _SENTENCE = re.compile(r"(?<=[।.!?])\s+")
@@ -73,7 +101,8 @@ class Speech:
 
 def wants_detail(text: str) -> bool:
     """"বিস্তারিত বলো", "পুরোটা", or asked to be read out: say all of it."""
-    return bool(_DETAIL.search(text) or _READ_ALOUD.search(text))
+    return bool(_DETAIL.search(text) or _READ_ALOUD.search(text)
+                or _READ_GLUED.search(_glued(text)))
 
 
 def asks_to_repeat_in_full(text: str) -> bool:
@@ -81,10 +110,13 @@ def asks_to_repeat_in_full(text: str) -> bool:
     gave me" (owner 2026-10-25: «পিসির যে স্ট্যাটাস আমাকে দিলে, সেটি আমাকে পড়ে শোনাও»)."""
     if not wants_detail(text):
         return False
-    if _EARLIER.search(text):
+    if points_at_last_answer(text):
         return True
     rest = _READ_ALOUD.sub(" ", _DETAIL.sub(" ", text))
-    return not _FILLER.sub(" ", rest).split()
+    if not _FILLER.sub(" ", rest).split():
+        return True
+    glued = _glued(text)
+    return not _FILLER_GLUED.sub("", _READ_GLUED.sub("", _DETAIL_GLUED.sub("", glued)))
 
 
 def hide_secrets(text: str) -> tuple[str, bool]:

@@ -100,6 +100,19 @@ def test_secrets_are_never_spoken(text: str) -> None:
     ("পিসির স্ট্যাটাস পড়ে শোনাও", True, False),       # a fresh one, read in full
     ("ফাইলটা পড়ে শোনাও", True, False),
     ("পরে জানাও", False, False),                       # "later", not "read"
+    # the owner's second try (05:22–05:24), exactly as Whisper wrote it
+    ("বিস্তারিত যা আমাকে দিলা, সেতি পরে আমাকে সনা", True, True),
+    ("আছা, পিসির যে স্ক্যাটাস আমাকে দিয় সিলে, সেটি আমাকে পরে সলাও", True, True),
+    ("পিসির যে স্ট্যাটাস আমাকে দিলে সেটা পডে শুনাও", True, True),
+    ("পিসির বর্তমান স্ট্যাটাস, আমাকে বলো", False, False),
+    ("পিসির, বর্তমন, স্ট্যাটাস, বলো", False, False),
+    ("স্ট্যাটাসটা করা প্রিপোরেশন না", False, False),
+    ("যে ফাইলটা তোমাকে দিলাম সেটা পড়ে শোনাও", True, False),   # the owner's file
+    ("আমাকে একটা গান শোনাও", False, False),
+    # real Whisper on «পুরোটা পড়ে শোনাও», two voices: glued and split
+    ("পুরোতা পরেশো নাও", True, True),
+    ("পুরোটা পড়েশোনাও", True, True),
+    ("পিসির স্ট্যাটাস পরেশো নাও", True, False),
     ("পিসির অবস্থা বলো", False, False),
     ("ফাইলটা পুরো মুছে দাও", False, False),
 ])
@@ -325,3 +338,21 @@ def test_owner_asks_to_hear_the_status_he_was_given(tmp_path: Path) -> None:
     assert routed == ["পিসির অবস্থা বলো"]                  # no second status task
     assert here.said[0] == "CPU 15%, RAM 73%। বিস্তারিত Telegram-এ দিয়েছি।"
     assert "Disk free" in here.said[1] and "uptime" in here.said[1]
+
+
+def test_nothing_remembered_is_said_plainly_never_a_new_task(tmp_path: Path) -> None:
+    routed: list[str] = []
+
+    async def make_task(msg: IncomingMessage) -> OutgoingMessage:
+        routed.append(msg.text)
+        return OutgoingMessage("📥 Task", task_id=1)
+    vi = _intake(tmp_path, "পিসির যে স্ট্যাটাস আমাকে দিলে সেটা পডে শুনাও", make_task)
+    here = Here()
+
+    async def go() -> OutgoingMessage:
+        out = await vi.handle(voice_msg(), fake_download, here=here)
+        await _settle()
+        return out
+    out = asyncio.run(go())
+    assert routed == [] and "আগের কোনো উত্তর আমার মনে নেই" in out.text
+    assert here.said == ["আগের কোনো উত্তর আমার মনে নেই — Telegram-এ আগের বার্তাটা দেখুন।"]

@@ -38,6 +38,7 @@ NEEDS_YOU = {
     False: {"bn": "এই কাজে আপনার একটা উত্তর লাগবে — Telegram-এ দেখুন।",
             "en": "I need an answer from you — please check Telegram."}}
 REPEATING = "🔊 আগের উত্তরটা পুরো পড়ে শোনাচ্ছি।"
+NOTHING_TO_REPEAT = "আগের কোনো উত্তর আমার মনে নেই — Telegram-এ আগের বার্তাটা দেখুন।"
 
 
 Corrector = Callable[[str, str], Awaitable[str | None]]   # (heard, language) -> suggestion
@@ -92,7 +93,7 @@ class VoiceIntake:
         self._turns: dict[str, int] = {}
         # task id -> (chat, turn, what the owner said)
         self.task_turns: dict[int, tuple[str, int, str]] = {}
-        # chat -> the last answer that was only summarised aloud ("পুরোটা পড়ে শোনাও")
+        # chat -> the last answer, to read in full on "পুরোটা পড়ে শোনাও"
         self.last_full: dict[str, str] = {}
         self._noticed: set[tuple[int, bool]] = set()
         self.progress_after = PROGRESS_AFTER_SECONDS
@@ -115,7 +116,7 @@ class VoiceIntake:
         """Smart voice: the whole answer when short or asked for, else its main point."""
         sp = spoken_answer(say, detail=wants_detail(request), said_in=request,
                            max_chars=self.max_chars)
-        if not sp.full and chat_id:
+        if chat_id:
             self.last_full[chat_id] = say
         return sp.text
 
@@ -193,7 +194,7 @@ class VoiceIntake:
             return None
         sp = spoken_answer(result, completed=completed, detail=wants_detail(request),
                            said_in=request, max_chars=self.max_chars)
-        if completed and not sp.full and chat_id:
+        if chat_id and result:
             self.last_full[chat_id] = result
         return sp.text
 
@@ -268,9 +269,13 @@ class VoiceIntake:
                 heard += f"\n📖 অভিধানে ঠিক করলাম: «{text}»"
                 _log.info(f"speech dictionary: {len(fixed.changes)} fix(es) applied",
                           extra={"action": "voice.dictionary", "status": "ok"})
-        last = self.last_full.get(msg.chat_id)
-        if last is not None and asks_to_repeat_in_full(text):
-            # V1.2: "পুরোটা পড়ে শোনাও" — the last answer in full, not a new task
+        if asks_to_repeat_in_full(text):
+            # V1.2: "পুরোটা পড়ে শোনাও" — the last answer in full, never a new task
+            last = self.last_full.get(msg.chat_id)
+            if last is None:
+                return await self._spoken(OutgoingMessage(f"{heard}\n\n{NOTHING_TO_REPEAT}"),
+                                          NOTHING_TO_REPEAT, msg.chat_id, here, turn=turn,
+                                          as_is=True)
             full = spoken_answer(last, detail=True, said_in=text, max_chars=self.max_chars)
             return await self._spoken(OutgoingMessage(f"{heard}\n\n{REPEATING}"), full.text,
                                       msg.chat_id, here, turn=turn, as_is=True)
