@@ -104,6 +104,11 @@ class TypeRequest(Target):
     replace: bool = False
 
 
+class DictateRequest(Strict):
+    text: str = Field(min_length=1, max_length=4000)
+    window: str | None = None
+
+
 class KeysRequest(Strict):
     window: str
     keys: str
@@ -249,6 +254,14 @@ def register(app: FastAPI, ctx: AppContext | None = None) -> None:
         return await _call(desktop_lock.leased(desktop_ui.type_text), r.window, r.text, r.name,
                            r.automation_id,
                            r.control_type, replace=r.replace)
+
+    @app.post("/v1/ui/focused")
+    async def focused() -> Any:
+        return await _call(desktop_ui.focused)
+
+    @app.post("/v1/ui/dictate")
+    async def dictate(r: DictateRequest) -> Any:
+        return await _call(desktop_lock.leased(desktop_ui.dictate), r.text, r.window)
 
     @app.post("/v1/ui/keys")
     async def keys(r: KeysRequest) -> Any:

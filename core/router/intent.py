@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.router.device import device_command
+from core.router.dictation import dictation_command
 from core.scheduler.parse import looks_scheduled
 from core.skills.urls import URL_RX
 from providers.provider_base import Limits, ProviderRequest
@@ -320,7 +321,8 @@ QUICK_SKILLS = frozenset({("windows", "status"), ("windows", "processes"),
                           ("windows", "open_windows"), ("screenshot", "capture"),
                           ("app-control", "open"), ("app-control", "close"),
                           ("app-control", "view"), ("device", "volume"),
-                          ("device", "media"), ("device", "brightness")})
+                          ("device", "media"), ("device", "brightness"),
+                          ("desktop-ui", "dictate")})
 
 
 def is_quick_request(text: str, apps: Any | None = None) -> bool:
@@ -389,6 +391,11 @@ def compound_app_task(text: str, apps: Any | None = None) -> Intent | None:
 
 
 def classify_by_rules(text: str, apps: Any | None = None, chat_id: str = "") -> Intent | None:
+    dictate = dictation_command(text)
+    if dictate is not None:
+        # V1.2: «লিখে দাও: …» — the words are text to type, never read as a request
+        # (a time inside them is not a schedule, an app name is not an app to open)
+        return Intent("pc_control", 0.95, "rule", dictate, matched="dictation")
     inside = (apps.inside_command(text) if apps is not None and not URL_RX.search(text)
               else None)
     if looks_scheduled(text):

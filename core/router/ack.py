@@ -59,6 +59,8 @@ def ack_for(text: str, apps: Any | None = None) -> str | None:
             return "📸 screenshot নিচ্ছি"
         if skill == "admin":
             return "🛡️ admin কাজ — আগে আপনার অনুমোদন চাইব"
+        if skill == "desktop-ui" and tool == "dictate":
+            return "⌨️ cursor-এর জায়গায় লিখছি"
         return None
     if hit.meta.get("inside_app"):
         return f"🖱️ {hit.meta['inside_app']}-এর ভেতরে কাজ শুরু করছি"

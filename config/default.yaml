@@ -84,6 +84,8 @@ voice:
   ptt:
     enabled: true
     hotkey: ctrl+alt+space
+    # V1.2 dictation: hold this one and speak — typed at the cursor of the focused field
+    dictation_hotkey: ctrl+alt+d
   hint_words: [Nova AI, পিসি, পিসির অবস্থা, স্ট্যাটাস, স্ক্রিনশট, screenshot, status,
                বাংলাদেশ, রাজধানী, খোলো, বন্ধ করো, ফাইল, ফোল্ডার, Notepad, Chrome,
                Click TV, টাস্ক, বলো, দেখাও]

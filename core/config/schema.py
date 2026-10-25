@@ -140,6 +140,10 @@ class PushToTalkSection(Strict):
     max_seconds: Annotated[float, Field(ge=3, le=120)] = 60
     min_seconds: Annotated[float, Field(ge=0.1, le=5)] = 0.4
     cue: bool = True                 # a short tone when listening starts and stops
+    # V1.2 dictation: hold THIS shortcut and speak — the words are typed at the cursor of
+    # the focused field (None = off)
+    dictation_hotkey: Annotated[str | None, Field(
+        pattern=r"^((ctrl|control|alt|shift|win)\+)*[a-z0-9]+$")] = None
     speak_on_pc: bool = True         # the spoken answer plays on the PC speakers
 
 

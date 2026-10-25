@@ -404,6 +404,77 @@ def type_text(window: str, text: str, name: str | None, automation_id: str | Non
                 "verified": after is not None and text in after and kept}
 
 
+# V1.2 dictation: never type into something that is not a text field — in a list or a
+# tree, letters jump between items; on a button, Space presses it
+NOT_TEXT = frozenset({
+    "ButtonControl", "SplitButtonControl", "ListControl", "ListItemControl", "TreeControl",
+    "TreeItemControl", "MenuItemControl", "MenuBarControl", "MenuControl", "TabControl",
+    "TabItemControl", "CheckBoxControl", "RadioButtonControl", "HyperlinkControl",
+    "WindowControl", "TitleBarControl", "ToolBarControl", "ImageControl", "DataItemControl",
+    "TableControl", "HeaderItemControl", "ScrollBarControl", "SliderControl"})
+
+
+def _focused_field(auto: Any) -> tuple[Any, Any]:
+    w = front_window(auto)
+    if w is None:
+        raise UIError("no window is in front right now")
+    c = auto.GetFocusedControl()
+    if c is None or not _focus_inside(auto, w):
+        raise UIError("nothing in the window in front has the keyboard focus")
+    return w, c
+
+
+def _read_only(c: Any) -> bool:
+    try:
+        return bool(c.GetValuePattern().IsReadOnly)
+    except Exception:  # noqa: BLE001 - no ValuePattern: the control type decides
+        return False
+
+
+def _takes_text(c: Any) -> bool:
+    return not _read_only(c) and c.ControlTypeName not in NOT_TEXT
+
+
+def focused() -> dict[str, Any]:
+    """Where typed text would land now: the front window and its focused control."""
+    require_unlocked()
+    with _uia() as auto:
+        w, c = _focused_field(auto)
+        return {"window": _describe_window(w), "control": _describe_control(c),
+                "takes_text": _takes_text(c)}
+
+
+def dictate(text: str, window: str | None = None) -> dict[str, Any]:
+    """Type at the cursor of the focused field in the window in front — the owner put
+    the cursor there (V1.2 dictation). Never into a password field or a non-text
+    control; never somewhere else when focus is gone. `window`: only if the window in
+    front is this one (exact title) — else nothing is typed."""
+    require_unlocked()
+    with _uia() as auto:
+        w, c = _focused_field(auto)
+        if window is not None and str(w.Name) != window:
+            raise UIError(f"the window in front is «{w.Name}», not «{window}» — nothing typed")
+        info = _describe_control(c)
+        if info["password"]:
+            raise UIError("the focused field is a password field — never typed by voice")
+        if not _takes_text(c):
+            raise UIError(f"the focused control ({info['type']}) does not take text — click "
+                          "into a text field first")
+        before = _text_of(c)
+        keys = "{Enter}".join(_escape_sendkeys(line) for line in text.split("\n"))
+        auto.SendKeys(keys, interval=0.005, waitTime=0.1)
+        import desktop_guard
+        desktop_guard.note_injected()
+        time.sleep(0.2)
+        after = _text_of(c)
+        lines = [ln for ln in text.split("\n") if ln.strip()]
+        landed = after is not None and all(ln in after for ln in lines)
+        grew = after is not None and before is not None and len(after) > len(before)
+        return {"window": _describe_window(w), "control": info,
+                "method": "SendKeys(at the cursor)", "readable": after is not None,
+                "verified": landed and (grew or not before)}
+
+
 def _escape_sendkeys(text: str) -> str:
     return "".join("{" + ch + "}" if ch in "{}" else ch for ch in text)
 

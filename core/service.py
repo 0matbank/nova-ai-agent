@@ -541,6 +541,7 @@ async def run_core_service(
     # V1.2 push-to-talk (off unless enabled): hold the shortcut on the PC and speak
     ptt_cfg = cfg.default.voice.ptt
     ptt: PushToTalk | None = None
+    ptt_extra: list[PushToTalk] = []
     if ptt_cfg.enabled and channel.whitelist.chat_ids:
         owner_chat = sorted(channel.whitelist.chat_ids)[0]
         pc_voice = PcVoice(speaker, Player(cfg.path("workspace_dir") / "voice" / "say"),
@@ -555,11 +556,26 @@ async def run_core_service(
                          on_press=transcriber.warm, interrupt=pc_voice.interrupt)
         if not ptt.start():
             ptt = None
+        if ptt_cfg.dictation_hotkey:
+            # V1.2 dictation: a second shortcut — the words are typed at the cursor
+            async def on_pc_dictation(wav: bytes, seconds: float) -> None:
+                _record(store, "telegram", owner_chat, "in", "<pc dictation>", None)
+                await pc_turn(voice, send_and_record, owner_chat, wav, seconds, say_here,
+                              dictation=True)
+
+            dictation = PushToTalk(
+                ptt_cfg.model_copy(update={"hotkey": ptt_cfg.dictation_hotkey}),
+                asyncio.get_running_loop(), on_pc_dictation, on_press=transcriber.warm,
+                interrupt=pc_voice.interrupt)
+            if dictation.start():
+                ptt_extra.append(dictation)
     try:
         await channel.run(stop)
     finally:
         if ptt is not None:
             ptt.stop()
+        for extra in ptt_extra:
+            extra.stop()
         # plan §32A graceful shutdown: 1–2 no new task / message (Telegram keeps new
         # messages until we are back), 3–6 the running task stops at its next checkpoint
         # (state is in the DB), then going-offline notice, AI drain, DB + logs closed

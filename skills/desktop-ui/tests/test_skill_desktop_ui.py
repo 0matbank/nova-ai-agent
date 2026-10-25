@@ -185,3 +185,64 @@ def test_command_sinks_found_by_audit(process: str, klass: str, title: str, labe
     sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "workers" / "desktop-worker"))
     import desktop_ui
     assert desktop_ui.is_shell_window(process, klass, title, label, control_known=known) is shell
+
+
+# ------------------------------------------------- V1.2 dictation
+
+def dictation_env(tmp_path: Path, *, password: bool = False, is_shell: bool = False,
+                  typed: list | None = None) -> SkillEnv:
+    focused = {"window": {"title": "Notes", "process": "cmd.exe" if is_shell else "app.exe"},
+               "control": {"name": "Body", "type": "EditControl", "password": password},
+               "takes_text": True}
+    resolve = {"window": {"title": "Notes", "is_shell": is_shell},
+               "control": {"name": "Body", "type": "EditControl"}}
+
+    def dictate(body: dict) -> dict:
+        if typed is not None:
+            typed.append(body)
+        return {"window": {"title": "Notes"}, "control": focused["control"],
+                "method": "SendKeys(at the cursor)", "readable": True, "verified": True}
+    return make_skill_env(tmp_path, {"desktop": FakeDesktop({
+        "/v1/ui/focused": focused, "/v1/ui/resolve": resolve, "/v1/ui/dictate": dictate})})
+
+
+def test_dictation_types_at_the_cursor_without_asking(tmp_path: Path) -> None:
+    typed: list = []
+    s = dictation_env(tmp_path, typed=typed)
+    r = s.call("desktop-ui", "dictate", {"text": "আমি আসছি।"})
+    assert r.ok and "«Notes»" in r.summary and typed[0]["text"] == "আমি আসছি।"
+    assert s.tasks.buttons == []                                 # BLUE: no approval
+
+
+@pytest.mark.parametrize(("kwargs", "text", "action"), [
+    ({"password": True}, "hello", "ui.type_secret"),            # a password field
+    ({}, "password: Hx9#kq22", "ui.type_secret"),               # a secret in the words
+    ({"is_shell": True}, "rm -rf /", "ui.shell_input"),         # a terminal
+])
+def test_dictation_red_cases_wait_for_the_owner(tmp_path: Path, kwargs: dict, text: str,
+                                                action: str) -> None:
+    typed: list = []
+    s = dictation_env(tmp_path, typed=typed, **kwargs)
+    with pytest.raises(ApprovalPending):
+        s.call("desktop-ui", "dictate", {"text": text})
+    [appr] = s.tasks.approvals.pending()
+    assert appr.action == action and typed == []
+    assert "Hx9#kq22" not in (appr.summary or "")
+
+
+def test_real_dictation_lands_at_the_cursor(ui) -> None:  # type: ignore[no-untyped-def]
+    """Private test window only, and only while it is in front (window guard)."""
+    s, title = ui
+    focus_retry(lambda: s.call("desktop-ui", "click", {"window": title, "name": "Nova Input"}))
+    s.call("desktop-ui", "keys", {"window": title, "keys": "home"})
+    r = focus_retry(lambda: s.call("desktop-ui", "dictate",
+                                   {"text": "নোভা ", "window": title}))
+    assert r.ok and r.evidence["verified"], r.summary
+    assert value(s, title, name="Nova Input") == "নোভা existing text"   # at the cursor
+
+
+def test_real_dictation_refuses_another_window(ui) -> None:  # type: ignore[no-untyped-def]
+    s, title = ui
+    r = s.call("desktop-ui", "dictate", {"text": "x", "window": title + " (not this)"})
+    assert not r.ok and "nothing typed" in r.summary
+    assert value(s, title, name="Nova Input") == "existing text"

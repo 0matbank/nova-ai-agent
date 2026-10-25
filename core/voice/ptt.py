@@ -14,6 +14,7 @@ from typing import Any, Protocol
 from channels.base import IncomingMessage, OutgoingMessage, VoiceRef
 from core.config.schema import PushToTalkSection
 from core.log import get_logger
+from core.router.dictation import PREFIX as DICTATION_PREFIX
 from core.voice import pc_audio
 from core.voice.intake import SayHere
 
@@ -125,15 +126,21 @@ class PushToTalk:
 
 async def pc_turn(voice: Any, send: Callable[[str, OutgoingMessage], Awaitable[object]],
                   owner_chat: str, wav: bytes, seconds: float,
-                  here: SayHere | None) -> OutgoingMessage:
-    """One spoken turn from the PC microphone, as if it were the owner's voice note."""
+                  here: SayHere | None, dictation: bool = False) -> OutgoingMessage:
+    """One spoken turn from the PC microphone, as if it were the owner's voice note.
+    `dictation`: the words are typed at the cursor (no spoken result)."""
     msg = IncomingMessage("telegram", owner_chat, owner_chat, "", "", datetime.now(UTC),
                           VoiceRef("pc-mic", max(1, round(seconds)), "audio/wav", len(wav)))
 
     async def recorded(_file_id: str) -> bytes:
         return wav
-    out: OutgoingMessage = await voice.handle(msg, recorded, here=here)
-    out = dataclasses.replace(out, text=f"💻 PC-তে বলা\n{out.text}")
+    if dictation:
+        out: OutgoingMessage = await voice.handle(msg, recorded, here=here,
+                                                  prefix=DICTATION_PREFIX, silent=True)
+        out = dataclasses.replace(out, text=f"⌨️ PC-তে dictation\n{out.text}")
+    else:
+        out = await voice.handle(msg, recorded, here=here)
+        out = dataclasses.replace(out, text=f"💻 PC-তে বলা\n{out.text}")
     await send(owner_chat, out)
     return out
 

@@ -15,6 +15,7 @@ plan's priority order (§17): UIA control patterns → keyboard → raw coordina
 | `focus` | ui.focus 🔵 | bring a window to front; verified |
 | `click` | ui.click 🟡 | UIA Invoke/Toggle/Select/Expand; danger-word names need approval |
 | `type` | ui.type 🔵 / ui.replace_text 🟡 / ui.type_secret 🔴 | **appends**; `replace=true` backs up old content first |
+| `dictate` | ui.type 🔵 / ui.shell_input 🔴 / ui.type_secret 🔴 | V1.2: the owner's spoken words at the **cursor** of the focused field in the window in front; never a password field or a non-text control |
 | `keys` | ui.keys 🟡 | `ctrl+s`, `enter`… ; Alt+F4 / Ctrl+W / Delete need approval |
 | `click_xy` | ui.click_xy 🔴 | raw coordinates, last resort |
 

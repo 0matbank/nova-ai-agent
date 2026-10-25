@@ -241,7 +241,10 @@ class VoiceIntake:
         return started
 
     async def handle(self, msg: IncomingMessage, download: Downloader,
-                     here: SayHere | None = None) -> OutgoingMessage:
+                     here: SayHere | None = None, prefix: str = "",
+                     silent: bool = False) -> OutgoingMessage:
+        """`prefix`: put before what was heard (dictation: «লিখে দাও: »); `silent`: the
+        result is not spoken (typing needs no voice — only a question is)."""
         assert msg.voice is not None
         if msg.voice.duration > self.settings.max_duration_seconds:
             return OutgoingMessage(f"🎙️ Voice অনেক লম্বা ({msg.voice.duration}s) — সর্বোচ্চ "
@@ -287,7 +290,9 @@ class VoiceIntake:
                 heard += f"\n📖 অভিধানে ঠিক করলাম: «{text}»"
                 _log.info(f"speech dictionary: {len(fixed.changes)} fix(es) applied",
                           extra={"action": "voice.dictionary", "status": "ok"})
-        if self.about_last_answer(msg.chat_id, text):
+        if prefix:
+            text = prefix + text
+        elif self.about_last_answer(msg.chat_id, text):
             # V1.2: "পুরোটা পড়ে শোনাও" — the last answer in full, never a new task
             last = self.last_full.get(msg.chat_id)
             if last is None:
@@ -306,7 +311,8 @@ class VoiceIntake:
             return await self._ask_to_confirm(text_msg, text, t.language, heard, here, turn)
         r0 = time.perf_counter()
         reply = await self.handle_text(text_msg)
-        self._track(reply, started, here, msg.chat_id, turn, text)
+        if not silent:
+            self._track(reply, started, here, msg.chat_id, turn, text)
         _log.info(f"voice timing: download {t_download:.2f}s, whisper load {load:.1f}s, "
                   f"transcribe {t.seconds:.2f}s, hand-off {time.perf_counter() - r0:.2f}s,"
                   f" total {time.perf_counter() - t0:.2f}s",
@@ -316,6 +322,8 @@ class VoiceIntake:
                               reply.buttons if reply else [], reply.photo if reply else None,
                               task_id=reply.task_id if reply else None)
         # A task's answer is spoken when it completes; a direct reply is spoken now.
+        if silent:
+            return out
         return out if out.task_id is not None else await self._spoken(
             out, reply.text if reply else "", msg.chat_id, here, request=text, turn=turn)
 
