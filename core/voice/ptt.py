@@ -151,8 +151,8 @@ class PcVoice:
         if job is not None:
             self._jobs.add(job)
         try:
-            audio = await self.speaker.synthesize(text)
-            if audio is not None:
+            # V1.2: the first sentence plays while the rest is still being made
+            async for audio in self.speaker.stream(text):
                 await self.player.play(audio)
         finally:
             if job is not None:

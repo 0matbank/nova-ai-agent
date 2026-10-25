@@ -86,7 +86,7 @@ from core.voice.intake import SayHere, VoiceIntake
 from core.voice.pc_audio import Player
 from core.voice.ptt import PcVoice, PushToTalk, pc_turn
 from core.voice.transcriber import Transcriber
-from core.voice.tts import GeminiTTS, Speaker, TTSBudget
+from core.voice.tts import GeminiTTS, Speaker, TTSBudget, TTSCache
 from core.whatsapp_service import start_whatsapp
 from models.router import ProviderRouter
 from models.router.circuit import ProviderHistory
@@ -616,7 +616,7 @@ def build_speaker(ctx: AppContext) -> Speaker:
     if tts.engine == "gemini" and gemini is None:
         _log.info("gemini voice not configured (no GEMINI_API_KEY) — using edge voice",
                   extra={"action": "voice.tts"})
-    return Speaker(tts, gemini, budget)
+    return Speaker(tts, gemini, budget, TTSCache(ctx.config.path("data_dir") / "tts_cache"))
 
 
 def provider_summary(router: ProviderRouter) -> tuple[bool, str]:

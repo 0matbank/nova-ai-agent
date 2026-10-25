@@ -251,3 +251,53 @@ def test_rate_limit_waits_as_long_as_google_says(headers: dict, body: dict,
     from core.voice.tts import rate_limit_info
     r = httpx.Response(429, headers=headers, json=body)
     assert rate_limit_info(r) == (wait, quota)
+
+
+def test_fixed_sentences_are_cached_and_cost_no_second_request(tmp_path: Path) -> None:
+    """V1.2: Gemini takes ~7 s even for three words (measured) — a repeated fixed
+    sentence plays from the cache; anything with a number is never kept."""
+    pytest.importorskip("av")
+    from core.voice.tts import TTSCache
+    calls: list = []
+    sp = Speaker(TTSSection(enabled=True, engine="gemini", voices={"bn": "x"}),
+                 _gemini(calls=calls), TTSBudget(tmp_path / "b.json", 10_000),
+                 TTSCache(tmp_path / "cache"))
+    first = asyncio.run(sp.synthesize("বিস্তারিত Telegram-এ দিয়েছি।"))
+    again = asyncio.run(sp.synthesize("বিস্তারিত Telegram-এ দিয়েছি।"))
+    assert first == again and len(calls) == 1 and sp.last_engine == "gemini"
+    asyncio.run(sp.synthesize("সিপিইউ 15 শতাংশ।"))
+    asyncio.run(sp.synthesize("সিপিইউ 15 শতাংশ।"))
+    assert len(calls) == 3                                  # numbers: never cached
+
+
+def test_parts_first_sentence_alone_fixed_ones_alone_rest_together() -> None:
+    sp = Speaker(TTSSection(enabled=True, voices={"bn": "x"}))
+    text = ("সিপিইউ 15 শতাংশ। র্যাম 73 শতাংশ। ডিস্কে 82 গিগাবাইট খালি। "
+            "বিস্তারিত Telegram-এ দিয়েছি।")
+    assert sp.parts(text) == ["সিপিইউ 15 শতাংশ।", "র্যাম 73 শতাংশ। ডিস্কে 82 গিগাবাইট খালি।",
+                              "বিস্তারিত Telegram-এ দিয়েছি"]
+    assert sp.parts("বাংলাদেশের রাজধানী ঢাকা") == ["বাংলাদেশের রাজধানী ঢাকা"]
+
+
+def test_stream_plays_the_first_part_before_the_rest_is_made(tmp_path: Path) -> None:
+    order: list[str] = []
+
+    class Slow(Speaker):
+        async def synthesize(self, text: str) -> bytes | None:
+            await asyncio.sleep(0.05 if text.startswith("সিপিইউ") else 0.3)
+            order.append(f"made {text[:6]}")
+            return text.encode()
+    sp = Slow(TTSSection(enabled=True, voices={"bn": "x"}))
+
+    async def go() -> float:
+        t0 = asyncio.get_running_loop().time()
+        first_at = 0.0
+        async for _audio in sp.stream("সিপিইউ 15 শতাংশ। র্যাম 73 শতাংশ, অনেক কিছু চলছে।"):
+            if not first_at:
+                first_at = asyncio.get_running_loop().time() - t0
+                order.append("play first")
+        return first_at
+    first_at = asyncio.run(go())
+    assert first_at < 0.2                                   # not after the slow part
+    made_rest = next(i for i, x in enumerate(order) if x.startswith("made র্যাম"))
+    assert order.index("play first") < made_rest

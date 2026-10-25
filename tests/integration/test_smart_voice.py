@@ -257,6 +257,9 @@ class FakeSpeaker:
     async def synthesize(self, text: str) -> bytes:
         return text.encode()
 
+    async def stream(self, text: str):  # type: ignore[no-untyped-def]
+        yield await self.synthesize(text)
+
 
 def test_pressing_the_key_silences_nova_and_drops_queued_answers() -> None:
     async def go() -> FakePlayer:

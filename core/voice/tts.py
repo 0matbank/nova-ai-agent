@@ -8,13 +8,16 @@ re-encode. Any failure returns None — the text reply is always sent anyway.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
+import hashlib
 import importlib
 import io
 import json
 import re
 import time
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -119,6 +122,52 @@ def to_ogg_opus(audio: bytes) -> bytes:
     return out.getvalue()
 
 
+_SENTENCE_END = re.compile(r"(?<=[।.!?])\s+")
+CACHE_MAX_CHARS = 80
+
+
+def cacheable(text: str) -> bool:
+    """A short fixed sentence («বিস্তারিত Telegram-এ দিয়েছি», «কাজ চলছে…») — said again
+    and again; anything with a number changes every time and is not kept."""
+    return 0 < len(text) <= CACHE_MAX_CHARS and not re.search(r"\d", text)
+
+
+class TTSCache:
+    """V1.2: spoken sentences kept on disk by (voice, text) — a repeated sentence plays at
+    once and costs no Gemini request (measured 2026-10-25: Gemini takes 6.7 s even for
+    three words)."""
+
+    def __init__(self, folder: Path | None, max_files: int = 300) -> None:
+        self.folder = folder
+        self.max_files = max_files
+
+    def _path(self, voice_id: str, text: str) -> Path | None:
+        if self.folder is None:
+            return None
+        digest = hashlib.sha256(f"{voice_id}\n{text}".encode()).hexdigest()[:32]
+        return self.folder / f"{digest}.audio"
+
+    def get(self, voice_id: str, text: str) -> bytes | None:
+        path = self._path(voice_id, text)
+        if path is None or not path.exists():
+            return None
+        with contextlib.suppress(OSError):
+            path.touch()                          # recently used: kept longest
+            return path.read_bytes()
+        return None
+
+    def put(self, voice_id: str, text: str, audio: bytes) -> None:
+        path = self._path(voice_id, text)
+        if path is None:
+            return
+        with contextlib.suppress(OSError):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(audio)
+            files = sorted(path.parent.glob("*.audio"), key=lambda f: f.stat().st_mtime)
+            for old in files[: max(0, len(files) - self.max_files)]:
+                old.unlink(missing_ok=True)
+
+
 class TTSBudget:
     """Budget guard (plan §9): characters sent to the API-billed voice per UTC day,
     persisted so restarts cannot reset it."""
@@ -185,8 +234,18 @@ class GeminiTTS:
         self.style = style
         self._client = client or httpx.AsyncClient(timeout=60)
         self.cooldown_until = 0.0
+        # at most two requests at once: the free tier limits requests per minute
+        self._slots = asyncio.Semaphore(2)
+
+    @property
+    def available(self) -> bool:
+        return time.time() >= self.cooldown_until
 
     async def synthesize(self, text: str) -> bytes:
+        async with self._slots:
+            return await self._synthesize(text)
+
+    async def _synthesize(self, text: str) -> bytes:
         if time.time() < self.cooldown_until:
             raise RuntimeError("gemini tts cooling down after a rate limit")
         item: dict[str, Any] = {"type": "text", "text": text}
@@ -226,11 +285,50 @@ class Speaker:
     """Gemini first (natural), Microsoft edge voice as the fallback."""
 
     def __init__(self, settings: TTSSection, gemini: GeminiTTS | None = None,
-                 budget: TTSBudget | None = None) -> None:
+                 budget: TTSBudget | None = None, cache: TTSCache | None = None) -> None:
         self.settings = settings
         self.gemini = gemini if settings.engine == "gemini" else None
         self.budget = budget or TTSBudget(None, settings.daily_char_budget)
+        self.cache = cache or TTSCache(None)
         self.last_engine = ""
+
+    def _voice_id(self, clean: str) -> str:
+        """Which voice would say `clean` now — the cache key's first half."""
+        gemini_now = (self.gemini is not None and self.gemini.available
+                      and self.budget.allows(len(clean)))
+        return self._voice_id_of("gemini" if gemini_now else "edge", clean)
+
+    def parts(self, text: str) -> list[str]:
+        """V1.2 streaming: the first sentence alone (it starts playing as soon as it is
+        made), each fixed sentence alone (it may be cached), the rest together (few
+        requests — Gemini costs ~7 s per request whatever the length)."""
+        clean = speakable(text, self.settings.max_chars, voice_language(text))
+        out: list[str] = []
+        joinable = False
+        for sentence in (x for x in _SENTENCE_END.split(clean) if x.strip()):
+            if not out or cacheable(sentence):
+                out.append(sentence)
+                joinable = len(out) > 1 and not cacheable(sentence)
+            elif joinable:
+                out[-1] = f"{out[-1]} {sentence}"
+            else:
+                out.append(sentence)
+                joinable = True
+        return out
+
+    async def stream(self, text: str) -> AsyncIterator[bytes]:
+        """The answer as consecutive audio pieces: all are made at once (two Gemini
+        requests at a time), each is handed over as soon as it and those before it
+        are ready — the first sentence plays while the rest is still being made."""
+        jobs = [asyncio.ensure_future(self.synthesize(part)) for part in self.parts(text)]
+        try:
+            for job in jobs:
+                audio = await job
+                if audio is not None:
+                    yield audio
+        finally:
+            for job in jobs:
+                job.cancel()
 
     @property
     def enabled(self) -> bool:
@@ -243,6 +341,30 @@ class Speaker:
         clean = speakable(text, self.settings.max_chars, voice_language(text))
         if not clean:
             return None
+        keep = cacheable(clean)
+        if keep:
+            voice_id = self._voice_id(clean)
+            hit = self.cache.get(voice_id, clean)
+            if hit is not None:
+                self.last_engine = voice_id.split("|", 1)[0]
+                return hit
+        t0 = time.perf_counter()
+        audio = await self._make(clean)
+        _log.info(f"tts {self.last_engine}: {len(clean)} chars in "
+                  f"{time.perf_counter() - t0:.1f}s", extra={"action": "voice.tts",
+                                                            "status": "ok"})
+        if audio is not None and keep:
+            self.cache.put(self._voice_id_of(self.last_engine, clean), clean, audio)
+        return audio
+
+    def _voice_id_of(self, engine: str, clean: str) -> str:
+        if engine == "gemini" and self.gemini is not None:
+            return f"gemini|{self.gemini.voice}|{self.gemini.style}"
+        lang = voice_language(clean)
+        voice = self.settings.voices.get(lang) or next(iter(self.settings.voices.values()), "")
+        return f"edge|{voice}|{self.settings.rate}"
+
+    async def _make(self, clean: str) -> bytes | None:
         if self.gemini is not None and self.budget.allows(len(clean)):
             try:
                 audio = await self.gemini.synthesize(clean)
