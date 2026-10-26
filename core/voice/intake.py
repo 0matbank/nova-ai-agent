@@ -20,7 +20,13 @@ from core.config.schema import VoiceSection
 from core.log import get_logger
 from core.router.intent import classify_by_rules
 from core.voice.dictionary import SpeechDictionary
-from core.voice.speech import asks_to_repeat_in_full, same_topic, spoken_answer, wants_detail
+from core.voice.speech import (
+    asks_to_repeat_in_full,
+    refers_back,
+    same_topic,
+    spoken_answer,
+    wants_detail,
+)
 from core.voice.transcriber import Transcriber
 from core.voice.tts import Speaker
 
@@ -46,6 +52,8 @@ NOTHING_TO_REPEAT = "আগের কোনো উত্তর আমার ম�
 Corrector = Callable[[str, str], Awaitable[str | None]]   # (heard, language) -> suggestion
 LowRisk = Callable[[str], bool]
 Sender = Callable[[str, OutgoingMessage], Awaitable[object]]
+# (previous request, previous answer, what was heard now) -> wants that answer again?
+ReadBack = Callable[[str, str, str], Awaitable[bool | None]]
 # V1.2 push-to-talk: speak the answer where the owner spoke (the PC), not as a voice note
 SayHere = Callable[[str], Awaitable[None]]
 
@@ -72,8 +80,11 @@ class VoiceIntake:
                  handle_text: Handler, corrector: Corrector | None = None,
                  speaker: Speaker | None = None, low_risk: LowRisk | None = None,
                  send: Sender | None = None,
-                 dictionary: SpeechDictionary | None = None) -> None:
+                 dictionary: SpeechDictionary | None = None,
+                 readback: ReadBack | None = None) -> None:
         self.transcriber = transcriber
+        # V1.2: when the word rules are unsure, this PC's AI decides "read it again?"
+        self.readback = readback
         # V1.2: the owner's own words and learned fixes, before routing
         self.dictionary = dictionary
         # V1.1: opening a clearly named installed app is harmless like a read-only ask
@@ -187,17 +198,29 @@ class VoiceIntake:
         say = " ".join(x for x in (line, WORKING[lang]) if x)
         await self._spoken(OutgoingMessage(""), say, chat_id, here, turn=turn, as_is=True)
 
-    def about_last_answer(self, chat_id: str, text: str) -> bool:
+    async def about_last_answer(self, chat_id: str, text: str) -> bool:
         """"Read it out / in detail / again" about the last answer — said outright, or
-        about the same topic soon after it (owner 2026-10-25: Whisper broke every
-        exact phrase — «পিসিজে স্ট্যাটাস … সেটা পরে আমাকে শোনা»)."""
+        about the same topic soon after it; when the words are too broken for the
+        rules (owner 2026-10-26: «…সেটি আমাকে করে সনাও, তুমি থেমে গেলো কেনা»), this
+        PC's AI decides with the previous answer as context."""
         if asks_to_repeat_in_full(text):
             return True
-        if not wants_detail(text) or chat_id not in self.last_full:
-            return False
+        last = self.last_full.get(chat_id)
         asked, when = self.last_request.get(chat_id, ("", 0.0))
-        return (time.time() - when < RECENT_ANSWER_SECONDS
-                and same_topic(text, asked, self.last_full[chat_id]))
+        if last is None or time.time() - when >= RECENT_ANSWER_SECONDS:
+            return False
+        if wants_detail(text) and same_topic(text, asked, last):
+            return True
+        if self.readback is None or not refers_back(text):
+            return False
+        try:
+            verdict = await self.readback(asked, last, text)
+        except Exception:  # noqa: BLE001 - unsure → a normal request, never a guess
+            _log.exception("read-back check failed", extra={"action": "voice.readback"})
+            return False
+        _log.info(f"read-back check by the local AI: {verdict}",
+                  extra={"action": "voice.readback", "status": "ok"})
+        return bool(verdict)
 
     def task_speech(self, task_id: int, result: str, completed: bool) -> str | None:
         """What to say when a voice task ends — None when a newer voice command came."""
@@ -292,7 +315,7 @@ class VoiceIntake:
                           extra={"action": "voice.dictionary", "status": "ok"})
         if prefix:
             text = prefix + text
-        elif self.about_last_answer(msg.chat_id, text):
+        elif await self.about_last_answer(msg.chat_id, text):
             # V1.2: "পুরোটা পড়ে শোনাও" — the last answer in full, never a new task
             last = self.last_full.get(msg.chat_id)
             if last is None:

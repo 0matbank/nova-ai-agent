@@ -370,12 +370,12 @@ def test_read_it_out_about_the_same_topic_soon_after_means_that_answer(tmp_path:
     vi.last_full["555"] = PC_STATUS
     vi.last_request["555"] = ("পিসির বট্তোমন অবস্থা বলো", _t.time())
     glued = "পিসিজে স্ট্যাটাস আমাকে দিলে, সেটা পরে আমাকে শোনা, উপরাটা পরে"
-    assert vi.about_last_answer("555", glued)
-    assert vi.about_last_answer("555", "CPU টা বিস্তারিত বলো")          # a word of the answer
-    assert not vi.about_last_answer("555", "আজকের খবর পড়ে শোনাও")       # another topic
-    assert not vi.about_last_answer("555", "পিসির বর্তমান স্ট্যাটাস বলো")  # a new ask
+    assert asyncio.run(vi.about_last_answer("555", glued))
+    assert asyncio.run(vi.about_last_answer("555", "CPU টা বিস্তারিত বলো"))  # in the answer
+    assert not asyncio.run(vi.about_last_answer("555", "আজকের খবর পড়ে শোনাও"))       # another topic
+    assert not asyncio.run(vi.about_last_answer("555", "পিসির বর্তমান স্ট্যাটাস বলো"))  # a new ask
     vi.last_request["555"] = ("পিসির বট্তোমন অবস্থা বলো", _t.time() - 3600)
-    assert not vi.about_last_answer("555", glued.replace("যে", ""))     # an hour later
+    assert not asyncio.run(vi.about_last_answer("555", glued.replace("যে", "")))     # an hour later
 
 
 def test_asked_in_bangla_it_is_read_in_bangla() -> None:
@@ -392,3 +392,28 @@ def test_asked_in_bangla_it_is_read_in_bangla() -> None:
     assert short == "সিপিইউ 15 শতাংশ, র্যাম 73 শতাংশ। বিস্তারিত Telegram-এ দিয়েছি।"
     en = spoken_answer(PC_STATUS, completed=True, detail=True, said_in="read out the pc status")
     assert "percent" in en.text and voice_language(en.text) == "en"
+
+
+
+def test_broken_words_are_judged_by_the_local_ai_with_the_last_answer(tmp_path: Path) -> None:
+    """Owner 2026-10-26: «আমি তুমাকে বললাম যে স্ট্যাটাসটি আমাকে দিলে, সেটি আমাকে করে
+    সনাও, তুমি থেমে গেলো কেনা» went to the general AI, which said it cannot read aloud.
+    Now, soon after an answer, this PC's AI is asked — with that answer as context."""
+    import time as _t
+    asked: list[tuple[str, str, str]] = []
+
+    async def readback(prev_req: str, prev_ans: str, heard: str) -> bool:
+        asked.append((prev_req, prev_ans, heard))
+        return "সনাও" in heard
+    t, _ = make(tmp_path, FakeModel(("x", "bn", -0.05)))
+    vi = VoiceIntake(t, SETTINGS, tmp_path / "a", Echo(), readback=readback)
+    vi.last_full["555"] = PC_STATUS
+    vi.last_request["555"] = ("পিসির অবস্থা বলো", _t.time())
+    broken = "আমি তুমাকে বললাম যে স্ট্যাটাসটি আমাকে দিলে, সেটি আমাকে করে সনাও, তুমি থেমে গেলো কেনা"
+    assert asyncio.run(vi.about_last_answer("555", broken))
+    assert asked[0][1] == PC_STATUS and asked[0][2] == broken
+    assert not asyncio.run(vi.about_last_answer("555", "নোটপ্যাড খোলো"))
+    vi.last_request["555"] = ("পিসির অবস্থা বলো", _t.time() - 3600)
+    asked.clear()
+    assert not asyncio.run(vi.about_last_answer("555", broken))    # too late: no AI asked
+    assert asked == []

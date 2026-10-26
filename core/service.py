@@ -16,7 +16,7 @@ import logging
 import signal
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import psutil
@@ -85,6 +85,7 @@ from core.voice.intake import CALLBACK_PREFIX as VOICE_PREFIX
 from core.voice.intake import SayHere, VoiceIntake
 from core.voice.pc_audio import Player
 from core.voice.ptt import PcVoice, PushToTalk, pc_turn
+from core.voice.readback import asks_for_last_answer
 from core.voice.transcriber import Transcriber
 from core.voice.tts import GeminiTTS, Speaker, TTSBudget, TTSCache
 from core.whatsapp_service import start_whatsapp
@@ -400,7 +401,9 @@ async def run_core_service(
                         corrector=lambda heard, lang: suggest_correction(
                             provider_router, heard, lang, vocabulary()),
                         speaker=speaker, low_risk=app_resolver.is_low_risk,
-                        send=channel.send, dictionary=dictionary)
+                        send=channel.send, dictionary=dictionary,
+                        readback=lambda asked, last, heard: asks_for_last_answer(
+                            provider_router, asked, last, heard))
 
     async def speak_final_answer(chat_id: str, kind: MessageType, task_id: int) -> None:
         """Voice mode (plan §57): a task started by voice gets its answer spoken."""
@@ -511,7 +514,9 @@ async def run_core_service(
                 f"🟢 Nova আবার online — version {version[:8]}")), timeout=10)
     background: list[asyncio.Task[Any]] = [*wa_tasks, *dash_tasks,
         asyncio.create_task(monitor.run(stop)),
-        asyncio.create_task(_provider_health_loop(providers, stop, provider_router)),
+        asyncio.create_task(_provider_health_loop(
+            providers, stop, provider_router,
+            notify=lambda text: channel.broadcast(OutgoingMessage(text)))),
         asyncio.create_task(transcriber.idle_loop(stop)),
         asyncio.create_task(refresh_apps(app_resolver, transcriber, cfg)),
         asyncio.create_task(pressure.run(stop)),
@@ -651,15 +656,37 @@ def provider_summary(router: ProviderRouter) -> tuple[bool, str]:
     return bool(usable), " · ".join(parts)
 
 
+LOCAL_AI = "ollama_local"
+LOCAL_AI_DOWN = ("⚠️ এই PC-র নিজের AI (Ollama) বন্ধ পেয়েছি — এখন cloud দিয়ে চলছে, তাই "
+                 "উত্তর কম নির্ভুল হতে পারে। চালু করতে Ollama app খুলুন।")
+LOCAL_AI_BACK = "✅ এই PC-র নিজের AI (Ollama) আবার চালু।"
+
+
 async def _provider_health_loop(providers: ProviderRegistry, stop: asyncio.Event,
                                 router: ProviderRouter | None = None,
-                                every: float = 60.0) -> None:
+                                every: float = 60.0,
+                                notify: Callable[[str], Awaitable[object]] | None = None
+                                ) -> None:
+    # owner 2026-10-26: Ollama had been closed for a day and Nova silently answered from
+    # the cloud — wrong answers with no reason given. Down two checks in a row → told
+    # once; back → told once. (Not restarted by itself: the owner may have closed it.)
+    down_checks, told = 0, False
     while not stop.is_set():
         try:
             results = await providers.check_all()
             if router is not None:
                 for name, health in results.items():
                     router.note_health(name, health.state, health.detail)
+            local = results.get(LOCAL_AI)
+            if local is not None and notify is not None:
+                down = str(local.state).upper().endswith("UNAVAILABLE")
+                down_checks = down_checks + 1 if down else 0
+                if down_checks == 2 and not told:
+                    told = True
+                    await notify(LOCAL_AI_DOWN)
+                elif not down and told:
+                    told = False
+                    await notify(LOCAL_AI_BACK)
         except Exception:
             _log.exception("provider health check failed", extra={"action": "provider.health"})
         with contextlib.suppress(TimeoutError):

@@ -301,3 +301,13 @@ def test_stream_plays_the_first_part_before_the_rest_is_made(tmp_path: Path) -> 
     assert first_at < 0.2                                   # not after the slow part
     made_rest = next(i for i, x in enumerate(order) if x.startswith("made র্যাম"))
     assert order.index("play first") < made_rest
+
+
+def test_gemini_reading_is_never_split(tmp_path: Path) -> None:
+    """Owner 2026-10-26: split for Gemini (~7 s per request), the reading stopped between
+    pieces and the free quota ran out. One request, one smooth reading."""
+    sp = Speaker(TTSSection(enabled=True, engine="gemini", voices={"bn": "x"}), _gemini())
+    text = "সিপিইউ 15 শতাংশ। র্যাম 73 শতাংশ। বিস্তারিত Telegram-এ দিয়েছি।"
+    assert len(sp.parts(text)) == 1
+    sp.gemini.cooldown_until = 10 ** 12                     # Gemini resting: edge, split
+    assert len(sp.parts(text)) == 3

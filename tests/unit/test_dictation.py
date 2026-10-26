@@ -78,3 +78,35 @@ def test_pc_dictation_key_sends_the_words_and_stays_quiet(tmp_path: Path) -> Non
     assert dictation_command(routed[0]) == ("desktop-ui", "dictate", {"text": "আমি আসছি।"})
     assert sent[0].text.startswith("⌨️ PC-তে dictation")
     assert said == [] and vi.here(3) is None and 3 not in vi.voice_tasks   # no voice
+
+
+class _Ctl:
+    def __init__(self, kind: str, read_only: bool | None) -> None:
+        self.ControlTypeName = kind
+        self._ro = read_only
+
+    def GetValuePattern(self):  # type: ignore[no-untyped-def]  # noqa: N802 - UIA name
+        if self._ro is None:
+            raise RuntimeError("no ValuePattern")
+
+        class _V:
+            IsReadOnly = self._ro
+        return _V()
+
+
+@pytest.mark.parametrize(("kind", "read_only", "takes"), [
+    # owner 2026-10-26: a rich editor said "read-only" and dictation refused it
+    ("DocumentControl", True, True),
+    ("DocumentControl", None, True),
+    ("EditControl", False, True),
+    ("EditControl", True, False),            # a plain box that is really read-only
+    ("PaneControl", None, True),             # Notepad++ / tk editing surfaces
+    ("ButtonControl", None, False),
+    ("ListItemControl", None, False),
+])
+def test_which_fields_take_dictation(kind: str, read_only: bool | None, takes: bool) -> None:
+    import sys as _sys
+    pytest.importorskip("uiautomation")
+    _sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "workers" / "desktop-worker"))
+    import desktop_ui
+    assert desktop_ui._takes_text(_Ctl(kind, read_only)) is takes

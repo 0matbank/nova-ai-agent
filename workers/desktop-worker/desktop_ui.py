@@ -432,7 +432,12 @@ def _read_only(c: Any) -> bool:
 
 
 def _takes_text(c: Any) -> bool:
-    return not _read_only(c) and c.ControlTypeName not in NOT_TEXT
+    # only a plain edit box is trusted to say "read-only": rich editors (Word, browsers,
+    # Notepad's document) report a read-only ValuePattern and still take typing
+    # (owner 2026-10-26: dictation refused a DocumentControl)
+    if c.ControlTypeName == "EditControl" and _read_only(c):
+        return False
+    return c.ControlTypeName not in NOT_TEXT
 
 
 def focused() -> dict[str, Any]:

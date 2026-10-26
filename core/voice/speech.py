@@ -99,10 +99,31 @@ class Speech:
     hidden: bool = False      # a secret was left out
 
 
+# "আবার বলো", "abar shonao", "say it again", "repeat"
+_AGAIN = re.compile(
+    rf"(?<![{_BN_LETTER}])আবার(?![{_BN_LETTER}])\s*(?:\S+\s+)?"
+    rf"(?:বলো|বল|শোনাও|শুনাও|পড়ো)(?![{_BN_LETTER}])|"
+    r"\b(?:abar|again)\s*(?:bolo|bol|shonao|sunao|say|tell)\b|\bsay\s+(?:it|that)\s+again\b|"
+    r"\brepeat\b", re.IGNORECASE)
+# pointing back at what Nova said, or at Nova stopping — then this PC's AI decides
+_BACK = re.compile(
+    rf"(?<![{_BN_LETTER}])(?:যে|যা|যেটা|যেটি|সেটা|সেটি|সেতি|ওটা|আগের|লাস্ট|শেষের|থেমে|"
+    rf"থামলে|থামলা)(?![{_BN_LETTER}])|"
+    r"\b(?:je|ja|seta|ota|ager|last|previous|that|theme|thamle|stopped)\b", re.IGNORECASE)
+
+
 def wants_detail(text: str) -> bool:
-    """"বিস্তারিত বলো", "পুরোটা", or asked to be read out: say all of it."""
-    return bool(_DETAIL.search(text) or _READ_ALOUD.search(text)
+    """"বিস্তারিত বলো", "পুরোটা", "আবার বলো", or asked to be read out: say all of it."""
+    return bool(_DETAIL.search(text) or _READ_ALOUD.search(text) or _AGAIN.search(text)
                 or _READ_GLUED.search(_glued(text)))
+
+
+def refers_back(text: str) -> bool:
+    """The words point at Nova's previous answer («যে … দিলে», «লাস্ট», «থেমে গেলে») —
+    only then is this PC's AI asked whether it should be read again; a plain
+    «পিসির অবস্থা বলো» never is (measured 2026-10-26: asked always, the small AI
+    said YES to fresh status requests 3 of 8 times; gated, 18/20 right)."""
+    return bool(_BACK.search(text))
 
 
 # words that say nothing about WHAT the owner wants to hear
@@ -133,7 +154,7 @@ def asks_to_repeat_in_full(text: str) -> bool:
         return False
     if points_at_last_answer(text):
         return True
-    rest = _READ_ALOUD.sub(" ", _DETAIL.sub(" ", text))
+    rest = _AGAIN.sub(" ", _READ_ALOUD.sub(" ", _DETAIL.sub(" ", text)))
     if not _FILLER.sub(" ", rest).split():
         return True
     glued = _glued(text)

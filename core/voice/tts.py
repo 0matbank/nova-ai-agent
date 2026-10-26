@@ -303,6 +303,10 @@ class Speaker:
         made), each fixed sentence alone (it may be cached), the rest together (few
         requests — Gemini costs ~7 s per request whatever the length)."""
         clean = speakable(text, self.settings.max_chars, voice_language(text))
+        if self.gemini is not None and self.gemini.available:
+            # owner 2026-10-26: split for Gemini, the reading stopped for ~7 s between
+            # pieces and the free quota ran out — one request, one smooth reading
+            return [clean] if clean else []
         out: list[str] = []
         joinable = False
         for sentence in (x for x in _SENTENCE_END.split(clean) if x.strip()):
