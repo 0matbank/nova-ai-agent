@@ -18,6 +18,7 @@ APP = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(APP))
 
 from core.lifecycle import pid_alive, watch_stop_file  # noqa: E402
+from core.priority import raise_to_normal  # noqa: E402
 from core.supervisor.supervisor import (  # noqa: E402
     Supervisor,
     install_stop_handlers,
@@ -72,6 +73,9 @@ def main() -> int:
         return 1
     STOP.unlink(missing_ok=True)       # stale; from here on a stop request is kept
     LOCK.write_text(str(os.getpid()))
+    # Task Scheduler starts us at low CPU / disk / memory priority, which every worker
+    # inherits — back to normal first (measured: a cold Whisper load 18-41 s → 3 s)
+    raise_to_normal()
     python = venv_python(APP)
     sup = Supervisor(APP, load_settings(APP, python), python,
                      log=None if args.quiet else print)
