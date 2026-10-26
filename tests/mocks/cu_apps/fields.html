@@ -1,0 +1,53 @@
+<!doctype html>
+<!-- V1.2 dictation lab page: which focused things take typing? #<title>|<focus>
+     focus = ta (a textarea), ce (a contenteditable box, like a chat/mail editor),
+     page (nothing editable: the page itself has focus — typing there would press page
+     shortcuts). Its text is mirrored into the title-free <pre id="out"> for checks. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Nova Lab fields</title>
+<style>
+  body { font: 16px sans-serif; margin: 20px; }
+  textarea, #ce { width: 520px; height: 80px; border: 1px solid #888; margin: 8px 0; }
+  #ce { padding: 4px; }
+</style>
+</head>
+<body>
+<p id="text">Plain text that cannot be edited. Press k to toggle: <b id="k">off</b></p>
+<textarea id="ta" aria-label="Nova Textarea">start </textarea>
+<div id="ce" contenteditable="true" aria-label="Nova Editor">start&nbsp;</div>
+<p id="state">ta:start |ce:start |k:off</p>
+<script>
+  const [title, focus] = decodeURIComponent(location.hash.slice(1)).split("|");
+  document.title = title || "Nova Lab fields";
+  // a page shortcut, like YouTube's "k": typing into the page must never reach it
+  document.addEventListener("keydown", e => {
+    if (e.target === document.body && e.key === "k") {
+      const k = document.getElementById("k");
+      k.textContent = k.textContent === "off" ? "on" : "off";
+    }
+  });
+  // what a check reads (UIA cannot read a contenteditable box): ta:… |ce:… |k:…
+  const show = () => {
+    document.getElementById("state").textContent =
+      "ta:" + document.getElementById("ta").value + "|ce:" +
+      document.getElementById("ce").innerText + "|k:" + document.getElementById("k").textContent;
+  };
+  document.addEventListener("input", show);
+  document.addEventListener("keyup", show);
+  window.addEventListener("load", () => {
+    const put = el => {
+      el.focus();
+      const r = document.createRange();
+      r.selectNodeContents(el); r.collapse(false);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    };
+    if (focus === "ta") { const t = document.getElementById("ta"); t.focus();
+                          t.selectionStart = t.selectionEnd = t.value.length; }
+    else if (focus === "ce") put(document.getElementById("ce"));
+    else document.activeElement && document.activeElement.blur();
+  });
+</script>
+</body>
+</html>

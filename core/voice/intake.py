@@ -14,6 +14,7 @@ import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from channels.base import CallbackReply, IncomingCallback, IncomingMessage, OutgoingMessage
 from core.config.schema import VoiceSection
@@ -54,6 +55,8 @@ LowRisk = Callable[[str], bool]
 Sender = Callable[[str, OutgoingMessage], Awaitable[object]]
 # (previous request, previous answer, what was heard now) -> wants that answer again?
 ReadBack = Callable[[str, str, str], Awaitable[bool | None]]
+# dictation heard -> cleaned (core/voice/cleanup.py; the heard text when unsafe)
+Cleaner = Callable[[str], Awaitable[Any]]
 # V1.2 push-to-talk: speak the answer where the owner spoke (the PC), not as a voice note
 SayHere = Callable[[str], Awaitable[None]]
 
@@ -81,8 +84,11 @@ class VoiceIntake:
                  speaker: Speaker | None = None, low_risk: LowRisk | None = None,
                  send: Sender | None = None,
                  dictionary: SpeechDictionary | None = None,
-                 readback: ReadBack | None = None) -> None:
+                 readback: ReadBack | None = None,
+                 cleaner: Cleaner | None = None) -> None:
         self.transcriber = transcriber
+        # V1.2: dictated words cleaned by this PC's AI before they are typed
+        self.cleaner = cleaner
         # V1.2: when the word rules are unsure, this PC's AI decides "read it again?"
         self.readback = readback
         # V1.2: the owner's own words and learned fixes, before routing
@@ -197,6 +203,24 @@ class VoiceIntake:
         lang = "en" if request.isascii() and request.strip() else "bn"
         say = " ".join(x for x in (line, WORKING[lang]) if x)
         await self._spoken(OutgoingMessage(""), say, chat_id, here, turn=turn, as_is=True)
+
+    async def _cleaned(self, text: str, heard: str) -> tuple[str, str]:
+        """Dictation: misheard words, fillers, stutters fixed — the meaning, names,
+        numbers and every «না» kept, else the heard words are typed as they are."""
+        assert self.cleaner is not None
+        t0 = time.perf_counter()
+        try:
+            c = await self.cleaner(text)
+        except Exception:  # noqa: BLE001 - cleanup is a help: the heard words still go
+            _log.exception("dictation cleanup failed", extra={"action": "voice.cleanup"})
+            return text, heard
+        _log.info(f"dictation cleanup {'used' if c.used_ai else 'kept the heard words'}"
+                  f"{'' if c.used_ai else ' (' + c.reason + ')'} in "
+                  f"{time.perf_counter() - t0:.1f}s",
+                  extra={"action": "voice.cleanup", "status": "ok"})
+        if c.used_ai and c.text != text:
+            return c.text, f"{heard}\n✍️ পরিষ্কার করে লিখছি: «{c.text}»"
+        return text, heard
 
     async def about_last_answer(self, chat_id: str, text: str) -> bool:
         """"Read it out / in detail / again" about the last answer — said outright, or
@@ -314,6 +338,8 @@ class VoiceIntake:
                 _log.info(f"speech dictionary: {len(fixed.changes)} fix(es) applied",
                           extra={"action": "voice.dictionary", "status": "ok"})
         if prefix:
+            if self.cleaner is not None:
+                text, heard = await self._cleaned(text, heard)
             text = prefix + text
         elif await self.about_last_answer(msg.chat_id, text):
             # V1.2: "পুরোটা পড়ে শোনাও" — the last answer in full, never a new task

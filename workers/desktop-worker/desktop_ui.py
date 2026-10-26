@@ -417,10 +417,11 @@ NOT_TEXT = frozenset({
 def _focused_field(auto: Any) -> tuple[Any, Any]:
     w = front_window(auto)
     if w is None:
-        raise UIError("no window is in front right now")
+        raise UIError("no_text_field: no window is in front right now")
     c = auto.GetFocusedControl()
     if c is None or not _focus_inside(auto, w):
-        raise UIError("nothing in the window in front has the keyboard focus")
+        raise UIError(f"no_text_field: «{w.Name}» ({_proc_name(w.ProcessId)}): nothing in "
+                      "it has the keyboard focus")
     return w, c
 
 
@@ -432,12 +433,11 @@ def _read_only(c: Any) -> bool:
 
 
 def _takes_text(c: Any) -> bool:
-    # only a plain edit box is trusted to say "read-only": rich editors (Word, browsers,
-    # Notepad's document) report a read-only ValuePattern and still take typing
-    # (owner 2026-10-26: dictation refused a DocumentControl)
-    if c.ControlTypeName == "EditControl" and _read_only(c):
-        return False
-    return c.ControlTypeName not in NOT_TEXT
+    # A read-only control never takes typing. Measured 2026-10-26 on a lab page in Edge:
+    # a textarea is an Edit, a chat/mail editor (contenteditable) a Group, and the bare
+    # page — focus on nothing editable — a read-only Document: typing there would press
+    # the page's own shortcuts (YouTube's "k"), so it is refused, not typed.
+    return not _read_only(c) and c.ControlTypeName not in NOT_TEXT
 
 
 def focused() -> dict[str, Any]:
@@ -460,11 +460,13 @@ def dictate(text: str, window: str | None = None) -> dict[str, Any]:
         if window is not None and str(w.Name) != window:
             raise UIError(f"the window in front is «{w.Name}», not «{window}» — nothing typed")
         info = _describe_control(c)
+        where = f"«{w.Name}» ({_proc_name(w.ProcessId)})"
         if info["password"]:
-            raise UIError("the focused field is a password field — never typed by voice")
+            raise UIError(f"password_field: {where}: the focused field is a password field "
+                          "— never typed by voice")
         if not _takes_text(c):
-            raise UIError(f"the focused control ({info['type']}) does not take text — click "
-                          "into a text field first")
+            raise UIError(f"no_text_field: {where}: the keyboard focus is on "
+                          f"{info['type']} «{info['name']}», not in a text box")
         before = _text_of(c)
         keys = "{Enter}".join(_escape_sendkeys(line) for line in text.split("\n"))
         auto.SendKeys(keys, interval=0.005, waitTime=0.1)

@@ -95,8 +95,9 @@ class _Ctl:
 
 
 @pytest.mark.parametrize(("kind", "read_only", "takes"), [
-    # owner 2026-10-26: a rich editor said "read-only" and dictation refused it
-    ("DocumentControl", True, True),
+    # measured 2026-10-26 (lab page in Edge): a read-only Document is the bare page —
+    # typing there presses page shortcuts, so it is refused (the owner is told plainly)
+    ("DocumentControl", True, False),
     ("DocumentControl", None, True),
     ("EditControl", False, True),
     ("EditControl", True, False),            # a plain box that is really read-only

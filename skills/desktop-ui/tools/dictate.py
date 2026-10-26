@@ -4,6 +4,8 @@ secret in the words → RED ui.type_secret; a terminal / Run dialog → RED ui.s
 
 from __future__ import annotations
 
+import re
+
 from pydantic import Field
 
 from core.orchestrator.computer import mask, sensitive
@@ -28,10 +30,26 @@ async def action(p: P, env: ToolEnv) -> str:
     return "ui.type"
 
 
+NO_FIELD = ("⌨️ লিখিনি: {where} — cursor কোনো লেখার ঘরে নেই। লেখার বাক্সে একবার "
+            "click করে আবার বলুন।")
+HIDDEN_BOX = "⌨️ লিখিনি: {where} — এটা password-এর ঘর, কণ্ঠে বলা কথা এখানে লিখি না।"
+
+
+def _owner_needed(r: ToolResult) -> ToolResult:
+    """Nothing to retry: the cursor is not in a text box (or it is a password box) —
+    the owner is told plainly where, and the task is not tried again."""
+    m = re.search(r"(no_text_field|password_field): («[^»]*» \([^)]*\))?", r.summary)
+    if m is None:
+        return r
+    where = m.group(2) or "সামনের window"
+    text = (HIDDEN_BOX if m.group(1) == "password_field" else NO_FIELD).format(where=where)
+    return ToolResult(False, text, r.data, {**r.evidence, "needs_owner": True})
+
+
 async def run(p: P, env: ToolEnv) -> ToolResult:
     r = await desktop_call(env, "/v1/ui/dictate", {"text": p.text, "window": p.window})
     if isinstance(r, ToolResult):
-        return r
+        return _owner_needed(r)
     where = r["window"].get("title") or "?"
     ok = bool(r.get("verified"))
     note = "" if ok else (" — could not read the field back to check" if not r.get("readable")

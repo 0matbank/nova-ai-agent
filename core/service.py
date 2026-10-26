@@ -79,6 +79,7 @@ from core.skills.ledger import SideEffectLedger
 from core.skills.paths import PathPolicy
 from core.skills.registry import SkillError, SkillRegistry
 from core.skills.runner import SkillRunner
+from core.voice.cleanup import clean as clean_dictation
 from core.voice.correct import suggest as suggest_correction
 from core.voice.dictionary import DbStore, SpeechDictionary
 from core.voice.intake import CALLBACK_PREFIX as VOICE_PREFIX
@@ -403,7 +404,9 @@ async def run_core_service(
                         speaker=speaker, low_risk=app_resolver.is_low_risk,
                         send=channel.send, dictionary=dictionary,
                         readback=lambda asked, last, heard: asks_for_last_answer(
-                            provider_router, asked, last, heard))
+                            provider_router, asked, last, heard),
+                        cleaner=lambda heard: clean_dictation(
+                            provider_router, heard, set(dictionary.words()), vocabulary()))
 
     async def speak_final_answer(chat_id: str, kind: MessageType, task_id: int) -> None:
         """Voice mode (plan §57): a task started by voice gets its answer spoken."""

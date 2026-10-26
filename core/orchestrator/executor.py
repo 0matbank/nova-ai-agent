@@ -29,12 +29,12 @@ from core.orchestrator.answer import answer
 from core.orchestrator.browse import BrowserFlow
 from core.orchestrator.coding import CodingFlow, git
 from core.orchestrator.computer import ComputerUseAgent
-from core.orchestrator.context import for_request
+from core.orchestrator.context import conversation, for_request
 from core.orchestrator.creative import CreativeFlow
 from core.orchestrator.lang import reply_language
 from core.orchestrator.operator import OperatorAgent
 from core.orchestrator.schedule_route import schedule_request
-from core.queue.engine import TaskContext, Verdict, VerdictStatus
+from core.queue.engine import TaskBlocked, TaskContext, Verdict, VerdictStatus
 from core.router.intent import Intent, IntentRouter, is_open_windows_question, is_screen_question
 from core.scheduler import ScheduleStore
 from core.skills.runner import SkillRunner
@@ -49,7 +49,10 @@ SYSTEM_PROMPT = (
     "Reply in the same language the user wrote in (Bangla, English or Banglish). "
     "Be concise and practical. Never invent facts, dates, names or numbers: if you are "
     "not sure, say clearly that you are not sure. You cannot see the screen or run "
-    "commands from this answer — never pretend you did."
+    "commands from this answer — never pretend you did. Your reply is shown in Telegram "
+    "and, when the owner spoke, Nova reads it out loud — so 'read it out / say it again / "
+    "say all of it' about an earlier answer means: give that earlier answer as your reply. "
+    "Use 'Recent Conversation' only to understand follow-ups."
 )
 SCREEN_SYSTEM = (
     "You are looking at a screenshot of the owner's Windows PC to answer the owner's question "
@@ -125,7 +128,8 @@ class UserRequestExecutor:
     async def run(self, ctx: TaskContext) -> str:
         async def understand(prev: dict[str, Any] | None) -> dict[str, Any]:
             intent = await self.intents.classify(ctx.task.request_text, ctx.task.id,
-                                                 ctx.task.chat_id)
+                                                 ctx.task.chat_id,
+                                                 context=conversation(self._recent(ctx)))
             out: dict[str, Any] = {"category": intent.category, "source": intent.source,
                                    "confidence": intent.confidence,
                                    "skill": list(intent.skill) if intent.skill else None}
@@ -280,6 +284,9 @@ class UserRequestExecutor:
         assert intent.skill is not None and self.skills is not None
         skill, tool, params = intent.skill
         result = await self.skills.invoke(ctx, skill, tool, dict(params))
+        if not result.ok and result.evidence.get("needs_owner"):
+            # trying again cannot help (e.g. the cursor is not in a text box): say so once
+            raise TaskBlocked(result.summary)
         if skill == "screenshot" and result.ok and ctx.notifier is not None:
             await ctx.notifier.notify(ctx.task.chat_id, MessageType.INFO,
                                       f"🖥️ Task #{ctx.task.id}: {result.summary}",
@@ -332,6 +339,7 @@ class UserRequestExecutor:
         package = for_request(goal="Answer the owner's request",
                               instruction=ctx.task.request_text, risk="GREEN",
                               known_errors=known)
+        package.add("Recent Conversation", conversation(self._recent(ctx)))
         package.add("Project Rules", project_rules)
         package.add("Relevant Memory", memory)              # Phase 17: earlier tasks
         package.add("Previous Decisions", decisions)
@@ -343,6 +351,15 @@ class UserRequestExecutor:
         return {"kind": "ai", "provider": result.provider, "model": result.model,
                 "tier": got.tier, "escalated": got.escalated,
                 "answer": result.answer, "ok": True}
+
+    @staticmethod
+    def _recent(ctx: TaskContext) -> list[tuple[str, str]]:
+        try:
+            return ctx.store.recent_turns(ctx.task.chat_id, ctx.task.id)
+        except Exception:  # noqa: BLE001 - no history is better than no answer
+            _log.exception("recent conversation unavailable",
+                           extra={"task_id": ctx.task.id, "action": "context.recent"})
+            return []
 
     async def verify(self, ctx: TaskContext, result: str) -> Verdict:
         """Plan §30 / §54 (Phase 18): PASS only on proof that is not the agent's own word —

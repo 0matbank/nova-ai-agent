@@ -21,7 +21,8 @@ APPS = Path(__file__).resolve().parent / "cu_apps"
 MOCKS = Path(__file__).resolve().parent
 EDGE = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
 KINDS = ("winforms", "wpf", "win32_dialog", "tk", "canvas", "web")
-EXTRA = ("dup", "dense", "editor")   # actions (CU-3) / grounding (CU-8) / surfaces (CU-9)
+EXTRA = ("dup", "dense", "editor",   # actions (CU-3) / grounding (CU-8) / surfaces (CU-9)
+         "fields")                     # V1.2 dictation: which focused things take typing
 
 
 def _command(kind: str, title: str, profile: Path) -> list[str]:
@@ -41,8 +42,10 @@ def _command(kind: str, title: str, profile: Path) -> list[str]:
         return [sys.executable, str(APPS / "tk_canvas.py"), title]
     if kind == "editor":
         return [sys.executable, str(APPS / "tk_editor.py"), title]
-    if kind in ("web", "dense"):
-        url = (APPS / f"{kind}.html").as_uri() + "#" + title.replace(" ", "%20")
+    if kind in ("web", "dense") or kind.startswith("fields"):
+        page, _, focus = kind.partition(":")          # "fields:ce" → fields.html, focus ce
+        url = (APPS / f"{page}.html").as_uri() + "#" + title.replace(" ", "%20") + (
+            f"%7C{focus}" if focus else "")
         size = ["--window-size=1280,800"] if kind == "dense" else []
         return [str(EDGE), f"--app={url}", *size, f"--user-data-dir={profile}", "--no-first-run",
                 "--no-default-browser-check", "--disable-extensions",
@@ -70,7 +73,8 @@ def lab_app(kind: str, timeout: float = 30) -> Iterator[str]:
     try:
         if not _window_up(title, timeout):
             raise RuntimeError(f"{kind} test app did not show its window")
-        time.sleep(1.5 if kind in ("web", "dense") else 0.5)   # let it finish drawing
+        time.sleep(1.5 if kind in ("web", "dense") or kind.startswith("fields")
+                   else 0.5)                                # let it finish drawing
         yield title
     finally:
         with contextlib.suppress(psutil.NoSuchProcess):

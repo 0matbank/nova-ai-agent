@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
@@ -122,6 +122,21 @@ class TaskStore:
         with self._sessions() as s:
             rows = s.scalars(select(Task).order_by(Task.id.desc()).limit(limit))
             return [_view(t) for t in rows]
+
+    def recent_turns(self, chat_id: str, before_id: int, within_seconds: float = 600,
+                     limit: int = 3) -> list[tuple[str, str]]:
+        """V1.2: the owner's last asks in this chat and Nova's answers (oldest first) —
+        finished in the last `within_seconds`, before task `before_id`."""
+        since = utcnow() - timedelta(seconds=within_seconds)
+        with self._sessions() as s:
+            rows = s.scalars(select(Task).where(
+                Task.chat_id == chat_id, Task.id < before_id,
+                Task.finished_at.is_not(None), Task.finished_at >= since)
+                .order_by(Task.id.desc()).limit(limit)).all()
+            turns = [(t.request_text, t.result_summary or
+                      (f"(could not do it: {t.error_message})" if t.error_message else ""))
+                     for t in reversed(rows)]
+        return [(q, a) for q, a in turns if q and a]
 
     def list_in(self, states: Iterable[TaskState]) -> list[TaskView]:
         with self._sessions() as s:

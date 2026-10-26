@@ -144,8 +144,10 @@ RULES: list[tuple[str, re.Pattern[str], tuple[str, str, dict[str, Any]] | None]]
 AI_PROMPT = (
     "Classify the user's request into exactly one category from this list: "
     + ", ".join(CATEGORIES)
-    + '. The request may be Bangla, English or Banglish. Reply ONLY with JSON like '
-    '{"intent": "question", "confidence": 0.8}.'
+    + '. The request may be Bangla, English or Banglish. When an earlier conversation is '
+    'given, use it only to understand words like this/that/it: asking to translate, '
+    'explain, repeat, read out or change an earlier answer is a "question". Reply ONLY '
+    'with JSON like {"intent": "question", "confidence": 0.8}.'
 )
 
 
@@ -452,7 +454,7 @@ class IntentRouter:
         self.apps = apps                          # core.apps.resolver.AppResolver (V1.1)
 
     async def classify(self, text: str, task_id: int | str = "system",
-                       chat_id: str = "") -> Intent:
+                       chat_id: str = "", context: str = "") -> Intent:
         if self.apps is not None:
             # the owner answering "which app?" or correcting a misheard name
             choice = await asyncio.to_thread(self._owner_choice, text, chat_id)
@@ -472,7 +474,11 @@ class IntentRouter:
             return hit
         if self.providers is not None:
             result = await self.providers.complete(ProviderRequest(
-                task_id=task_id, task_type="intent_classification", user_request=text,
+                task_id=task_id, task_type="intent_classification",
+                # V1.2: «সেটা পড়ে শোনাও» is a question about the last answer, not
+                # "communication" — only the conversation tells
+                user_request=(f"{context}\n\nThe owner's request now: {text}"
+                              if context else text),
                 system=AI_PROMPT, json_output=True, model_alias="intent_classification",
                 limits=Limits(timeout_seconds=60, max_output_tokens=60)))
             if result.ok:
