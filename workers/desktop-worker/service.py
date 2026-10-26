@@ -109,6 +109,10 @@ class DictateRequest(Strict):
     window: str | None = None
 
 
+class WatchRequest(Strict):
+    token: str = Field(min_length=8, max_length=64)
+
+
 class KeysRequest(Strict):
     window: str
     keys: str
@@ -262,6 +266,11 @@ def register(app: FastAPI, ctx: AppContext | None = None) -> None:
     @app.post("/v1/ui/dictate")
     async def dictate(r: DictateRequest) -> Any:
         return await _call(desktop_lock.leased(desktop_ui.dictate), r.text, r.window)
+
+    @app.post("/v1/ui/dictated")
+    async def dictated(r: WatchRequest) -> Any:
+        # reads only (the owner's own fix of the dictated words): no desktop lease
+        return await _call(desktop_ui.dictated_span, r.token)
 
     @app.post("/v1/ui/keys")
     async def keys(r: KeysRequest) -> Any:

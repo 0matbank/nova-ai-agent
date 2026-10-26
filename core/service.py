@@ -82,6 +82,7 @@ from core.skills.runner import SkillRunner
 from core.voice.cleanup import clean as clean_dictation
 from core.voice.correct import suggest as suggest_correction
 from core.voice.dictionary import DbStore, SpeechDictionary
+from core.voice.edits import EditLearner
 from core.voice.intake import CALLBACK_PREFIX as VOICE_PREFIX
 from core.voice.intake import SayHere, VoiceIntake
 from core.voice.pc_audio import Player
@@ -355,15 +356,17 @@ async def run_core_service(
         # V1.2: say what is about to happen, the moment the request arrives (no AI)
         from core.router.ack import ack_for
         tasks.describe = lambda text: ack_for(text, app_resolver)
+    executor: UserRequestExecutor | None = None
     if engine is not None and security is not None and approvals is not None:
         # plan §9.1: side effects go through the idempotency ledger
         skill_runner = (SkillRunner(registry, ToolEnv(cfg, PathPolicy(cfg), tool_workers),
                                     approvals.audit, SideEffectLedger(db_sessions))
                         if registry is not None and db_sessions is not None else None)
-        engine.register("user_request", UserRequestExecutor(
+        executor = UserRequestExecutor(
             IntentRouter(provider_router, apps=app_resolver), provider_router, skill_runner,
             roster,
-            project_memory, schedule_store))
+            project_memory, schedule_store)
+        engine.register("user_request", executor)
 
     exiting = exit_request or ExitRequest()
 
@@ -397,6 +400,18 @@ async def run_core_service(
         refresh_hints()
     except Exception:  # noqa: BLE001 - hint words are a help, never a reason to stop
         _log.exception("speech dictionary load failed", extra={"action": "voice.dictionary"})
+    if executor is not None and desktop is not None:
+        # V1.2: the owner's own fix of dictated words teaches the dictionary
+        async def peek(token: str) -> tuple[str | None, str | None]:
+            try:
+                r = await desktop.call("POST", "/v1/ui/dictated", json={"token": token})
+            except Exception as e:  # noqa: BLE001 - worker gone or desktop locked: stop
+                return None, type(e).__name__
+            return r.get("span"), r.get("ended")
+
+        learner = EditLearner(dictionary, peek,
+                              lambda chat, text: channel.send(chat, OutgoingMessage(text)))
+        executor.after_skill.append(learner.after_skill)
     voice = VoiceIntake(transcriber, cfg.default.voice, cfg.path("workspace_dir") / "voice",
                         lambda m: router.handle(m),
                         corrector=lambda heard, lang: suggest_correction(

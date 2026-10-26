@@ -69,6 +69,8 @@ def test_words_land_at_the_cursor_of_a_real_field(tmp_path: Path, focus: str) ->
         assert r.ok, r.summary
         time.sleep(0.3)
         assert _state(title)[focus] == f"start {WORDS}"
+        # a field that can be read back is watched for the owner's fix; an editor cannot be
+        assert bool(r.data.get("watch")) is (focus == "ta")
 
 
 def test_the_bare_page_is_never_typed_into(tmp_path: Path) -> None:
@@ -96,3 +98,63 @@ def test_a_task_that_needs_the_owner_is_not_retried() -> None:
     with pytest.raises(TaskBlocked, match="লিখিনি"):
         asyncio.run(ex._run_skill(None, Intent(  # type: ignore[arg-type]
             "pc_control", 0.95, "rule", ("desktop-ui", "dictate", {"text": "x"}))))
+
+
+def _owner_fixes(old: str, new: str) -> None:
+    """What the owner does: fix a word in the field Nova just typed into."""
+    import uiautomation as auto
+    with auto.UIAutomationInitializerInThread(debug=False):
+        v = auto.GetFocusedControl().GetValuePattern()
+        value = str(v.Value)
+        i = value.rfind(old)
+        v.SetValue(value[:i] + new + value[i + len(old):])
+
+
+def test_the_owners_own_fix_in_a_real_field_is_learned(tmp_path: Path) -> None:
+    """Atticus item 3 (owner 2026-10-26): Nova types «আমার পিছি চালু আছে», the owner fixes
+    «পিছি» to «পিসি» in the field; the real worker reports only the typed words, and the
+    same fix seen twice goes into the Speech Dictionary — the owner is told."""
+    from core.ipc.client import WorkerError
+    from core.voice.dictionary import SpeechDictionary
+    from core.voice.edits import EditLearner
+    heard = "আমার পিছি চালু আছে"
+    client = real_desktop_client(tmp_path)
+    d = SpeechDictionary()
+    told: list[str] = []
+
+    async def peek(token: str) -> tuple[str | None, str | None]:
+        r = await client.call("POST", "/v1/ui/dictated", json={"token": token})
+        return r.get("span"), r.get("ended")
+
+    async def tell(chat: str, text: str) -> None:
+        told.append(text)
+    learner = EditLearner(d, peek, tell)
+
+    async def once(title: str) -> list[tuple[str, str]]:
+        for _ in range(3):           # Windows may refuse the foreground while the owner types
+            _front(title)
+            try:
+                r = await client.call("POST", "/v1/ui/dictate",
+                                      json={"text": heard, "window": title})
+                break
+            except WorkerError as e:
+                assert "user_active" in str(e), e
+                await asyncio.sleep(1.5)
+        assert r["verified"] and r["watch"], r
+        job = asyncio.ensure_future(learner.learn("555", heard, r["watch"]))
+        await asyncio.sleep(1.0)
+        await asyncio.to_thread(_owner_fixes, "পিছি", "পিসি")
+        return await job
+
+    async def go(title: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]], dict]:
+        first = await once(title)
+        second = await once(title)
+        return first, second, await client.call("POST", "/v1/ui/dictated",
+                                                json={"token": "0" * 16})
+    with _lab("ta") as title:
+        first, second, stale = asyncio.run(go(title))
+        assert _state(title)["ta"].endswith("আমার পিসি চালু আছে")
+    assert first == [] and second == [("পিছি", "পিসি")]
+    assert d.apply("পিছির অবস্থা বলো").text == "পিসির অবস্থা বলো"
+    assert len(told) == 1 and "«পিছি»" in told[0] and "«পিসি»" in told[0]
+    assert stale["span"] is None and stale["ended"]              # unknown watch: nothing read

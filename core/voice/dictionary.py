@@ -24,8 +24,10 @@ from typing import Protocol
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from core.apps.phonetic import key, similarity, spelled
 from core.db.models import Memory, utcnow
 from core.log import get_logger, redact
+from core.voice.cleanup import negations_in, numbers_in
 
 _log = get_logger("core")
 
@@ -218,18 +220,23 @@ class SpeechDictionary:
             self._changed()
         return gone
 
-    def observe(self, heard_text: str, chosen_text: str) -> list[tuple[str, str]]:
+    def observe(self, heard_text: str, chosen_text: str,
+                alike: Callable[[str, str], bool] | None = None,
+                source: str = "confirmed") -> list[tuple[str, str]]:
         """The owner confirmed `chosen_text` for what was heard as `heard_text`.
-        Each small word-level change counts once; the second time it is learned."""
+        Each small word-level change counts once; the second time it is learned.
+        `alike`: only changes it accepts count (an edit must sound like a mishearing)."""
         learned: list[tuple[str, str]] = []
         for h, m in word_changes(heard_text, chosen_text):
+            if alike is not None and not alike(h, m):
+                continue
             k = fold(h)
             if k in self.store.rows(FIX):
                 continue
             seen = self.store.rows(SEEN).get(k)
             count = int(seen[1]) + 1 if seen and fold(seen[0]) == fold(m) else 1
             if count >= CONFIRMS_TO_LEARN:
-                if self.teach(h, m, "confirmed"):
+                if self.teach(h, m, source):
                     learned.append((h, m))
             else:
                 self.store.put(SEEN, k, m, str(count))
@@ -243,7 +250,8 @@ class SpeechDictionary:
                     "«শব্দ শেখো: আপনার project-এর নাম»।")
         lines = ["📖 অভিধান"]
         for k, (meant, source) in sorted(fixes.items()):
-            mark = " (✅ থেকে শেখা)" if source == "confirmed" else ""
+            mark = {"confirmed": " (✅ থেকে শেখা)",
+                    EDITED: " (আপনার সংশোধন থেকে শেখা)"}.get(source, "")
             lines.append(f"• «{k}» → «{meant}»{mark}")
         if words:
             lines.append("শুনতে চেষ্টা করি: " + ", ".join(sorted(words)))
@@ -264,6 +272,41 @@ def stem_pair(heard: str, meant: str) -> tuple[str, str]:
                 return heard[:-len(sfx)], meant[:-len(sfx)]
             return heard, meant[:-len(sfx)]
     return heard, meant
+
+
+EDITED = "edited"               # learned from the owner's own fix after dictation
+ALIKE = 0.6
+_LAST_VOWEL = re.compile("[া-ৌৗ]+$")
+
+
+def _sound_keys(phrase: str) -> set[str]:
+    keys = {key(phrase)}
+    letters = phrase.replace(" ", "")
+    if letters.isascii() and letters.isalpha() and letters.isupper() and len(letters) <= 6:
+        keys.add(key(spelled(letters)))          # "PC" is said «পিসি»
+    return keys
+
+
+def sounds_alike(heard: str, meant: str) -> bool:
+    """Does the owner's edit look like a mishearing fixed, not a new idea? Measured
+    2026-10-26 on Bangla pairs: «পিছি→পিসি», «সনাও→শোনাও», «পিসি→PC», «বড্ধমন→বর্তমান»
+    sound alike (0.73-1.0); «কাল→কাজ», «দুই→তিন», «দেখা→লেখা», «ঢাকা→রাজশাহী» do not.
+    A changed number or «না», or only a changed last vowel («কাকা→কাকি»: another
+    word), is never a mishearing."""
+    if numbers_in(heard) != numbers_in(meant) or negations_in(heard) != negations_in(meant):
+        return False
+    if _LAST_VOWEL.sub("", fold(heard)) == _LAST_VOWEL.sub("", fold(meant)):
+        return False
+    for a in _sound_keys(heard):
+        for b in _sound_keys(meant):
+            if not a or not b or a[0] != b[0]:
+                continue
+            # the same consonants: only a vowel heard wrong («সনাও» sna ↔ «শোনাও» sana);
+            # else a short word must not change at all («কাল» kal ↔ «কাজ» kaj)
+            if a.replace("a", "") == b.replace("a", "") or (
+                    min(len(a), len(b)) >= 4 and similarity(a, b) >= ALIKE):
+                return True
+    return False
 
 
 def word_changes(heard: str, chosen: str) -> list[tuple[str, str]]:

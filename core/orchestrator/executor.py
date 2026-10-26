@@ -16,6 +16,7 @@ non-empty answer actually returned by a provider.
 from __future__ import annotations
 
 import base64
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -121,6 +122,10 @@ class UserRequestExecutor:
         # Phase 16: specialist + project agents (from the config the skills run with)
         self.roster = roster if roster is not None or skills is None else \
             Roster.load(skills.env.config)
+        # V1.2: told of every skill result — (chat, (skill, tool), params, data, ok);
+        # e.g. a dictation lets the Speech Dictionary learn from the owner's own fix
+        self.after_skill: list[Callable[[str, tuple[str, str], dict[str, Any],
+                                         dict[str, Any], bool], None]] = []
 
     async def plan(self, ctx: TaskContext) -> list[str]:
         return ["request বোঝা (intent)", "কাজ করা", "ফলাফল যাচাই"]
@@ -284,6 +289,12 @@ class UserRequestExecutor:
         assert intent.skill is not None and self.skills is not None
         skill, tool, params = intent.skill
         result = await self.skills.invoke(ctx, skill, tool, dict(params))
+        for hook in self.after_skill:
+            try:
+                hook(ctx.task.chat_id, (skill, tool), dict(params), dict(result.data or {}),
+                     result.ok)
+            except Exception:  # noqa: BLE001 - a listener never fails the task
+                _log.exception("after-skill hook failed", extra={"action": "skill.hook"})
         if not result.ok and result.evidence.get("needs_owner"):
             # trying again cannot help (e.g. the cursor is not in a text box): say so once
             raise TaskBlocked(result.summary)

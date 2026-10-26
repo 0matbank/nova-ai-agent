@@ -477,9 +477,87 @@ def dictate(text: str, window: str | None = None) -> dict[str, Any]:
         lines = [ln for ln in text.split("\n") if ln.strip()]
         landed = after is not None and all(ln in after for ln in lines)
         grew = after is not None and before is not None and len(after) > len(before)
+        verified = landed and (grew or not before)
+        around = _around(before, after, text) if verified else None
         return {"window": _describe_window(w), "control": info,
                 "method": "SendKeys(at the cursor)", "readable": after is not None,
-                "verified": landed and (grew or not before)}
+                "verified": verified,
+                "watch": _watch(w, c, text, *around) if around is not None else None}
+
+
+# V1.2 learning from the owner's own fixes (Atticus-style): for a short while after
+# dictation, only the typed words are looked at again — found by what stands before and
+# after them in the field. That text stays here, in memory, and is never sent anywhere.
+WATCH_SECONDS = 30
+_watches: dict[str, dict[str, Any]] = {}
+
+
+def _plain(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _around(before: str | None, after: str | None, typed: str) -> tuple[str, str] | None:
+    """(prefix, suffix) with after == prefix + typed + suffix, else None."""
+    if before is None or after is None:
+        return None
+    b, a, t = _plain(before), _plain(after), _plain(typed)
+    p = 0
+    while p < min(len(a) - len(t), len(b)) and a[p] == b[p]:
+        p += 1
+    if a[p:p + len(t)] != t:
+        if a.count(t) != 1:
+            return None
+        p = a.index(t)
+    return a[:p], a[p + len(t):]
+
+
+def _watch(w: Any, c: Any, typed: str, prefix: str, suffix: str) -> str | None:
+    import secrets
+    now = time.time()
+    for token in [k for k, v in _watches.items() if v["until"] < now]:
+        _watches.pop(token, None)
+    try:
+        rid = tuple(c.GetRuntimeId())
+    except Exception:  # noqa: BLE001 - a field that cannot be found again is not watched
+        return None
+    token = secrets.token_hex(8)
+    _watches[token] = {"hwnd": w.NativeWindowHandle, "rid": rid, "prefix": prefix,
+                       "suffix": suffix, "until": now + WATCH_SECONDS}
+    return token
+
+
+def _ended(token: str, why: str) -> dict[str, Any]:
+    _watches.pop(token, None)
+    return {"span": None, "ended": why}
+
+
+def dictated_span(token: str) -> dict[str, Any]:
+    """What stands now where the dictated words were typed — the owner may have fixed a
+    word. Only while the same field still has the focus and the text around the words
+    is unchanged; afterwards {"ended": why}. Reads only, types nothing."""
+    watch = _watches.get(token)
+    if watch is None or time.time() > watch["until"]:
+        return _ended(token, "time up")
+    require_unlocked()
+    with _uia() as auto:
+        w = front_window(auto)
+        c = auto.GetFocusedControl()
+        try:
+            same = (w is not None and c is not None and w.NativeWindowHandle == watch["hwnd"]
+                    and tuple(c.GetRuntimeId()) == watch["rid"])
+        except Exception:  # noqa: BLE001 - the field is gone
+            same = False
+        if not same:
+            return _ended(token, "focus moved")
+        if _describe_control(c)["password"]:
+            return _ended(token, "password field")
+        now = _text_of(c)
+        pre, suf = watch["prefix"], watch["suffix"]
+        now = _plain(now) if now is not None else None
+        if (now is None or len(now) > 100_000 or len(now) < len(pre) + len(suf)
+                or not now.startswith(pre) or not now.endswith(suf)):
+            return _ended(token, "the text around the words changed")
+        return {"span": now[len(pre):len(now) - len(suf)], "ended": None}
 
 
 def _escape_sendkeys(text: str) -> str:

@@ -63,11 +63,11 @@ def _words(text: str) -> list[str]:
     return [w.casefold() for w in _WORD.findall(text)]
 
 
-def _numbers(text: str) -> list[str]:
+def numbers_in(text: str) -> list[str]:
     return sorted(_NUMBER.findall(text.translate(_DIGITS)))
 
 
-def _negations(text: str) -> int:
+def negations_in(text: str) -> int:
     return len(_NEGATION.findall(_REPAIR.sub(" ", text)))
 
 
@@ -108,9 +108,9 @@ def guard(heard: str, cleaned: str, known: set[str] | None = None) -> str:
         return "words added"
     if len(out) * (3 if repaired else 2) < len(src):
         return "too much dropped"
-    if _negations(cleaned) != _negations(heard):
+    if negations_in(cleaned) != negations_in(heard):
         return "a negation changed"
-    nums_in, nums_out = _numbers(heard), _numbers(cleaned)
+    nums_in, nums_out = numbers_in(heard), numbers_in(cleaned)
     if not set(nums_out) <= set(nums_in) or (nums_in != nums_out and not repaired):
         return "a number changed"
     heard_set = set(src) | {a + b for a, b in zip(src, src[1:], strict=False)}
