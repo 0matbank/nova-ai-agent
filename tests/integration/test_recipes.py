@@ -1,6 +1,7 @@
 """V1.2 learned replay (Atticus item 4) through the real task engine: an operator run
-the verifier PASSES is kept; the same request — said a little differently — runs again
-with no AI at all; a recipe that stops working is dropped and the AI does the work."""
+the verifier PASSES becomes a draft the owner is asked about (plan §69.4); once they tap
+✅, the same request — said a little differently — runs again with no AI at all; a
+recipe that stops working is dropped and the AI does the work."""
 
 from __future__ import annotations
 
@@ -44,7 +45,15 @@ def _done(s: SkillEnv, text: str) -> tuple[str, str]:
     return str(t.result_summary), [txt for _, txt in s.tasks.sent][-1]
 
 
-def test_a_verified_run_is_done_again_with_no_ai(tmp_path: Path) -> None:
+def _tap(s: SkillEnv, book: RecipeBook, choice: str) -> str:
+    """The owner taps a button of the last «মনে রাখব?» message."""
+    row = s.tasks.buttons[-1][0]
+    data = next(d for label, d in row if d.startswith(f"rc:{choice}:"))
+    return book.on_button(data)[1]
+
+
+def test_a_verified_run_is_done_again_with_no_ai_once_the_owner_approves(
+        tmp_path: Path) -> None:
     s, local, book, ws = setup(tmp_path, [])
     folder = ws / "reports"
     local.script.extend([call("files", "mkdir", path=str(folder)),
@@ -54,6 +63,10 @@ def test_a_verified_run_is_done_again_with_no_ai(tmp_path: Path) -> None:
     assert folder.is_dir() and "⚡" not in first
     asked = len(local.requests)
     assert asked >= 2                                    # the AI planned it the first time
+    question = [txt for _, txt in s.tasks.sent if txt.startswith("🧠 এই কাজটা মনে রাখব?")]
+    assert len(question) == 1 and "files.mkdir (reports)" in question[0]
+    assert book.find(text) is None                       # not before the owner's ✅
+    assert _tap(s, book, "y").startswith("✅ মনে রাখলাম")
     folder.rmdir()
     # the same request, said a little differently — no AI answer is left to give
     again, sent = _done(s, f"নোভা {ws} এর ভিতরে reports নামে ফোল্ডার বানাও প্লিজ")
@@ -71,6 +84,7 @@ def test_a_recipe_that_stops_working_is_dropped_and_the_ai_does_it(tmp_path: Pat
                             answer("a.txt কপি করে b.txt বানানো হয়েছে।")])
     text = f"{ws} ফোল্ডারে a.txt ফাইল b.txt নামে কপি করো"
     _done(s, text)
+    _tap(s, book, "y")
     assert book.find(text) is not None
     dst.unlink()
     src.unlink()                                         # the recipe cannot work now
@@ -80,8 +94,37 @@ def test_a_recipe_that_stops_working_is_dropped_and_the_ai_does_it(tmp_path: Pat
                             answer("a2.txt থেকে b.txt বানানো হয়েছে।")])
     result, _ = _done(s, text)
     assert dst.read_text(encoding="utf-8") == "y" and "⚡" not in result   # the AI did it
-    assert book.find(text) is not None                   # …and the new way is kept
+    assert book.find(text) is None                       # the old way is gone…
+    _tap(s, book, "y")                                   # …the new way, once approved
     assert book.find(text).calls[0]["params"]["source"] == str(other)  # type: ignore[union-attr]
+
+
+def test_without_the_owners_approval_nothing_runs_without_ai(tmp_path: Path) -> None:
+    """Plan §69.4: PASS alone is not enough. ❌ (or no answer) → the AI as before."""
+    s, local, book, ws = setup(tmp_path, [])
+    folder = ws / "reports"
+    plan = [call("files", "mkdir", path=str(folder)), answer("reports ফোল্ডার বানানো হয়েছে।")]
+    local.script.extend(plan)
+    text = f"{ws} এর ভিতরে reports নামে ফোল্ডার বানাও"
+    _done(s, text)
+    assert _tap(s, book, "n") == "❌ মনে রাখিনি।"
+    folder.rmdir()
+    asked = len(local.requests)
+    local.script.extend(plan)
+    again, _ = _done(s, text)
+    assert "⚡" not in again and len(local.requests) > asked     # the AI planned it again
+    assert book.on_button("rc:y:00000000")[0] == "⌛ আর নেই"     # an old button: nothing
+
+
+def test_the_owner_sees_and_deletes_what_is_kept() -> None:
+    book = RecipeBook(MemoryStore())
+    assert "এখনো কোনো কাজ" in book.command([])
+    _keep(book, "নোভা পিসি রিস্টার্ট করো", _op(_e("admin", "power", op="restart")))
+    listing = book.command([])
+    assert "1. «নোভা পিসি রিস্টার্ট করো» → admin.power (restart)" in listing
+    assert book.command(["forget", "1"]).startswith("🗑️")
+    assert book.find("পিসি রিস্টার্ট করো") is None
+    assert book.command(["forget", "9"]).startswith("❌")
 
 
 # ------------------------------------------------------------------- what is kept
@@ -95,9 +138,15 @@ def _e(skill: str, tool: str, **params: object) -> dict:  # type: ignore[type-ar
     return {"skill": skill, "tool": tool, "params": params, "evidence": {}}
 
 
+def _keep(book: RecipeBook, text: str, act: dict) -> bool:  # type: ignore[type-arg]
+    """Learned and approved by the owner."""
+    draft = book.learn(text, act)
+    return draft is not None and book.approve(draft.id) is not None
+
+
 def test_only_safe_lasting_actions_are_kept() -> None:
     book = RecipeBook(MemoryStore())
-    assert book.learn("নোভা পিসি রিস্টার্ট করো", _op(_e("admin", "power", op="restart")))
+    assert _keep(book, "নোভা পিসি রিস্টার্ট করো", _op(_e("admin", "power", op="restart")))
     assert book.find("পিসি রিস্টাট করো প্লিজ") is not None        # heard a little differently
     assert book.find("পিসি শাটডাউন করো") is None                    # another request
     never = [
@@ -116,7 +165,7 @@ def test_only_safe_lasting_actions_are_kept() -> None:
         assert not book.learn(text, act), text
     assert not book.learn("notepad খোলো", {"kind": "ai", "ok": True, "answer": "x"})
     # the owner's own words may be written again
-    assert book.learn("notes.txt এ hello nova from the owner লেখো",
+    assert _keep(book, "notes.txt এ hello nova from the owner লেখো",
                       _op(_e("files", "write", path="notes.txt",
                              content="hello nova from the owner")))
 
@@ -124,7 +173,7 @@ def test_only_safe_lasting_actions_are_kept() -> None:
 def test_a_reply_with_numbers_is_not_repeated_and_unused_recipes_go() -> None:
     clock = [time.time()]
     book = RecipeBook(MemoryStore(), now=lambda: clock[0])
-    book.learn("notepad খোলো", _op(_e("app-control", "open", app="notepad"),
+    _keep(book, "notepad খোলো", _op(_e("app-control", "open", app="notepad"),
                                      answer_text="notepad খুলেছি, pid 4242"))
     r = book.find("notepad খোলো")
     assert r is not None and r.answer == ""              # fresh results instead
@@ -152,8 +201,8 @@ def test_a_path_with_digits_keeps_the_owners_language() -> None:
     digits are no changing fact; the replay must not fall back to an English summary."""
     book = RecipeBook(MemoryStore())
     reply = r"D:\work\run_0g9h\reports নামে ফোল্ডার বানানো হয়েছে। report2.txt ঠিক আছে।"
-    book.learn("reports নামে ফোল্ডার বানাও",
-               _op(_e("files", "mkdir", path=r"D:\work\run_0g9h\reports"), answer_text=reply))
+    _keep(book, "reports নামে ফোল্ডার বানাও",
+          _op(_e("files", "mkdir", path=r"D:\work\run_0g9h\reports"), answer_text=reply))
     r = book.find("reports নামে ফোল্ডার বানাও")
     assert r is not None and r.answer == reply
 
@@ -162,8 +211,8 @@ def test_a_garbled_reply_is_never_kept_to_be_said_again() -> None:
     """Real run 2026-10-26: the folder was made, but the reply was a made-up «আগের কোনো
     কাজের ফলাফল পাওয়া যায়নি…» — the recipe keeps the calls, not that reply."""
     book = RecipeBook(MemoryStore())
-    book.learn("reports নামে ফোল্ডার বানাও",
-               _op(_e("files", "mkdir", path=r"D:\work\reports"),
+    _keep(book, "reports নামে ফোল্ডার বানাও",
+          _op(_e("files", "mkdir", path=r"D:\work\reports"),
                    answer_text="আগের কোনো কাজের ফলাফল বা সম্পূর্ণ লেখা পাওয়া যায়নি।"))
     r = book.find("reports নামে ফোল্ডার বানাও")
     assert r is not None and r.answer == "" and r.calls[0]["tool"] == "mkdir"

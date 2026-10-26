@@ -27,6 +27,7 @@ ALL_COMMANDS = (
     "/memory",                      # Phase 17 addition: what Nova keeps about each project
     "/schedules",                   # Phase 19 addition: scheduled jobs (plan §39)
     "/words",                       # V1.2 addition: the Speech Dictionary
+    "/recipes",                     # V1.2 addition: work done again with no AI
 )
 
 COMMAND_DESCRIPTIONS = {
@@ -44,6 +45,7 @@ COMMAND_DESCRIPTIONS = {
     "/memory": "Project memory: /memory <project> (মুছতে: forget <id>)",
     "/schedules": "Schedule-এর তালিকা (বাতিল: /schedules cancel <id>)",
     "/words": "কণ্ঠের অভিধান: /words পিছি = পিসি (মুছতে: /words forget পিছি)",
+    "/recipes": "মনে রাখা কাজ, যা AI ছাড়া চলে (মুছতে: /recipes forget <নম্বর>)",
     "/lockdown": "Emergency: সব dangerous কাজ বন্ধ (off দিলে খোলে)",
     "/restart-agent": "Nova restart (চলমান কাজ checkpoint থেকে আবার চলবে)",
     "/update": "নতুন version install (approval লাগবে; ব্যর্থ হলে নিজে আগের version-এ ফেরে)",

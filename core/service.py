@@ -59,6 +59,7 @@ from core.orchestrator.agent_commands import AgentCommands
 from core.orchestrator.commands import CommandRouter, HealthSources
 from core.orchestrator.executor import UserRequestExecutor
 from core.orchestrator.log_commands import LogCommands
+from core.orchestrator.recipes import CALLBACK_PREFIX as RECIPE_PREFIX
 from core.orchestrator.recipes import RecipeBook
 from core.orchestrator.schedule_commands import ScheduleCommands
 from core.orchestrator.screen_commands import ScreenCommands
@@ -358,6 +359,7 @@ async def run_core_service(
         from core.router.ack import ack_for
         tasks.describe = lambda text: ack_for(text, app_resolver)
     executor: UserRequestExecutor | None = None
+    recipes: RecipeBook | None = None
     if engine is not None and security is not None and approvals is not None:
         # plan §9.1: side effects go through the idempotency ledger
         skill_runner = (SkillRunner(registry, ToolEnv(cfg, PathPolicy(cfg), tool_workers),
@@ -369,7 +371,7 @@ async def run_core_service(
             project_memory, schedule_store)
         if db_sessions is not None:
             # V1.2: a verified operator run is done again with no AI next time
-            executor.recipes = RecipeBook(DbStore(db_sessions))
+            executor.recipes = recipes = RecipeBook(DbStore(db_sessions))
         engine.register("user_request", executor)
 
     exiting = exit_request or ExitRequest()
@@ -463,6 +465,9 @@ async def run_core_service(
     notifier.on_task_notice.append(speak_notice)
 
     async def on_button(cb: IncomingCallback) -> CallbackReply | None:
+        if cb.data.startswith(f"{RECIPE_PREFIX}:") and recipes is not None:
+            toast, line = recipes.on_button(cb.data)
+            return CallbackReply(toast, f"{cb.message_text}\n\n{line}" if line else None)
         if cb.data.startswith(f"{VOICE_PREFIX}:"):
             return await voice.on_button(cb)
         return await security.on_button(cb) if security is not None else None
@@ -480,6 +485,12 @@ async def run_core_service(
                            if schedule_store is not None else None, dictionary)
     lifecycle = LifecycleCommands(store, engine, request_exit)
     router.add("/restart-agent", lifecycle.restart)
+    if recipes is not None:
+        book = recipes
+
+        async def recipe_command(msg: IncomingMessage, args: list[str]) -> str:
+            return book.command(args)
+        router.add("/recipes", recipe_command)
     router.add("/update", lifecycle.update)
     version = head_commit(cfg.app_dir)
     health.probes["Version"] = lambda: (True, f"{version[:8] or 'unknown'}"

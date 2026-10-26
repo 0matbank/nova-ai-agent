@@ -387,7 +387,7 @@ class UserRequestExecutor:
         second provider reviewed high-impact code. Verdicts: PASS, PASS WITH KNOWN
         LIMITATIONS, NEEDS WORK (→ the action runs again), BLOCKED (→ the owner)."""
         verdict = await self._check(ctx, result)
-        self._recipe_outcome(ctx, verdict)
+        await self._recipe_outcome(ctx, verdict)
         step1 = next((s for s in ctx.steps if s.seq == 1), None)
         routed = ((step1.checkpoint if step1 is not None else None) or {}).get("assignment")
         if routed and self.roster is not None:
@@ -442,8 +442,9 @@ class UserRequestExecutor:
                          "status": "failed"})
         return None
 
-    def _recipe_outcome(self, ctx: TaskContext, verdict: Verdict) -> None:
-        """A verified operator run is kept; a replay the PC does not confirm is dropped."""
+    async def _recipe_outcome(self, ctx: TaskContext, verdict: Verdict) -> None:
+        """A verified operator run becomes a draft the owner is asked about (plan §69.4:
+        PASS → owner approval); a replay the PC does not confirm is dropped."""
         if self.recipes is None:
             return
         step2 = next((s for s in ctx.steps if s.seq == 2), None)
@@ -453,7 +454,11 @@ class UserRequestExecutor:
         try:
             replayed = (act.get("evidence") or {}).get("agent") == "recipe"
             if verdict.status is VerdictStatus.PASS and not replayed:
-                self.recipes.learn(ctx.task.request_text, act)
+                draft = self.recipes.learn(ctx.task.request_text, act)
+                if draft is not None and ctx.notifier is not None:
+                    text, buttons = self.recipes.ask(draft)
+                    await ctx.notifier.notify(ctx.task.chat_id, MessageType.INFO, text,
+                                              task_id=ctx.task.id, buttons=buttons)
             elif replayed and verdict.status is not VerdictStatus.PASS:
                 recipe = self.recipes.find(ctx.task.request_text)
                 if recipe is not None:
