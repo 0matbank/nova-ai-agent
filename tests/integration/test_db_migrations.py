@@ -12,7 +12,7 @@ from sqlalchemy import inspect
 
 from core.db import migrate
 from core.db.migrate import MigrationError, check_and_migrate, head_revision
-from core.db.models import Base
+from core.db.models import Base, in_models
 
 TABLES = {"tasks", "task_steps", "messages", "projects", "memories", "skills", "agents",
           "approvals", "audit_log", "files_index", "settings", "provider_calls",
@@ -21,7 +21,7 @@ TABLES = {"tasks", "task_steps", "messages", "projects", "memories", "skills", "
 
 def test_fresh_database_created_at_head(tmp_path: Path) -> None:
     res = check_and_migrate(tmp_path / "agent.db", tmp_path / "bk")
-    assert res.before is None and res.after == head_revision() == "005"
+    assert res.before is None and res.after == head_revision() == "006"
     assert res.backup is None                       # nothing to back up yet
     assert set(inspect(res.engine).get_table_names()) >= TABLES
     res.engine.dispose()
@@ -30,7 +30,8 @@ def test_fresh_database_created_at_head(tmp_path: Path) -> None:
 def test_models_match_migrations(tmp_path: Path) -> None:
     res = check_and_migrate(tmp_path / "agent.db", tmp_path / "bk")
     with res.engine.connect() as conn:
-        diff = compare_metadata(MigrationContext.configure(conn), Base.metadata)
+        diff = compare_metadata(MigrationContext.configure(
+            conn, opts={"include_object": in_models}), Base.metadata)
     res.engine.dispose()
     assert diff == [], f"models drifted from migrations — add a new revision: {diff}"
 

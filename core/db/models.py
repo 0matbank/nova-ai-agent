@@ -54,6 +54,17 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+# V1.3-2 conversation search (migration 006): an SQLite FTS5 index and its own shadow
+# tables — made by SQL, not by these models, so schema comparison leaves them out
+SEARCH_INDEX = "tasks_fts"
+
+
+def in_models(obj: Any, name: str | None, type_: str, reflected: bool,
+              compare_to: Any) -> bool:
+    """Alembic `include_object`: everything but the search index's own tables."""
+    return not (type_ == "table" and (name or "").startswith(SEARCH_INDEX))
+
+
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING)
 

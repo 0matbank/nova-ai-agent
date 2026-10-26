@@ -34,6 +34,7 @@ from core.orchestrator.context import conversation, for_request
 from core.orchestrator.creative import CreativeFlow
 from core.orchestrator.lang import reply_language
 from core.orchestrator.operator import OperatorAgent
+from core.orchestrator.recall import ConversationSearch, recall_answer, recall_request
 from core.orchestrator.recipes import Recipe, RecipeBook
 from core.orchestrator.schedule_route import schedule_request
 from core.permissions.engine import PermissionDenied
@@ -132,12 +133,18 @@ class UserRequestExecutor:
                                          dict[str, Any], bool], None]] = []
         # V1.2 learned replay: a passed operator run, done again with no AI
         self.recipes: RecipeBook | None = None
+        # V1.3-2: «… নিয়ে কী বলেছিলাম» — the old conversations, searched
+        self.history: ConversationSearch | None = None
 
     async def plan(self, ctx: TaskContext) -> list[str]:
         return ["request বোঝা (intent)", "কাজ করা", "ফলাফল যাচাই"]
 
     async def run(self, ctx: TaskContext) -> str:
         async def understand(prev: dict[str, Any] | None) -> dict[str, Any]:
+            if self.history is not None and recall_request(ctx.task.request_text):
+                # a question about earlier conversations: fixed rules, no AI to classify
+                return {"category": "question", "source": "rule", "confidence": 0.95,
+                        "skill": None, "recall": True}
             intent = await self.intents.classify(ctx.task.request_text, ctx.task.id,
                                                  ctx.task.chat_id,
                                                  context=conversation(self._recent(ctx)))
@@ -173,6 +180,9 @@ class UserRequestExecutor:
         lang = reply_language(ctx.task.request_text)
 
         async def act(prev: dict[str, Any] | None) -> dict[str, Any]:
+            if cp.get("recall") and self.history is not None:
+                return await recall_answer(self.history, self.providers, ctx.task.id,
+                                           ctx.task.chat_id, ctx.task.request_text, lang)
             if cp.get("app_ask"):
                 return {"kind": "answer", "answer": app_question(cp["app_ask"], lang),
                         "needs_input": True}
@@ -533,6 +543,15 @@ class UserRequestExecutor:
             if ev.get("screenshot"):
                 parts.append("screenshot পাঠানো হয়েছে ✓" if bn else "screenshot sent ✓")
             return Verdict(True, "", VerdictStatus.PASS, tuple(parts))
+        if kind == "recall":
+            found = int(act.get("found") or 0)
+            if not found:
+                return Verdict(True, "nothing found", VerdictStatus.LIMITED,
+                               ("আগের কথায় কিছু পাওয়া যায়নি" if bn
+                                else "nothing found in earlier conversations",))
+            return Verdict(True, "", VerdictStatus.PASS, (
+                f"{found}টা আগের কথা থেকে, নিচে তালিকা ✓" if bn
+                else f"from {found} earlier conversation(s), listed below ✓",))
         if kind == "ai":
             return Verdict(True, "", VerdictStatus.PASS,
                            (f"answer from {act.get('provider')} ({act.get('model')})",))

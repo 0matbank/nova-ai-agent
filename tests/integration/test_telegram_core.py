@@ -309,7 +309,7 @@ def test_service_end_to_end(config_dir: Path, runtime_root: Path) -> None:
     *replies, offline = fake.texts_to(OWNER)
     assert offline.startswith("🔌 Nova বন্ধ হচ্ছে")
     [reply] = replies
-    assert "✅ Database: ok (schema 005)" in reply
+    assert "✅ Database: ok (schema 006)" in reply
     assert "✅ Telegram: connected" in reply and "✅ Config: valid" in reply
     assert fake.texts_to(STRANGER) == []
     core_log = (runtime_root / "logs/core/core.log").read_text("utf-8")

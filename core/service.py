@@ -59,6 +59,7 @@ from core.orchestrator.agent_commands import AgentCommands
 from core.orchestrator.commands import CommandRouter, HealthSources
 from core.orchestrator.executor import UserRequestExecutor
 from core.orchestrator.log_commands import LogCommands
+from core.orchestrator.recall import ConversationSearch
 from core.orchestrator.recipes import CALLBACK_PREFIX as RECIPE_PREFIX
 from core.orchestrator.recipes import RecipeBook
 from core.orchestrator.schedule_commands import ScheduleCommands
@@ -373,6 +374,8 @@ async def run_core_service(
         if db_sessions is not None:
             # V1.2: a verified operator run is done again with no AI next time
             executor.recipes = recipes = RecipeBook(DbStore(db_sessions))
+            # V1.3-2: old conversations, searched (FTS5 index, migration 006)
+            executor.history = ConversationSearch(db_sessions, cfg.default.agent.timezone)
         engine.register("user_request", executor)
 
     exiting = exit_request or ExitRequest()

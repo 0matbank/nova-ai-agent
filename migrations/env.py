@@ -4,7 +4,7 @@ from logging.config import fileConfig
 
 from alembic import context
 
-from core.db.models import Base
+from core.db.models import Base, in_models
 
 config = context.config
 target_metadata = Base.metadata
@@ -16,6 +16,7 @@ def _run(connection) -> None:  # type: ignore[no-untyped-def]
         target_metadata=target_metadata,
         render_as_batch=True,          # SQLite needs batch mode for ALTER
         compare_type=True,
+        include_object=in_models,      # the FTS5 search index is made by SQL
     )
     with context.begin_transaction():
         context.run_migrations()
