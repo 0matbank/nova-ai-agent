@@ -56,10 +56,17 @@ def note_injected() -> None:
     """Nova's own input is flagged as injected by Windows — nothing to remember."""
 
 
-def require_owner_idle() -> None:
+def require_owner_idle(wait: float = 0.0) -> None:
+    """`wait`: for an action the owner just asked for at their own keyboard (V1.2
+    dictation — they released Ctrl+Alt+D a moment ago), wait up to this long for their
+    hands to be still instead of refusing at once (owner 2026-10-26: refused twice)."""
     check_halt()
     if ESCAPE.arm():                         # a fresh watch: look a moment first
         time.sleep(FIRST_LOOK_SECONDS)
+    until = time.monotonic() + wait
+    while owner_active() and time.monotonic() < until:
+        time.sleep(0.2)
+        check_halt()
     if owner_active():
         raise UIError("user_active: the owner is using the keyboard/mouse — waiting, "
                       "not taking over")
@@ -226,10 +233,10 @@ class _EscapeHook:
 ESCAPE = _EscapeHook()
 
 
-def acting() -> None:
+def acting(wait: float = 0.0) -> None:
     """Every input action starts here: refuse after a real Escape, and while the owner
     is using the keyboard/mouse (this also keeps the watch armed)."""
-    require_owner_idle()
+    require_owner_idle(wait)
 
 
 # ------------------------------------------------------------------ foreground

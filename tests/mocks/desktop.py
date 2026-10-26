@@ -41,7 +41,8 @@ class FakeDesktop:
         self.calls: list[tuple[str, dict[str, Any] | None]] = []
 
     async def call(self, method: str, path: str, *, task_id: int | str = "system",
-                   json: dict[str, Any] | None = None) -> dict[str, Any]:
+                   json: dict[str, Any] | None = None,
+                   timeout: float | None = None) -> dict[str, Any]:
         self.calls.append((path, json))
         r = self.routes[path]
         if isinstance(r, Exception):

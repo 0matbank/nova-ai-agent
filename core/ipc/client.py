@@ -53,11 +53,15 @@ class WorkerClient:
         }
 
     async def call(self, method: str, path: str, *, task_id: int | str = SYSTEM_TASK,
-                   json: dict[str, Any] | None = None) -> dict[str, Any]:
+                   json: dict[str, Any] | None = None,
+                   timeout: float | None = None) -> dict[str, Any]:
+        """`timeout`: this request only (a long action, e.g. typing a long dictation)."""
+        extra: dict[str, Any] = {"timeout": timeout} if timeout is not None else {}
         for attempt in range(2):
             try:
                 r = await self._client.request(method, f"{self.base}{path}",
-                                               headers=self._headers(task_id), json=json)
+                                               headers=self._headers(task_id), json=json,
+                                               **extra)
             except (httpx.TransportError, httpx.TimeoutException) as e:
                 raise WorkerUnavailable(f"{self.name}: {type(e).__name__}") from None
             if r.status_code == 401 and attempt == 0:

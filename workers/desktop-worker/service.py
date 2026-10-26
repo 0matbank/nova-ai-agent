@@ -265,7 +265,9 @@ def register(app: FastAPI, ctx: AppContext | None = None) -> None:
 
     @app.post("/v1/ui/dictate")
     async def dictate(r: DictateRequest) -> Any:
-        return await _call(desktop_lock.leased(desktop_ui.dictate), r.text, r.window)
+        # the owner just released the dictation hotkey: wait for their hands to be still
+        return await _call(desktop_lock.leased(desktop_ui.dictate, owner_wait=8.0),
+                           r.text, r.window)
 
     @app.post("/v1/ui/dictated")
     async def dictated(r: WatchRequest) -> Any:

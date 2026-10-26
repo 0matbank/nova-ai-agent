@@ -15,9 +15,10 @@ WAIT_SECONDS = 5.0
 
 
 @contextmanager
-def input_lease(wait: float = WAIT_SECONDS) -> Iterator[None]:
+def input_lease(wait: float = WAIT_SECONDS, owner_wait: float = 0.0) -> Iterator[None]:
     import desktop_guard
-    desktop_guard.acting()       # a real Escape / the owner's own input stops Nova
+    # a real Escape / the owner's own input stops Nova (`owner_wait`: wait for quiet)
+    desktop_guard.acting(owner_wait)
     if not _INPUT.acquire(timeout=wait):
         raise UIError("desktop_busy: another action is using the keyboard/mouse")
     try:
@@ -26,10 +27,10 @@ def input_lease(wait: float = WAIT_SECONDS) -> Iterator[None]:
         _INPUT.release()
 
 
-def leased(fn):  # type: ignore[no-untyped-def]
+def leased(fn, owner_wait: float = 0.0):  # type: ignore[no-untyped-def]
     """Wrap a worker function so it runs holding the input lease."""
     def run(*args, **kwargs):  # type: ignore[no-untyped-def]
-        with input_lease():
+        with input_lease(owner_wait=owner_wait):
             return fn(*args, **kwargs)
     run.__name__ = getattr(fn, "__name__", "leased")
     return run

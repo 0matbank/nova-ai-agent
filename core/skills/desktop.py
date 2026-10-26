@@ -22,15 +22,18 @@ class DesktopUnavailable(Exception):
         self.reason = reason
 
 
-async def desktop_call(env: ToolEnv, path: str,
-                       body: dict[str, Any] | None = None) -> dict[str, Any] | ToolResult:
+async def desktop_call(env: ToolEnv, path: str, body: dict[str, Any] | None = None,
+                       timeout: float | None = None) -> dict[str, Any] | ToolResult:
     """Returns the worker's JSON, or a failed ToolResult for a worker-side
     error (e.g. unknown window). Raises DesktopUnavailable when locked/absent."""
     client = env.workers.get("desktop")
     if client is None:
         raise DesktopUnavailable("not_running")
     try:
-        return await client.call("POST", path, task_id=env.task_id, json=body or {})
+        if timeout is None:
+            return await client.call("POST", path, task_id=env.task_id, json=body or {})
+        return await client.call("POST", path, task_id=env.task_id, json=body or {},
+                                 timeout=timeout)
     except WorkerUnavailable:
         raise DesktopUnavailable("not_running") from None
     except WorkerDesktopLocked:

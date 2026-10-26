@@ -156,5 +156,6 @@ def test_the_owners_own_fix_in_a_real_field_is_learned(tmp_path: Path) -> None:
         assert _state(title)["ta"].endswith("আমার পিসি চালু আছে")
     assert first == [] and second == [("পিছি", "পিসি")]
     assert d.apply("পিছির অবস্থা বলো").text == "পিসির অবস্থা বলো"
-    assert len(told) == 1 and "«পিছি»" in told[0] and "«পিসি»" in told[0]
+    assert len(told) == 2 and told[0].startswith("📝")             # noticed, then learned
+    assert "«পিছি»" in told[1] and "«পিসি»" in told[1] and "শিখলাম" in told[1]
     assert stale["span"] is None and stale["ended"]              # unknown watch: nothing read

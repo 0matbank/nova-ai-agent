@@ -24,6 +24,9 @@ SETTLED_SECONDS = 2.0                 # an edit unchanged this long is finished
 WATCH_SECONDS = 25.0
 LEARNED = ("📖 আপনার সংশোধন থেকে শিখলাম: কণ্ঠে «{heard}» শুনলে «{meant}» লিখব।\n"
            "ভুল হলে লিখুন: «অভিধান থেকে {heard} মুছো»")
+# the first time: the owner sees the fix was noticed (owner 2026-10-26: «কোনো বার্তা
+# আসেনি» after one fix — a fix is learned only when seen twice)
+NOTICED = "📝 আপনার সংশোধন দেখলাম: {pairs}। আরেকবার একই ভুল ঠিক করলে শিখে নেব।"
 
 # the words now where the dictated ones were: (span, why it ended — None while watching)
 Peek = Callable[[str], Awaitable[tuple[str | None, str | None]]]
@@ -75,13 +78,20 @@ class EditLearner:
             edited = await edited_words(self.peek, token, typed, poll=self.poll,
                                         settled=self.settled)
             if edited is None:
+                _log.info("dictation watch: the words were left as typed",
+                          extra={"action": "voice.learn", "status": "ok"})
                 return []
+            noticed: list[tuple[str, str]] = []
             learned = self.dictionary.observe(typed, edited, alike=sounds_alike,
-                                              source=EDITED)
-            _log.info(f"dictation edit seen: {len(learned)} fix(es) learned",
+                                              source=EDITED, many=True, noticed=noticed)
+            _log.info(f"dictation edit seen: {len(learned)} fix(es) learned, "
+                      f"{len(noticed)} noticed for the first time",
                       extra={"action": "voice.learn", "status": "ok"})
             for heard, meant in learned:
                 await self.tell(chat_id, LEARNED.format(heard=heard, meant=meant))
+            if noticed:
+                await self.tell(chat_id, NOTICED.format(
+                    pairs=", ".join(f"«{h}» → «{m}»" for h, m in noticed)))
             return learned
         except Exception:  # noqa: BLE001 - learning is a help, never a failure to show
             _log.exception("learning from a dictation edit failed",

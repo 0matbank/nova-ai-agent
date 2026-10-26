@@ -479,9 +479,13 @@ def dictate(text: str, window: str | None = None) -> dict[str, Any]:
         grew = after is not None and before is not None and len(after) > len(before)
         verified = landed and (grew or not before)
         around = _around(before, after, text) if verified else None
+        # why a check failed — sizes and line numbers only, never the words
+        check = None if verified or after is None else {
+            "before": len(before or ""), "after": len(after), "typed": len(text),
+            "missing_lines": [i for i, ln in enumerate(lines) if ln not in after]}
         return {"window": _describe_window(w), "control": info,
                 "method": "SendKeys(at the cursor)", "readable": after is not None,
-                "verified": verified,
+                "verified": verified, "check": check,
                 "watch": _watch(w, c, text, *around) if around is not None else None}
 
 

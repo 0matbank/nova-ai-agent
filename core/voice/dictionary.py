@@ -222,12 +222,19 @@ class SpeechDictionary:
 
     def observe(self, heard_text: str, chosen_text: str,
                 alike: Callable[[str, str], bool] | None = None,
-                source: str = "confirmed") -> list[tuple[str, str]]:
+                source: str = "confirmed", many: bool = False,
+                noticed: list[tuple[str, str]] | None = None) -> list[tuple[str, str]]:
         """The owner confirmed `chosen_text` for what was heard as `heard_text`.
         Each small word-level change counts once; the second time it is learned.
-        `alike`: only changes it accepts count (an edit must sound like a mishearing)."""
+        `alike`: only changes it accepts count (an edit must sound like a mishearing).
+        `many`: several fixed words in one sentence (see `word_changes`).
+        `noticed`: gets the changes counted for the first time."""
         learned: list[tuple[str, str]] = []
-        for h, m in word_changes(heard_text, chosen_text):
+        # the same fix three times in one sentence is still one time (seen twice means
+        # on two occasions)
+        changes = {(fold(h), fold(m)): (h, m)
+                   for h, m in word_changes(heard_text, chosen_text, many=many)}
+        for h, m in changes.values():
             if alike is not None and not alike(h, m):
                 continue
             k = fold(h)
@@ -240,6 +247,8 @@ class SpeechDictionary:
                     learned.append((h, m))
             else:
                 self.store.put(SEEN, k, m, str(count))
+                if noticed is not None:
+                    noticed.append((h, m))
         return learned
 
     def listing(self) -> str:
@@ -284,7 +293,9 @@ def _sound_keys(phrase: str) -> set[str]:
     letters = phrase.replace(" ", "")
     if letters.isascii() and letters.isalpha() and letters.isupper() and len(letters) <= 6:
         keys.add(key(spelled(letters)))          # "PC" is said «পিসি»
-    return keys
+    # spoken Bangladeshi Bangla blurs জ/য/চ/ছ with স/শ, and Whisper writes either
+    # (owner 2026-10-26: «কাস» for «কাজ», «আসে» for «আছে», «পিছি» for «পিসি»)
+    return {k.replace("j", "s") for k in keys}
 
 
 def sounds_alike(heard: str, meant: str) -> bool:
@@ -309,18 +320,31 @@ def sounds_alike(heard: str, meant: str) -> bool:
     return False
 
 
-def word_changes(heard: str, chosen: str) -> list[tuple[str, str]]:
+def word_changes(heard: str, chosen: str, many: bool = False) -> list[tuple[str, str]]:
     """Small replaced spans (≤3 words each side; word by word when the counts match).
     A wholly rewritten sentence teaches nothing — that is a different request, not a
-    mishearing."""
+    mishearing. `many` (the owner's own edit of dictated words): any number of fixed
+    words, an added or removed word is passed over — while most words stay as they
+    were (owner 2026-10-26 fixed six words of one sentence at once)."""
     a, b = _tokens(heard), _tokens(chosen)
-    ops = [op for op in SequenceMatcher(None, [fold(t) for t in a], [fold(t) for t in b],
-                                        autojunk=False).get_opcodes() if op[0] != "equal"]
-    if not ops or len(ops) > 2 or any(op[0] != "replace" for op in ops):
+    matcher = SequenceMatcher(None, [fold(t) for t in a], [fold(t) for t in b],
+                              autojunk=False)
+    ops = [op for op in matcher.get_opcodes() if op[0] != "equal"]
+    if many:
+        kept = sum(i2 - i1 for tag, i1, i2, _j1, _j2 in matcher.get_opcodes()
+                   if tag == "equal")
+        if 2 * kept < len(a):
+            return []
+        ops = [op for op in ops if op[0] == "replace"]
+    elif len(ops) > 2 or any(op[0] != "replace" for op in ops):
+        return []
+    if not ops:
         return []
     out = []
     for _tag, i1, i2, j1, j2 in ops:
         if i2 - i1 > 3 or j2 - j1 > 3:
+            if many:
+                continue
             return []
         spans = (list(zip(a[i1:i2], b[j1:j2], strict=True)) if i2 - i1 == j2 - j1
                  else [(" ".join(a[i1:i2]), " ".join(b[j1:j2]))])
