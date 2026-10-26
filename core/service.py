@@ -87,6 +87,7 @@ from core.voice.dictionary import DbStore, SpeechDictionary
 from core.voice.edits import EditLearner
 from core.voice.intake import CALLBACK_PREFIX as VOICE_PREFIX
 from core.voice.intake import SayHere, VoiceIntake
+from core.voice.orb import Orb, TkView
 from core.voice.pc_audio import Player
 from core.voice.ptt import PcVoice, PushToTalk, pc_turn
 from core.voice.readback import asks_for_last_answer
@@ -428,6 +429,8 @@ async def run_core_service(
                             provider_router, asked, last, heard),
                         cleaner=lambda heard: clean_dictation(
                             provider_router, heard, set(dictionary.words()), vocabulary()))
+    # V1.2 floating light on the PC (set up with push-to-talk below)
+    lights: list[Orb] = []
 
     async def speak_final_answer(chat_id: str, kind: MessageType, task_id: int) -> None:
         """Voice mode (plan §57): a task started by voice gets its answer spoken."""
@@ -446,6 +449,8 @@ async def run_core_service(
         say = voice.task_speech(task_id, str(result), completed)
         if say:
             await say_to(chat_id, say, here)
+        if here is not None and lights:
+            lights[0].idle()                 # the voice task is over: the light goes out
 
     async def say_to(chat_id: str, say: str, here: SayHere | None) -> None:
         if here is not None:
@@ -582,8 +587,11 @@ async def run_core_service(
     ptt_extra: list[PushToTalk] = []
     if ptt_cfg.enabled and channel.whitelist.chat_ids:
         owner_chat = sorted(channel.whitelist.chat_ids)[0]
+        orb = build_orb() if ptt_cfg.orb else None
+        if orb is not None:
+            lights.append(orb)
         pc_voice = PcVoice(speaker, Player(cfg.path("workspace_dir") / "voice" / "say"),
-                           asyncio.get_running_loop())
+                           asyncio.get_running_loop(), orb)
         say_here = pc_voice.say if ptt_cfg.speak_on_pc else None
 
         async def on_pc_voice(wav: bytes, seconds: float) -> None:
@@ -591,7 +599,7 @@ async def run_core_service(
             await pc_turn(voice, send_and_record, owner_chat, wav, seconds, say_here)
 
         ptt = PushToTalk(ptt_cfg, asyncio.get_running_loop(), on_pc_voice,
-                         on_press=transcriber.warm, interrupt=pc_voice.interrupt)
+                         on_press=transcriber.warm, interrupt=pc_voice.interrupt, orb=orb)
         if not ptt.start():
             ptt = None
         if ptt_cfg.dictation_hotkey:
@@ -600,11 +608,13 @@ async def run_core_service(
                 _record(store, "telegram", owner_chat, "in", "<pc dictation>", None)
                 await pc_turn(voice, send_and_record, owner_chat, wav, seconds, say_here,
                               dictation=True)
+                if orb is not None:
+                    orb.idle()               # the words are on their way to the cursor
 
             dictation = PushToTalk(
                 ptt_cfg.model_copy(update={"hotkey": ptt_cfg.dictation_hotkey}),
                 asyncio.get_running_loop(), on_pc_dictation, on_press=transcriber.warm,
-                interrupt=pc_voice.interrupt)
+                interrupt=pc_voice.interrupt, orb=orb)
             if dictation.start():
                 ptt_extra.append(dictation)
     try:
@@ -657,6 +667,20 @@ def build_transcriber(cfg: AppConfig) -> Transcriber:
                        cfg.default.voice.beam_size,
                        hint_words=cfg.default.voice.hint_words,
                        vad_speech_pad_ms=cfg.default.voice.vad_speech_pad_ms)
+
+
+def build_orb() -> Orb | None:
+    """V1.2 floating light (Windows only); None when no window can be shown."""
+    if sys.platform != "win32":
+        return None
+    orb = Orb()
+    view = TkView(tick=orb.tick)
+    if view.error:
+        _log.warning(f"floating light off: {view.error}",
+                     extra={"action": "voice.orb", "status": "error"})
+        return None
+    orb.view = view
+    return orb
 
 
 def build_speaker(ctx: AppContext) -> Speaker:

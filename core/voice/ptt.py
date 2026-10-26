@@ -17,6 +17,7 @@ from core.log import get_logger
 from core.router.dictation import PREFIX as DICTATION_PREFIX
 from core.voice import pc_audio
 from core.voice.intake import SayHere
+from core.voice.orb import Orb
 
 _log = get_logger("core")
 
@@ -40,7 +41,8 @@ class PushToTalk:
                  listener: Callable[..., Listener] | None = None,
                  cue: Callable[[str], None] | None = None,
                  on_press: Callable[[], Awaitable[object]] | None = None,
-                 interrupt: Callable[[], None] | None = None) -> None:
+                 interrupt: Callable[[], None] | None = None,
+                 orb: Orb | None = None) -> None:
         self.settings = settings
         self.loop = loop
         self.on_audio = on_audio
@@ -53,6 +55,7 @@ class PushToTalk:
         self.on_press = on_press
         # the owner starts speaking: Nova stops talking at once (barge-in)
         self.interrupt = interrupt
+        self.orb = orb                    # V1.2 floating light: listening / thinking
         self.recording = False
         self.turns: list[Any] = []        # futures of the turns sent to the event loop
 
@@ -76,6 +79,8 @@ class PushToTalk:
     def down(self) -> None:
         if self.interrupt is not None:
             self.interrupt()
+        if self.orb is not None:
+            self.orb.listening()
         if self.on_press is not None:
             self.turns.append(asyncio.run_coroutine_threadsafe(self._warm(), self.loop))
         if self.cue is not None:
@@ -85,6 +90,9 @@ class PushToTalk:
         except pc_audio.AudioError as e:
             _log.warning(f"microphone not available: {e}",
                          extra={"action": "voice.ptt", "status": "error"})
+            if self.orb is not None:
+                self.orb.thinking()
+                self.orb.idle()
             return
         self.recording = True
 
@@ -103,7 +111,11 @@ class PushToTalk:
         if self.cue is not None:
             self.cue("stop")
         seconds = len(pcm) / (pc_audio.RATE * 2)
+        if self.orb is not None:
+            self.orb.thinking()
         if seconds < self.settings.min_seconds:
+            if self.orb is not None:
+                self.orb.idle()
             _log.info(f"push-to-talk: {seconds:.1f}s is too short — ignored",
                       extra={"action": "voice.ptt", "status": "ignored"})
             return
@@ -149,14 +161,18 @@ class PcVoice:
     """Nova's voice on the PC speakers: answers queue up; `interrupt()` silences the one
     playing and drops the queued ones (a new spoken command came)."""
 
-    def __init__(self, speaker: Any, player: Any, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(self, speaker: Any, player: Any, loop: asyncio.AbstractEventLoop,
+                 orb: Orb | None = None) -> None:
         self.speaker, self.player, self.loop = speaker, player, loop
+        self.orb = orb
         self._jobs: set[asyncio.Task[Any]] = set()
 
     async def say(self, text: str) -> None:
         job = asyncio.current_task()
         if job is not None:
             self._jobs.add(job)
+        if self.orb is not None:
+            self.orb.speech_started()
         try:
             # V1.2: the first sentence plays while the rest is still being made
             async for audio in self.speaker.stream(text):
@@ -164,10 +180,14 @@ class PcVoice:
         finally:
             if job is not None:
                 self._jobs.discard(job)
+            if self.orb is not None:
+                self.orb.speech_ended()
 
     def interrupt(self) -> None:
         """Safe from any thread (the shortcut's own)."""
         self.player.stop()
+        if self.orb is not None:
+            self.orb.interrupted()
         self.loop.call_soon_threadsafe(self._cancel)
 
     def _cancel(self) -> None:

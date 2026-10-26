@@ -145,6 +145,9 @@ class PushToTalkSection(Strict):
     dictation_hotkey: Annotated[str | None, Field(
         pattern=r"^((ctrl|control|alt|shift|win)\+)*[a-z0-9]+$")] = None
     speak_on_pc: bool = True         # the spoken answer plays on the PC speakers
+    # V1.2 floating light in the screen corner: listening / thinking / speaking (never
+    # takes the focus, clicks go through, never in a screenshot)
+    orb: bool = True
 
 
 class VoiceSection(Strict):
