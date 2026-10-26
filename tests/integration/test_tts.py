@@ -303,7 +303,7 @@ def test_stream_plays_the_first_part_before_the_rest_is_made(tmp_path: Path) -> 
     assert order.index("play first") < made_rest
 
 
-def test_gemini_reading_is_never_split(tmp_path: Path) -> None:
+def test_a_short_gemini_reading_is_never_split(tmp_path: Path) -> None:
     """Owner 2026-10-26: split for Gemini (~7 s per request), the reading stopped between
     pieces and the free quota ran out. One request, one smooth reading."""
     sp = Speaker(TTSSection(enabled=True, engine="gemini", voices={"bn": "x"}), _gemini())
@@ -311,3 +311,42 @@ def test_gemini_reading_is_never_split(tmp_path: Path) -> None:
     assert len(sp.parts(text)) == 1
     sp.gemini.cooldown_until = 10 ** 12                     # Gemini resting: edge, split
     assert len(sp.parts(text)) == 3
+
+
+def test_a_long_gemini_reading_starts_early_and_never_stops_between_pieces() -> None:
+    """Owner 2026-10-26: «পড়ে শোনাও» of a 622-character status was silent for 24.6 s
+    (one Gemini request). Now: the cached opening line at once, then growing pieces. With
+    the timing measured (made in 6 s + 0.03 s a character, +3 s to spare; spoken at 8.6
+    characters a second; two requests at a time), each piece is ready before the one
+    before it stops playing, and the reading starts far sooner."""
+    sp = Speaker(TTSSection(enabled=True, engine="gemini", voices={"bn": "x"}), _gemini())
+    bodies = [" ".join(f"ড্রাইভ {i}-এ {i * 7} গিগাবাইট খালি আছে, আর ব্যবহার {i * 3} শতাংশ।"
+                       for i in range(1, drives)) for drives in (4, 8, 13, 22)]
+    # the real one: the drive list is a single 355-character sentence with commas only
+    bodies.append("সিপিইউ: 8 শতাংশ। র্যাম: 76 শতাংশ। পিসি চালু আছে: 1 দিন 19 ঘণ্টা। ড্রাইভ: " + ", ".join(
+        f"{d}: 510 দশমিক 4 গিগাবাইটের মধ্যে 82 দশমিক 8 গিগাবাইট খালি" for d in "CDEFGH"))
+    for body in bodies:
+        parts = sp.parts(f"ঠিক আছে, পুরোটা পড়ে শোনাচ্ছি। {body}")
+        assert parts[0] == "ঠিক আছে, পুরোটা পড়ে শোনাচ্ছি।"        # cached: plays at once
+        reading = parts[1:]
+        assert " ".join(reading) == speakable(body, lang="bn")
+        assert len(reading) <= 3
+
+        slots = [0.0, 0.0]                                    # two Gemini requests at once
+        playing_until = 0.0
+        for i, piece in enumerate(reading):
+            start = min(slots)
+            ready = start + 6 + 0.03 * len(piece) + 3
+            slots[slots.index(start)] = ready
+            if i:
+                assert ready <= playing_until, [len(p) for p in reading]
+            playing_until = max(ready, playing_until) + len(piece) / 8.6
+        first_ready = 6 + 0.03 * len(reading[0]) + 3
+        if len(reading) > 1:
+            assert first_ready < 6 + 0.03 * len(" ".join(reading)) - 5   # starts sooner
+
+
+def test_uptime_with_days_is_said_in_bangla() -> None:
+    """Measured 2026-10-26: «PC uptime: 1d 19h 40m» was read as «1d 19 ঘণ্টা 40 মিনিট»."""
+    said = speakable("PC uptime: 1d 19h 40m", lang="bn")
+    assert "1 দিন 19 ঘণ্টা 40 মিনিট" in said and "1d" not in said

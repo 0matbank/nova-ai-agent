@@ -29,7 +29,7 @@ from core.voice.speech import (
     wants_detail,
 )
 from core.voice.transcriber import Transcriber
-from core.voice.tts import Speaker
+from core.voice.tts import Speaker, language_of
 
 _log = get_logger("core")
 CALLBACK_PREFIX = "vc"
@@ -45,6 +45,8 @@ NEEDS_YOU = {
     False: {"bn": "এই কাজে আপনার একটা উত্তর লাগবে — Telegram-এ দেখুন।",
             "en": "I need an answer from you — please check Telegram."}}
 REPEATING = "🔊 আগের উত্তরটা পুরো পড়ে শোনাচ্ছি।"
+# said first, at once from the TTS cache, while the long reading is still being made
+READING_ALL = {"bn": "ঠিক আছে, পুরোটা পড়ে শোনাচ্ছি।", "en": "Sure, here it is in full."}
 # "read it out" about the same topic this soon after an answer means that answer
 RECENT_ANSWER_SECONDS = 600
 NOTHING_TO_REPEAT = "আগের কোনো উত্তর আমার মনে নেই — Telegram-এ আগের বার্তাটা দেখুন।"
@@ -349,7 +351,8 @@ class VoiceIntake:
                                           NOTHING_TO_REPEAT, msg.chat_id, here, turn=turn,
                                           as_is=True)
             full = spoken_answer(last, detail=True, said_in=text, max_chars=self.max_chars)
-            return await self._spoken(OutgoingMessage(f"{heard}\n\n{REPEATING}"), full.text,
+            say = f"{READING_ALL[language_of(full.text)]} {full.text}"
+            return await self._spoken(OutgoingMessage(f"{heard}\n\n{REPEATING}"), say,
                                       msg.chat_id, here, turn=turn, as_is=True)
         text_msg = dataclasses.replace(msg, text=text, voice=None)
         safe = is_read_only_request(text) or (self.low_risk is not None

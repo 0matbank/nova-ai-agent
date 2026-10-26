@@ -160,6 +160,8 @@ def test_long_chat_answer_summarised_then_read_in_full_on_request(tmp_path: Path
     assert routed == ["বাজার নিয়ে বলো"]                  # "read it all" is not a new task
     assert here.said[0].endswith("বিস্তারিত Telegram-এ দিয়েছি।")
     assert "সুপারিশ" in here.said[1] and "Telegram" not in here.said[1]
+    # owner 2026-10-26 «পড়ে শোনাতে বেশি সময় নিচ্ছে»: a short line plays at once (cached)
+    assert here.said[1].startswith("ঠিক আছে, পুরোটা পড়ে শোনাচ্ছি। ")
 
 
 def test_task_answer_and_a_newer_command_silences_the_older_one(tmp_path: Path) -> None:

@@ -44,6 +44,7 @@ _WORDS = {
             r"\2 গিগাবাইটের মধ্যে \1 গিগাবাইট খালি"),
            (r"(\d[\d.]*)\s*/\s*(\d[\d.]*)\s*GB", r"\2-এর মধ্যে \1 গিগাবাইট"),
            (r"(\d)\s*GB", r"\1 গিগাবাইট"), (r"(\d)\s*MB", r"\1 মেগাবাইট"),
+           (r"(\d+)\s*d\s+(?=\d+\s*h\b)", r"\1 দিন "),     # before «h» becomes ঘণ্টা
            (r"(\d+)\s*h\s+(\d+)\s*m\b", r"\1 ঘণ্টা \2 মিনিট"),
            (r"(\d+)\s*d\s+(\d+)\s*h\b", r"\1 দিন \2 ঘণ্টা"),
            (r"\bdisk\s+free\b", "ডিস্কে খালি"), (r"\buptime\b", "চালু আছে"),
@@ -124,6 +125,14 @@ def to_ogg_opus(audio: bytes) -> bytes:
 
 _SENTENCE_END = re.compile(r"(?<=[।.!?])\s+")
 CACHE_MAX_CHARS = 80
+# Measured 2026-10-26: Gemini makes a voice in ~6 s + 0.03 s a character (90-140
+# characters in 9-10.5 s), and the voice speaks ~8.6 characters a second. So a piece
+# twice as long as the one before it is ready before that one stops playing. Shorter
+# readings stay one request; a long one is at most three.
+GEMINI_SPLIT_FROM = 240
+GEMINI_FIRST_CHARS = 100
+GEMINI_MAX_PIECES = 3
+_CLAUSE_END = re.compile(r"(?<=,)\s+")
 
 
 def cacheable(text: str) -> bool:
@@ -304,9 +313,7 @@ class Speaker:
         requests — Gemini costs ~7 s per request whatever the length)."""
         clean = speakable(text, self.settings.max_chars, voice_language(text))
         if self.gemini is not None and self.gemini.available:
-            # owner 2026-10-26: split for Gemini, the reading stopped for ~7 s between
-            # pieces and the free quota ran out — one request, one smooth reading
-            return [clean] if clean else []
+            return self._gemini_parts(clean)
         out: list[str] = []
         joinable = False
         for sentence in (x for x in _SENTENCE_END.split(clean) if x.strip()):
@@ -319,6 +326,30 @@ class Speaker:
                 out.append(sentence)
                 joinable = True
         return out
+
+    @staticmethod
+    def _gemini_parts(clean: str) -> list[str]:
+        """Few requests, no gaps. Owner 2026-10-26: when every sentence was its own piece,
+        the reading stopped for ~7 s between pieces and used up the free quota; as one
+        request, «পড়ে শোনাও» (622 characters) was silent for 24.6 s. So a long reading is
+        made in growing pieces (~100 characters, then twice that, then the rest): each one
+        plays while the next is made. A fixed opening sentence stays alone, because it
+        plays from the cache at once. A very long sentence (the PC status's drive list:
+        355 characters, commas only) may be cut at its commas."""
+        sentences = [part for x in _SENTENCE_END.split(clean) if x.strip()
+                     for part in (_CLAUSE_END.split(x) if len(x) > 2 * GEMINI_FIRST_CHARS
+                                  else [x])]
+        out = [sentences.pop(0)] if len(sentences) > 1 and cacheable(sentences[0]) else []
+        if len(" ".join(sentences)) < GEMINI_SPLIT_FROM:
+            return [*out, " ".join(sentences)] if sentences else out
+        target = GEMINI_FIRST_CHARS
+        for _ in range(GEMINI_MAX_PIECES - 1):
+            piece: list[str] = []
+            while sentences and len(" ".join(piece)) < target:
+                piece.append(sentences.pop(0))
+            out.append(" ".join(piece))
+            target *= 2
+        return [*out, " ".join(sentences)] if sentences else out
 
     async def stream(self, text: str) -> AsyncIterator[bytes]:
         """The answer as consecutive audio pieces: all are made at once (two Gemini
