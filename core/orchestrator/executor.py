@@ -34,10 +34,14 @@ from core.orchestrator.context import conversation, for_request
 from core.orchestrator.creative import CreativeFlow
 from core.orchestrator.lang import reply_language
 from core.orchestrator.operator import OperatorAgent
+from core.orchestrator.recipes import Recipe, RecipeBook
 from core.orchestrator.schedule_route import schedule_request
+from core.permissions.engine import PermissionDenied
 from core.queue.engine import TaskBlocked, TaskContext, Verdict, VerdictStatus
 from core.router.intent import Intent, IntentRouter, is_open_windows_question, is_screen_question
 from core.scheduler import ScheduleStore
+from core.skills.api import PolicyDenied
+from core.skills.registry import SkillError
 from core.skills.runner import SkillRunner
 from core.verifier import check_effect
 from models.router import ProviderRouter
@@ -126,6 +130,8 @@ class UserRequestExecutor:
         # e.g. a dictation lets the Speech Dictionary learn from the owner's own fix
         self.after_skill: list[Callable[[str, tuple[str, str], dict[str, Any],
                                          dict[str, Any], bool], None]] = []
+        # V1.2 learned replay: a passed operator run, done again with no AI
+        self.recipes: RecipeBook | None = None
 
     async def plan(self, ctx: TaskContext) -> list[str]:
         return ["request বোঝা (intent)", "কাজ করা", "ফলাফল যাচাই"]
@@ -251,6 +257,9 @@ class UserRequestExecutor:
             return await ComputerUseAgent(self.skills, self.providers, grounder).run(
                 ctx, ctx.task.request_text, str(intent.meta["inside_app"]), lang)
         if a.route == "operator":
+            replayed = await self._replay(ctx, lang)
+            if replayed is not None:
+                return replayed
             memo = "\n\n".join(x for x in (
                 f"Earlier decisions:\n{decisions}" if decisions else "",
                 f"Project memory:\n{remembered}" if remembered else "") if x)
@@ -378,6 +387,7 @@ class UserRequestExecutor:
         second provider reviewed high-impact code. Verdicts: PASS, PASS WITH KNOWN
         LIMITATIONS, NEEDS WORK (→ the action runs again), BLOCKED (→ the owner)."""
         verdict = await self._check(ctx, result)
+        self._recipe_outcome(ctx, verdict)
         step1 = next((s for s in ctx.steps if s.seq == 1), None)
         routed = ((step1.checkpoint if step1 is not None else None) or {}).get("assignment")
         if routed and self.roster is not None:
@@ -385,6 +395,72 @@ class UserRequestExecutor:
             label = Assignment.from_json(routed).label(self.roster)
             return replace(verdict, proofs=(*verdict.proofs, f"🧭 {label}"))
         return verdict
+
+    async def _replay(self, ctx: TaskContext, lang: str) -> dict[str, Any] | None:
+        """V1.2: the same request was done and verified before — run its calls again with
+        no AI. None: no recipe, or a call did not work (the recipe is dropped and the
+        operator plans as usual)."""
+        if self.recipes is None or self.skills is None:
+            return None
+        recipe = self.recipes.find(ctx.task.request_text)
+        if recipe is None:
+            return None
+        state = ctx.recalled() or {}
+        done = list(state.get("replayed", [])) if state.get("recipe") == recipe.slot else []
+        _log.info(f"replaying a learned recipe ({len(recipe.calls)} call(s), no AI)",
+                  extra={"task_id": ctx.task.id, "action": "recipe.replay"})
+        for call in recipe.calls[len(done):]:
+            skill, tool = str(call["skill"]), str(call["tool"])
+            params = dict(call.get("params") or {})
+            try:
+                r = await self.skills.invoke(ctx, skill, tool, params)
+            except (PolicyDenied, PermissionDenied, SkillError) as e:
+                return self._replay_failed(ctx, recipe, f"{skill}.{tool}: {e}")
+            if not r.ok:
+                return self._replay_failed(ctx, recipe, f"{skill}.{tool}: {r.summary[:200]}")
+            done.append({"skill": skill, "tool": tool, "params": params,
+                         "evidence": r.evidence, "summary": r.summary[:300]})
+            # an approval wait or a restart continues after the calls already done
+            ctx.remember({"recipe": recipe.slot, "replayed": done})
+        self.recipes.used(recipe)
+        answer = recipe.answer or "\n".join(str(d["summary"]) for d in done)
+        note = ("⚡ আগে শেখা উপায়ে করলাম (AI ছাড়া)" if lang == "bn"
+                else "⚡ Done the way I learned before (no AI)")
+        return {"kind": "operator", "ok": True, "answer": f"{answer}\n{note}",
+                "evidence": {"agent": "recipe", "steps": len(done),
+                             "calls": [f"{d['skill']}.{d['tool']}" for d in done],
+                             "effects": [{k: d[k] for k in ("skill", "tool", "params",
+                                                            "evidence")} for d in done]}}
+
+    def _replay_failed(self, ctx: TaskContext, recipe: Recipe,
+                       why: str) -> dict[str, Any] | None:
+        assert self.recipes is not None
+        self.recipes.forget(recipe)
+        ctx.remember({})                     # the operator starts from a clean state
+        _log.info(f"learned recipe failed ({why}) — dropped, the AI plans it",
+                  extra={"task_id": ctx.task.id, "action": "recipe.replay",
+                         "status": "failed"})
+        return None
+
+    def _recipe_outcome(self, ctx: TaskContext, verdict: Verdict) -> None:
+        """A verified operator run is kept; a replay the PC does not confirm is dropped."""
+        if self.recipes is None:
+            return
+        step2 = next((s for s in ctx.steps if s.seq == 2), None)
+        act = (step2.checkpoint if step2 is not None else None) or {}
+        if act.get("kind") != "operator":
+            return
+        try:
+            replayed = (act.get("evidence") or {}).get("agent") == "recipe"
+            if verdict.status is VerdictStatus.PASS and not replayed:
+                self.recipes.learn(ctx.task.request_text, act)
+            elif replayed and verdict.status is not VerdictStatus.PASS:
+                recipe = self.recipes.find(ctx.task.request_text)
+                if recipe is not None:
+                    self.recipes.forget(recipe)
+        except Exception:  # noqa: BLE001 - learning never fails the task
+            _log.exception("recipe learning failed", extra={"task_id": ctx.task.id,
+                                                             "action": "recipe.learn"})
 
     async def _check(self, ctx: TaskContext, result: str) -> Verdict:
         step2 = next((s for s in ctx.steps if s.seq == 2), None)

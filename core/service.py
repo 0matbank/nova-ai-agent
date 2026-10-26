@@ -59,6 +59,7 @@ from core.orchestrator.agent_commands import AgentCommands
 from core.orchestrator.commands import CommandRouter, HealthSources
 from core.orchestrator.executor import UserRequestExecutor
 from core.orchestrator.log_commands import LogCommands
+from core.orchestrator.recipes import RecipeBook
 from core.orchestrator.schedule_commands import ScheduleCommands
 from core.orchestrator.screen_commands import ScreenCommands
 from core.orchestrator.security_commands import SecurityCommands
@@ -366,6 +367,9 @@ async def run_core_service(
             IntentRouter(provider_router, apps=app_resolver), provider_router, skill_runner,
             roster,
             project_memory, schedule_store)
+        if db_sessions is not None:
+            # V1.2: a verified operator run is done again with no AI next time
+            executor.recipes = RecipeBook(DbStore(db_sessions))
         engine.register("user_request", executor)
 
     exiting = exit_request or ExitRequest()

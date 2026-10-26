@@ -53,6 +53,7 @@ RESULT_CHARS = 2500
 _DIGITS = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 _BANGLA = re.compile(r"[ঀ-৿]")
+_WORD = re.compile(r"[A-Za-zঀ-৿]{2,}")
 # file names and paths in an answer — kept letter for letter by the Bangla rewording
 _FILE_NAMES = re.compile(r"(?:[A-Za-z]:\\[^\s,;]+|[\w-]+(?:\.[\w-]+)*\.[A-Za-z0-9]{1,5})\b")
 _LABEL = re.compile(r"^\s*(?:(?:final\s+)?answer|বাংলা\s+উত্তর|উত্তর)\s*[:：]\s*", re.IGNORECASE)
@@ -216,6 +217,10 @@ class OperatorAgent:
             if action == "answer":
                 # small models like to label it: "বাংলা উত্তর: …", "Answer: …"
                 answer = _LABEL.sub("", str(decision.get("answer", "")).strip())
+                if not _WORD.search(_FILE_NAMES.sub(" ", answer)):
+                    # real run 2026-10-26: the local planner "answered" «D:\» — not one
+                    # word; the Bangla rewording then made up another reply
+                    answer = ""
                 missing = self._ungrounded(answer, steps, ctx.task.request_text)
                 calls = [s for s in steps if s["call"] != "answer"]
                 if (answer and not missing and calls and rejected == 0
